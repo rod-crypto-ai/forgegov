@@ -52,3 +52,34 @@ def sync_recent_sam_opportunities(self, days: int = 1, limit: int = 1000):
         run.finished_at = timezone.now()
         run.save(update_fields=["status", "error_message", "finished_at", "updated_at"])
         raise
+
+
+@shared_task(bind=True, autoretry_for=(IntegrationError,), retry_backoff=True, retry_kwargs={"max_retries": 3})
+def sync_usaspending_awards(self, days: int = 365, limit: int = 100):
+    from .integrations import search_usaspending_awards
+    today = date.today()
+    run = DataSyncRun.objects.create(
+        source="usaspending.gov",
+        request_metadata={"days": days, "limit": limit},
+    )
+    try:
+        result = search_usaspending_awards(
+            start_date=(today - timedelta(days=max(1, days))).isoformat(),
+            end_date=today.isoformat(),
+            limit=limit,
+            persist=True,
+        )
+        persisted = result["persisted"]
+        run.status = DataSyncRun.Status.SUCCESS
+        run.records_received = len(result["results"])
+        run.records_created = persisted["created"]
+        run.records_updated = persisted["updated"]
+        run.finished_at = timezone.now()
+        run.save(update_fields=["status", "records_received", "records_created", "records_updated", "finished_at", "updated_at"])
+        return {"run_id": run.pk, "records_received": run.records_received, "records_created": run.records_created, "records_updated": run.records_updated}
+    except Exception as exc:
+        run.status = DataSyncRun.Status.FAILED
+        run.error_message = str(exc)[:2000]
+        run.finished_at = timezone.now()
+        run.save(update_fields=["status", "error_message", "finished_at", "updated_at"])
+        raise

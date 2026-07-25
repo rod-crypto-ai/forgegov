@@ -1,0 +1,151 @@
+import type { LucideIcon } from "lucide-react";
+import {
+  BadgeDollarSign,
+  BarChart3,
+  BookOpenCheck,
+  Bot,
+  BriefcaseBusiness,
+  Building2,
+  CalendarSearch,
+  ChartNoAxesCombined,
+  ContactRound,
+  FileArchive,
+  FileStack,
+  FileText,
+  FolderKanban,
+  FolderOpen,
+  Handshake,
+  Landmark,
+  LayoutDashboard,
+  ListChecks,
+  Map,
+  Network,
+  Search,
+  Shapes,
+  Tags,
+  Target,
+  Users,
+} from "lucide-react";
+
+export type NavItem = {
+  href: string;
+  label: string;
+  icon?: LucideIcon;
+  description?: string;
+  apiPath?: string;
+  recordLabel?: string;
+  columns?: Array<{ key: string; label: string }>;
+};
+
+export type NavGroup = {
+  label: string;
+  icon: LucideIcon;
+  items: NavItem[];
+};
+
+export const standaloneItems: NavItem[] = [
+  {
+    href: "/assistant",
+    label: "ForgeGov AI",
+    icon: Bot,
+    description: "Research opportunities, summarize documents, and prepare capture actions from grounded platform data.",
+  },
+];
+
+export const navigationGroups: NavGroup[] = [
+  {
+    label: "Capture",
+    icon: FolderKanban,
+    items: [
+      { href: "/", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/capture/teaming", label: "Teaming", icon: Handshake, apiPath: "/teaming-requests/", recordLabel: "teaming request" },
+      { href: "/capture/pipelines", label: "Pipelines", icon: FolderKanban, apiPath: "/pipeline/", recordLabel: "pipeline item" },
+      { href: "/capture/pursuits", label: "Pursuits", icon: Target, apiPath: "/pursuits/", recordLabel: "pursuit" },
+      { href: "/capture/tasks", label: "Tasks", icon: ListChecks, apiPath: "/tasks/", recordLabel: "task" },
+      { href: "/capture/saved-searches", label: "Saved Searches", icon: Search, apiPath: "/saved-searches/", recordLabel: "saved search" },
+    ],
+  },
+  {
+    label: "Beacon",
+    icon: ContactRound,
+    items: [
+      { href: "/beacon/contacts", label: "Contacts", icon: ContactRound, apiPath: "/contacts/", recordLabel: "contact" },
+      { href: "/beacon/contact-groups", label: "Contact Groups", icon: Users, apiPath: "/contact-groups/", recordLabel: "contact group" },
+    ],
+  },
+  {
+    label: "Reports",
+    icon: BarChart3,
+    items: [
+      { href: "/reports/funding", label: "Funding", icon: BadgeDollarSign, description: "Analyze obligated dollars, ceiling values, agency concentration, and spending movement." },
+      { href: "/reports/new-entrants", label: "New Entrants", icon: ChartNoAxesCombined, description: "Identify vendors entering agencies, categories, and markets for the first time." },
+    ],
+  },
+  {
+    label: "Opportunities",
+    icon: FileText,
+    items: [
+      { href: "/opportunities/federal-forecasts", label: "Federal Forecasts", icon: CalendarSearch },
+      { href: "/opportunities/federal-contracts", label: "Federal Contract Opportunities", icon: FileText },
+      { href: "/opportunities/federal-vehicles", label: "Federal Contract Vehicle Opportunities", icon: Network },
+      { href: "/opportunities/state-local", label: "State and Local Contract Opportunities", icon: Map },
+      { href: "/opportunities/federal-grants", label: "Federal Grant Opportunities", icon: Landmark },
+    ],
+  },
+  {
+    label: "Awards",
+    icon: BriefcaseBusiness,
+    items: [
+      { href: "/awards/federal-contracts", label: "Federal Contract Awards", icon: BriefcaseBusiness, apiPath: "/awards/", recordLabel: "award" },
+      { href: "/awards/federal-idv", label: "Federal Contract IDV Awards", icon: Network, apiPath: "/awards/?award_type=idv", recordLabel: "IDV award" },
+      { href: "/awards/federal-vehicles", label: "Federal Contract Vehicles", icon: Network, apiPath: "/awards/?award_type=vehicle", recordLabel: "contract vehicle" },
+      { href: "/awards/federal-grants", label: "Federal Grant Awards", icon: Landmark, apiPath: "/awards/?award_type=grant", recordLabel: "grant award" },
+      { href: "/awards/state-local", label: "State and Local Contract Awards", icon: Map, apiPath: "/awards/?award_type=state_local", recordLabel: "state or local award" },
+      { href: "/awards/state-local-idv", label: "State and Local Contract IDV Awards", icon: Network, apiPath: "/awards/?award_type=state_local_idv", recordLabel: "state or local IDV" },
+      { href: "/awards/state-local-vehicles", label: "State and Local Contract Vehicles", icon: Network, apiPath: "/awards/?award_type=state_local_vehicle", recordLabel: "state or local vehicle" },
+    ],
+  },
+  {
+    label: "Participants",
+    icon: Users,
+    items: [
+      { href: "/participants/federal-agencies", label: "Federal Agencies", icon: Building2, apiPath: "/agencies/", recordLabel: "agency" },
+      { href: "/participants/states", label: "States", icon: Map, apiPath: "/participants/?participant_type=state", recordLabel: "state" },
+      { href: "/participants/jurisdictions", label: "Jurisdictions", icon: Landmark, apiPath: "/participants/?participant_type=jurisdiction", recordLabel: "jurisdiction" },
+      { href: "/participants/vendors", label: "Vendors", icon: BriefcaseBusiness, apiPath: "/vendors/", recordLabel: "vendor" },
+    ],
+  },
+  {
+    label: "Files",
+    icon: FolderOpen,
+    items: [
+      { href: "/files/government", label: "Government Files", icon: FileArchive, apiPath: "/files/?source=government", recordLabel: "government file" },
+      { href: "/files/user", label: "User Files", icon: FileStack, apiPath: "/files/?source=user", recordLabel: "user file" },
+    ],
+  },
+  {
+    label: "Categories",
+    icon: Shapes,
+    items: [
+      { href: "/categories/naics", label: "NAICS Categories", icon: Tags, apiPath: "/categories/?category_type=naics", recordLabel: "NAICS category" },
+      { href: "/categories/psc", label: "PSC Categories", icon: Tags, apiPath: "/categories/?category_type=psc", recordLabel: "PSC category" },
+      { href: "/categories/nigp", label: "NIGP Categories", icon: Tags, apiPath: "/categories/?category_type=nigp", recordLabel: "NIGP category" },
+      { href: "/categories/unspsc", label: "UNSPSC Categories", icon: Tags, apiPath: "/categories/?category_type=unspsc", recordLabel: "UNSPSC category" },
+    ],
+  },
+];
+
+export const utilityItems: NavItem[] = [
+  { href: "/workspace", label: "Workspace", icon: Users, apiPath: "/organizations/", recordLabel: "workspace" },
+  { href: "/settings", label: "Settings", icon: BookOpenCheck },
+];
+
+export const allNavigationItems = [
+  ...standaloneItems,
+  ...navigationGroups.flatMap((group) => group.items),
+  ...utilityItems,
+];
+
+export function getFeatureByPath(pathname: string): NavItem | undefined {
+  return allNavigationItems.find((item) => item.href === pathname);
+}

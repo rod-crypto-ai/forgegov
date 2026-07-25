@@ -103,3 +103,5 @@ if os.getenv("SAM_SYNC_ENABLED", "false").lower() == "true":
 SAM_GOV_API_KEY = os.getenv("SAM_GOV_API_KEY", "")
 SAM_GOV_BASE_URL = os.getenv("SAM_GOV_BASE_URL", "https://api.sam.gov/opportunities/v2/search")
 USASPENDING_BASE_URL = os.getenv("USASPENDING_BASE_URL", "https://api.usaspending.gov")
+
+GRANTS_GOV_BASE_URL = os.getenv("GRANTS_GOV_BASE_URL", "https://api.grants.gov/v1/api")

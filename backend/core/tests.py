@@ -79,3 +79,49 @@ class SamIntegrationTests(TestCase):
         called_params = mock_get.call_args.kwargs["params"]
         self.assertEqual(called_params["title"], "vehicle")
         self.assertNotIn("q", called_params)
+
+
+class UsaSpendingIntegrationTests(TestCase):
+    @patch("core.integrations.requests.post")
+    def test_live_usaspending_search_persists_awards(self, mock_post):
+        from .integrations import search_usaspending_awards
+        from .models import Agency, Award, Vendor
+
+        response = Mock()
+        response.ok = True
+        response.status_code = 200
+        response.json.return_value = {
+            "page_metadata": {"page": 1, "hasNext": False},
+            "results": [{
+                "Award ID": "W56HZV-26-C-0001",
+                "generated_unique_award_id": "CONT_AWD_W56HZV26C0001_9700",
+                "Recipient Name": "HOWARD DYNAMICS LLC",
+                "Award Amount": 1250000,
+                "Description": "Vehicle maintenance support",
+                "Start Date": "2026-01-01",
+                "End Date": "2026-12-31",
+                "Awarding Agency": "Department of Defense",
+                "Funding Agency": "Department of the Army",
+            }],
+        }
+        mock_post.return_value = response
+
+        result = search_usaspending_awards(keyword="maintenance", persist=True)
+
+        self.assertEqual(result["persisted"]["created"], 1)
+        self.assertTrue(Award.objects.filter(source_id="CONT_AWD_W56HZV26C0001_9700").exists())
+        self.assertTrue(Vendor.objects.filter(name="HOWARD DYNAMICS LLC").exists())
+        self.assertTrue(Agency.objects.filter(name="Department of Defense").exists())
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertEqual(payload["filters"]["keywords"], ["maintenance"])
+
+    @patch("core.integrations.requests.post")
+    def test_api_endpoint_returns_live_results(self, mock_post):
+        response = Mock()
+        response.ok = True
+        response.status_code = 200
+        response.json.return_value = {"page_metadata": {"page": 1}, "results": []}
+        mock_post.return_value = response
+        api_response = APIClient().get("/api/live/usaspending/awards/?q=logistics")
+        self.assertEqual(api_response.status_code, 200)
+        self.assertEqual(api_response.json()["results"], [])

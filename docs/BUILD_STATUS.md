@@ -1,28 +1,35 @@
-# Build Status — ForgeGov v0.2
+# Build Status — ForgeGov v0.3
 
 ## Verified
 
-- ForgeGov naming and branding applied.
-- Django migrations generated and applied in the test database.
-- Five backend tests passed, including SAM.gov normalization, persistence, dashboard counts, API health, and opportunity search.
-- Ruff backend lint passed.
+- Expanded ForgeGov navigation matches the breadth of the supplied reference screenshots without copying GovTribe branding.
+- Desktop and mobile navigation are collapsible and route-aware.
+- Next.js lint and production build pass.
+- Home, federal-opportunity, and contact routes return HTTP 200.
+- Django migrations apply successfully to a clean database.
+- Five backend tests pass.
+- Ruff backend lint passes.
+- Dashboard and health endpoints return valid data.
 - SAM.gov credentials remain outside source control.
-- SAM.gov error handling does not return or log the API key in application-generated errors.
-- Live-search throttling is configured to protect low daily API limits.
 
-## Added in v0.2
+## Added in v0.3
 
-- Expanded SAM.gov filters using the official v2 parameter names.
-- Optional persistence of live results into the ForgeGov opportunity database.
-- Normalized agency, subagency, office, NAICS, PSC, notice type, set-aside, deadlines, source links, and attachments metadata.
-- Data-sync run history and a retryable Celery synchronization task.
-- Real dashboard database metrics.
-- Secure interactive local configuration script.
+- Full navigation groups for AI, Capture, Beacon, Reports, Opportunities, Awards, Participants, Files, and Categories.
+- Dashboard with database-backed metrics, pipeline stage distribution, quick actions, task visibility, source health, and workspace readiness.
+- Advanced federal opportunity search, persistence, CSV export, and source actions.
+- API-backed data explorer pages with search, refresh, export, and honest empty/error states.
+- Data models and REST endpoints for pursuits, agencies, vendors, awards, contacts, contact groups, teaming requests, files, states/jurisdictions, and classification categories.
+- AI research workspace that does not fabricate answers before a model and grounded retrieval service are configured.
+- Funding and new-entrant report foundations.
 
-## Not verified in this environment
+## Still required before production
 
-- A live SAM.gov request could not be completed because the build container could not resolve external DNS. This is an environment limitation, not proof that the supplied key works or fails.
-- Docker execution is unavailable in this build environment.
-- The npm package gateway timed out during dependency installation, so the Next.js lint/build still requires local or GitHub Actions verification.
-
-The product is not production-ready yet. Authentication pages and organization-scoped authorization are the next mandatory milestone before public deployment.
+- Enforce organization-scoped permissions across every API endpoint.
+- Add full create/edit/delete forms and validation in the frontend.
+- Add invitations, user onboarding, password recovery, MFA, and audit logs.
+- Implement USAspending award ingestion and normalization.
+- Implement Grants.gov and legally supportable state/local connectors.
+- Add object storage, malware scanning, previews, and document version control.
+- Add grounded AI retrieval with citations and document extraction.
+- Add alerts, email delivery, scheduled searches, and activity monitoring.
+- Add production observability, backups, billing, security review, and deployment infrastructure.

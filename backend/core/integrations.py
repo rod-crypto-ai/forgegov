@@ -246,3 +246,370 @@ def usaspending_status(*, probe: bool = False) -> dict[str, Any]:
     except requests.RequestException:
         result.update({"reachable": False, "error": "USAspending could not be reached."})
     return result
+
+
+def _decimal(value: Any):
+    from decimal import Decimal, InvalidOperation
+    try:
+        return Decimal(str(value or 0))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal("0")
+
+
+def _usa_date(value: Any):
+    if not value:
+        return None
+    parsed = parse_date(str(value)[:10])
+    return parsed
+
+
+def _usa_value(record: dict[str, Any], *keys: str, default: Any = "") -> Any:
+    for key in keys:
+        if key in record and record[key] not in (None, ""):
+            return record[key]
+    return default
+
+
+def upsert_usaspending_award(record: dict[str, Any]):
+    from django.db import models
+    from .models import Agency, Award, Vendor
+
+    source_id = _safe_text(_usa_value(record, "generated_unique_award_id", "Award ID", "award_id"), max_length=255)
+    if not source_id:
+        raise IntegrationError("USAspending returned an award without an award ID.")
+
+    recipient = _safe_text(_usa_value(record, "Recipient Name", "recipient_name"), max_length=255)
+    recipient_uei = _safe_text(_usa_value(record, "recipient_uei", "Recipient UEI"), max_length=32)
+    awarding_agency = _safe_text(_usa_value(record, "Awarding Agency", "awarding_agency_name"), max_length=255)
+    funding_agency = _safe_text(_usa_value(record, "Funding Agency", "funding_agency_name"), max_length=255)
+    award_number = _safe_text(_usa_value(record, "Award ID", "piid", "award_id"), max_length=160)
+    amount = _decimal(_usa_value(record, "Award Amount", "generated_current_total_value", "obligated_amount", default=0))
+    potential = _decimal(_usa_value(record, "Potential Award Amount", "generated_potential_total_value", default=0))
+    description = _safe_text(_usa_value(record, "Description", "description"))
+    naics = _safe_text(_usa_value(record, "NAICS Code", "naics_code"), max_length=12)
+    psc = _safe_text(_usa_value(record, "PSC Code", "product_or_service_code"), max_length=12)
+    pop = _safe_text(_usa_value(record, "Place of Performance", "place_of_performance"), max_length=500)
+
+    defaults = {
+        "source": "usaspending.gov",
+        "award_number": award_number,
+        "award_type": Award.AwardType.CONTRACT,
+        "description": description,
+        "recipient_name": recipient,
+        "recipient_uei": recipient_uei,
+        "awarding_agency": awarding_agency,
+        "funding_agency": funding_agency,
+        "obligated_amount": amount,
+        "potential_amount": potential,
+        "start_date": _usa_date(_usa_value(record, "Start Date", "period_of_performance_start_date")),
+        "end_date": _usa_date(_usa_value(record, "End Date", "period_of_performance_current_end_date")),
+        "naics_code": naics,
+        "psc_code": psc,
+        "place_of_performance": pop,
+        "source_url": f"https://www.usaspending.gov/award/{source_id}/",
+        "raw_data": record,
+    }
+    award, created = Award.objects.update_or_create(source_id=source_id, defaults=defaults)
+
+    if recipient:
+        Vendor.objects.update_or_create(
+            name=recipient,
+            defaults={
+                "uei": recipient_uei,
+                "obligated_amount": amount,
+                "award_count": Award.objects.filter(recipient_name=recipient).count(),
+                "raw_data": {"latest_award": source_id},
+            },
+        )
+    for agency_name in {awarding_agency, funding_agency} - {""}:
+        Agency.objects.update_or_create(
+            name=agency_name,
+            defaults={
+                "award_count": Award.objects.filter(
+                    models.Q(awarding_agency=agency_name) | models.Q(funding_agency=agency_name)
+                ).count(),
+                "obligated_amount": Award.objects.filter(awarding_agency=agency_name).aggregate(
+                    total=models.Sum("obligated_amount")
+                )["total"] or 0,
+                "raw_data": {"source": "usaspending.gov"},
+            },
+        )
+    return award, created
+
+
+def search_usaspending_awards(
+    *,
+    keyword: str = "",
+    recipient: str = "",
+    agency: str = "",
+    naics: str = "",
+    start_date: str | None = None,
+    end_date: str | None = None,
+    page: int = 1,
+    limit: int = 25,
+    persist: bool = False,
+) -> dict[str, Any]:
+    today = date.today()
+    start_date = start_date or f"{today.year - 1}-01-01"
+    end_date = end_date or today.isoformat()
+    filters: dict[str, Any] = {
+        "time_period": [{"start_date": start_date, "end_date": end_date}],
+        "award_type_codes": ["A", "B", "C", "D"],
+    }
+    if keyword:
+        filters["keywords"] = [keyword]
+    if recipient:
+        filters["recipient_search_text"] = [recipient]
+    if agency:
+        filters["agencies"] = [{"type": "awarding", "tier": "toptier", "name": agency}]
+    if naics:
+        filters["naics_codes"] = {"require": [naics]}
+
+    payload = {
+        "filters": filters,
+        "fields": [
+            "Award ID", "Recipient Name", "Award Amount", "Total Outlays", "Description",
+            "Start Date", "End Date", "Awarding Agency", "Funding Agency", "Contract Award Type",
+            "generated_unique_award_id",
+        ],
+        "page": max(1, page),
+        "limit": max(1, min(limit, 100)),
+        "subawards": False,
+    }
+    url = f"{settings.USASPENDING_BASE_URL.rstrip('/')}/api/v2/search/spending_by_award/"
+    try:
+        response = requests.post(url, json=payload, timeout=45)
+    except requests.RequestException as exc:
+        raise IntegrationError("USAspending could not be reached. Check network access and try again.") from exc
+    if not response.ok:
+        detail = _safe_text(response.text, max_length=400)
+        raise IntegrationError(f"USAspending returned HTTP {response.status_code}. {detail}".strip())
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise IntegrationError("USAspending returned invalid JSON.") from exc
+
+    results = data.get("results") if isinstance(data, dict) else []
+    if not isinstance(results, list):
+        results = []
+    created = updated = 0
+    errors: list[str] = []
+    if persist:
+        for record in results:
+            if not isinstance(record, dict):
+                continue
+            try:
+                _, was_created = upsert_usaspending_award(record)
+                created += int(was_created)
+                updated += int(not was_created)
+            except IntegrationError as exc:
+                errors.append(str(exc))
+
+    return {
+        "page_metadata": data.get("page_metadata", {}),
+        "spending_level": data.get("spending_level", "awards"),
+        "results": results,
+        "persisted": {"enabled": persist, "created": created, "updated": updated, "errors": errors},
+        "request": {"start_date": start_date, "end_date": end_date, "keyword": keyword, "recipient": recipient, "agency": agency, "naics": naics},
+    }
+
+
+GRANTS_GOV_SEARCH_URL = "https://api.grants.gov/v1/api/search2"
+GRANTS_GOV_DETAIL_URL = "https://api.grants.gov/v1/api/fetchOpportunity"
+
+
+def _grant_source_id(opportunity_id: Any) -> str:
+    value = _safe_text(opportunity_id, max_length=220)
+    if not value:
+        raise IntegrationError("Grants.gov returned an opportunity without an ID.")
+    return f"grants.gov:{value}"
+
+
+def _grant_date(value: Any):
+    if not value:
+        return None
+    raw = str(value).strip()
+    from datetime import datetime, time
+    for fmt in ("%m/%d/%Y", "%Y-%m-%d", "%b %d, %Y %I:%M:%S %p %Z"):
+        try:
+            parsed = datetime.strptime(raw, fmt)
+            return timezone.make_aware(parsed) if timezone.is_naive(parsed) else parsed
+        except (ValueError, TypeError):
+            continue
+    parsed = parse_datetime(raw)
+    if parsed:
+        return timezone.make_aware(parsed) if timezone.is_naive(parsed) else parsed
+    parsed_date = parse_date(raw[:10])
+    if parsed_date:
+        return timezone.make_aware(datetime.combine(parsed_date, time.min))
+    return None
+
+
+def upsert_grants_opportunity(record: dict[str, Any]) -> tuple[Opportunity, bool]:
+    opportunity_id = record.get("id") or record.get("opportunityId")
+    source_id = _grant_source_id(opportunity_id)
+    number = _safe_text(record.get("number") or record.get("opportunityNumber"), max_length=120)
+    title = _safe_text(record.get("title") or record.get("opportunityTitle"), max_length=500) or "Untitled Grants.gov opportunity"
+    agency = _safe_text(record.get("agencyName") or record.get("owningAgencyCode"), max_length=255)
+    agency_code = _safe_text(record.get("agencyCode") or record.get("owningAgencyCode"), max_length=80)
+    status_value = _safe_text(record.get("oppStatus"), max_length=80)
+    alns = record.get("alnist") or record.get("alns") or []
+    aln_values = []
+    if isinstance(alns, list):
+        for item in alns:
+            aln_values.append(str(item.get("alnNumber") or item.get("id") or "") if isinstance(item, dict) else str(item))
+    else:
+        aln_values = [str(alns)]
+    aln_text = ", ".join(v for v in aln_values if v)
+
+    defaults = {
+        "source": "grants.gov",
+        "solicitation_number": number,
+        "title": title,
+        "description": _safe_text(record.get("synopsisDesc") or record.get("description")),
+        "agency": agency or agency_code,
+        "subagency": agency_code,
+        "office": "",
+        "organization_path": agency,
+        "notice_type": Opportunity.NoticeType.OTHER,
+        "notice_type_raw": f"Federal Grant - {status_value}"[:120],
+        "naics_code": "",
+        "psc_code": aln_text[:12],
+        "set_aside": "",
+        "set_aside_code": "",
+        "posted_date": _grant_date(record.get("openDate") or record.get("postingDate")),
+        "response_deadline": _grant_date(record.get("closeDate") or record.get("responseDateDesc")),
+        "archive_date": None,
+        "place_of_performance": "",
+        "active": status_value.lower() in {"posted", "forecasted", "open", ""},
+        "source_url": f"https://www.grants.gov/search-results-detail/{opportunity_id}",
+        "resource_links": [],
+        "raw_data": record,
+    }
+    return Opportunity.objects.update_or_create(source_id=source_id, defaults=defaults)
+
+
+def search_grants_opportunities(
+    *,
+    keyword: str = "",
+    opportunity_number: str = "",
+    agencies: str = "",
+    statuses: str = "forecasted|posted",
+    aln: str = "",
+    funding_categories: str = "",
+    eligibilities: str = "",
+    funding_instruments: str = "",
+    sort_by: str = "",
+    limit: int = 25,
+    offset: int = 0,
+    persist: bool = False,
+) -> dict[str, Any]:
+    payload = {
+        "rows": max(1, min(int(limit), 100)),
+        "startRecordNum": max(0, int(offset)),
+        "keyword": keyword,
+        "oppNum": opportunity_number,
+        "agencies": agencies,
+        "oppStatuses": statuses,
+        "aln": aln,
+        "fundingCategories": funding_categories,
+        "eligibilities": eligibilities,
+        "fundingInstruments": funding_instruments,
+        "sortBy": sort_by,
+    }
+    payload = {key: value for key, value in payload.items() if value not in ("", None)}
+
+    try:
+        response = requests.post(GRANTS_GOV_SEARCH_URL, json=payload, timeout=30)
+    except requests.RequestException as exc:
+        raise IntegrationError("Grants.gov could not be reached. Check network access and try again.") from exc
+
+    if not response.ok:
+        raise IntegrationError(f"Grants.gov returned HTTP {response.status_code}: {_safe_text(response.text, max_length=300)}")
+
+    try:
+        body = response.json()
+    except ValueError as exc:
+        raise IntegrationError("Grants.gov returned a response that was not valid JSON.") from exc
+
+    if body.get("errorcode") not in (0, "0", None):
+        raise IntegrationError(_safe_text(body.get("msg") or "Grants.gov search failed.", max_length=300))
+
+    data = body.get("data") or {}
+    opportunities = data.get("oppHits") or []
+    if not isinstance(opportunities, list):
+        opportunities = []
+
+    created = updated = 0
+    errors = []
+    if persist:
+        for record in opportunities:
+            if not isinstance(record, dict):
+                continue
+            try:
+                _, was_created = upsert_grants_opportunity(record)
+                created += int(was_created)
+                updated += int(not was_created)
+            except IntegrationError as exc:
+                errors.append(str(exc))
+
+    normalized = []
+    for record in opportunities:
+        if isinstance(record, dict):
+            opportunity_id = record.get("id")
+            normalized.append({
+                **record,
+                "source_id": _grant_source_id(opportunity_id),
+                "source_url": f"https://www.grants.gov/search-results-detail/{opportunity_id}",
+            })
+
+    return {
+        "total_records": int(data.get("hitCount") or 0),
+        "limit": int((data.get("searchParams") or {}).get("rows") or payload.get("rows") or 25),
+        "offset": int(data.get("startRecord") or (data.get("searchParams") or {}).get("startRecordNum") or 0),
+        "opportunities": normalized,
+        "facets": {
+            "statuses": data.get("oppStatusOptions") or [],
+            "eligibilities": data.get("eligibilities") or [],
+            "funding_categories": data.get("fundingCategories") or [],
+            "funding_instruments": data.get("fundingInstruments") or [],
+            "agencies": data.get("agencies") or [],
+        },
+        "persisted": {"enabled": persist, "created": created, "updated": updated, "errors": errors},
+    }
+
+
+def fetch_grants_opportunity(opportunity_id: str, *, persist: bool = True) -> dict[str, Any]:
+    try:
+        numeric_id = int(opportunity_id)
+        response = requests.post(GRANTS_GOV_DETAIL_URL, json={"opportunityId": numeric_id}, timeout=30)
+    except ValueError as exc:
+        raise IntegrationError("A valid Grants.gov opportunity ID is required.") from exc
+    except requests.RequestException as exc:
+        raise IntegrationError("Grants.gov could not be reached.") from exc
+
+    if not response.ok:
+        raise IntegrationError(f"Grants.gov returned HTTP {response.status_code}: {_safe_text(response.text, max_length=300)}")
+
+    body = response.json()
+    if body.get("errorcode") not in (0, "0", None):
+        raise IntegrationError(_safe_text(body.get("msg") or "Grants.gov detail request failed.", max_length=300))
+
+    data = body.get("data") or {}
+    synopsis = data.get("synopsis") or {}
+    merged = {
+        **data,
+        **synopsis,
+        "id": data.get("id") or numeric_id,
+        "title": data.get("opportunityTitle"),
+        "number": data.get("opportunityNumber"),
+        "agencyName": (data.get("agencyDetails") or {}).get("agencyName") or synopsis.get("agencyName"),
+        "openDate": synopsis.get("postingDate"),
+        "closeDate": synopsis.get("responseDateDesc"),
+        "oppStatus": "posted",
+    }
+    if persist:
+        opportunity, _ = upsert_grants_opportunity(merged)
+        merged["forgegov_opportunity_id"] = opportunity.id
+        merged["source_id"] = opportunity.source_id
+    return merged
