@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDownToLine, Columns3, Filter, LayoutList, Plus, RefreshCw, Search, X } from "lucide-react";
+import { ArrowDownToLine, Columns3, LayoutList, Plus, RefreshCw, Search, X } from "lucide-react";
 import { apiGet, apiPost, normalizeList } from "@/lib/api";
 import type { NavItem } from "@/lib/navigation";
 
@@ -26,26 +26,17 @@ const schemaByPath: Record<string, Field[]> = {
     { name: "agency_name", label: "Agency / company" },
   ],
   "/capture/teaming": [
-    { name: "title", label: "Request title", required: true },
+    { name: "company_name", label: "Company name", required: true },
+    { name: "role", label: "Teaming role" },
     { name: "status", label: "Status" },
-    { name: "summary", label: "Summary", type: "textarea" },
+    { name: "capabilities", label: "Capabilities", type: "textarea" },
+    { name: "notes", label: "Notes", type: "textarea" },
   ],
   "/capture/pursuits": [
     { name: "name", label: "Pursuit name", required: true },
     { name: "stage", label: "Stage" },
     { name: "estimated_value", label: "Estimated value", type: "number" },
     { name: "notes", label: "Capture notes", type: "textarea" },
-  ],
-  "/participants/vendors": [
-    { name: "name", label: "Vendor name", required: true },
-    { name: "uei", label: "UEI" },
-    { name: "cage_code", label: "CAGE code" },
-    { name: "website", label: "Website" },
-  ],
-  "/participants/federal-agencies": [
-    { name: "name", label: "Agency name", required: true },
-    { name: "abbreviation", label: "Abbreviation" },
-    { name: "agency_code", label: "Agency code" },
   ],
 };
 
@@ -127,13 +118,12 @@ export function WorkspacePage({ feature }: { feature: NavItem }) {
       <div><span>Total</span><strong>{status === "ready" ? rows.length : "—"}</strong><small>Stored records</small></div>
       <div><span>Visible</span><strong>{status === "ready" ? filtered.length : "—"}</strong><small>Current result set</small></div>
       <div><span>Source</span><strong>{feature.apiPath ? "ForgeGov API" : "Configuration"}</strong><small>Traceable data</small></div>
-      <div><span>Workspace status</span><strong className="status-good">Operational</strong><small>CRUD-ready module</small></div>
+      <div><span>Workspace status</span><strong className={status === "error" ? "status-bad" : "status-good"}>{status === "error" ? "Unavailable" : status === "loading" ? "Checking" : "Operational"}</strong><small>API-backed module</small></div>
     </section>
 
     <section className="data-panel workspace-panel">
       <div className="data-toolbar upgraded-toolbar">
         <div className="data-search"><Search size={17}/><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`Search ${feature.label.toLowerCase()}...`}/></div>
-        <button className="toolbar-button"><Filter size={16}/> Filters</button>
         <div className="segmented-control"><button className={view === "table" ? "active" : ""} onClick={() => setView("table")}><LayoutList size={16}/></button><button className={view === "board" ? "active" : ""} onClick={() => setView("board")}><Columns3 size={16}/></button></div>
         <button className="toolbar-button" onClick={() => exportCsv(filtered, columns, feature.label.toLowerCase().replaceAll(" ", "-"))} disabled={!filtered.length}><ArrowDownToLine size={16}/> Export</button>
       </div>
@@ -141,7 +131,7 @@ export function WorkspacePage({ feature }: { feature: NavItem }) {
       {status === "loading" && <div className="table-state"><RefreshCw className="spin"/><strong>Loading workspace</strong><p>Retrieving the latest ForgeGov records.</p></div>}
       {status === "error" && <div className="table-state error-state"><strong>Workspace unavailable</strong><p>{error}</p><button className="secondary-button" onClick={() => void load()}>Try again</button></div>}
       {status === "ready" && !filtered.length && <div className="table-state"><strong>No records in this view</strong><p>Create the first record or adjust your search. This page is connected to the backend—not a placeholder.</p>{fields.length > 0 && <button className="primary-button" onClick={() => setCreateOpen(true)}><Plus size={16}/> Create record</button>}</div>}
-      {status === "ready" && filtered.length > 0 && view === "table" && <div className="table-wrap"><table className="data-table"><thead><tr><th><input type="checkbox" aria-label="Select all"/></th>{columns.map((column) => <th key={column}>{humanize(column)}</th>)}<th></th></tr></thead><tbody>{filtered.map((row, index) => <tr key={String(row.id ?? index)}><td><input type="checkbox" aria-label="Select row"/></td>{columns.map((column, ci) => <td key={column} className={ci === 0 ? "primary-cell" : ""}>{display(row[column])}</td>)}<td><button className="row-action">•••</button></td></tr>)}</tbody></table></div>}
+      {status === "ready" && filtered.length > 0 && view === "table" && <div className="table-wrap"><table className="data-table"><thead><tr><th><input type="checkbox" aria-label="Select all"/></th>{columns.map((column) => <th key={column}>{humanize(column)}</th>)}</tr></thead><tbody>{filtered.map((row, index) => <tr key={String(row.id ?? index)}><td><input type="checkbox" aria-label="Select row"/></td>{columns.map((column, ci) => <td key={column} className={ci === 0 ? "primary-cell" : ""}>{display(row[column])}</td>)}</tr>)}</tbody></table></div>}
       {status === "ready" && filtered.length > 0 && view === "board" && <div className="kanban-board">{Object.entries(boardGroups).map(([group, items]) => <section className="kanban-column" key={group}><header><span>{humanize(group)}</span><b>{items.length}</b></header>{items.map((row, index) => <article className="kanban-card" key={String(row.id ?? index)}><strong>{String(row.title ?? row.name ?? row.full_name ?? "Untitled record")}</strong><p>{String(row.agency ?? row.agency_name ?? row.status ?? "ForgeGov record")}</p><footer><span>{display(row.estimated_value ?? row.due_at ?? row.updated_at)}</span></footer></article>)}</section>)}</div>}
     </section>
 

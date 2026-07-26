@@ -4,13 +4,15 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import {
-  Bell, ChevronDown, ChevronRight, CircleHelp, Command, Menu,
-  Plus, Search, Settings, Sparkles, X,
+  ChevronDown, ChevronRight, CircleHelp, Command, Menu,
+  Search, Sparkles, X,
 } from "lucide-react";
-import { navigationGroups, standaloneItems, utilityItems } from "@/lib/navigation";
+import { navigationGroups, utilityItems } from "@/lib/navigation";
+import { useAuth } from "@/components/auth-provider";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { session, logout } = useAuth();
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -22,8 +24,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   function submit(event: React.FormEvent) {
     event.preventDefault();
     const value = query.trim();
-    router.push(value ? `/opportunities/federal-contracts?q=${encodeURIComponent(value)}` : "/opportunities/federal-contracts");
+    router.push(value ? `/opportunities/federal-contracts?q=${encodeURIComponent(value)}&auto=1` : "/opportunities/federal-contracts");
   }
+
+  if (pathname === "/sign-in" || pathname === "/register" || pathname === "/forgot-password") return <>{children}</>;
+
+  const initials = `${session?.user.first_name?.[0] ?? ""}${session?.user.last_name?.[0] ?? ""}` || session?.user.email?.[0]?.toUpperCase() || "U";
+  const displayName = `${session?.user.first_name ?? ""} ${session?.user.last_name ?? ""}`.trim() || session?.user.email || "ForgeGov user";
 
   return <div className="forge-shell">
     <aside className={`forge-sidebar ${menuOpen ? "open" : ""}`}>
@@ -35,11 +42,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <button className="shell-icon mobile-only" onClick={() => setMenuOpen(false)} aria-label="Close navigation"><X size={20}/></button>
       </div>
 
-      <button className="workspace-switcher">
-        <span className="workspace-avatar">HD</span>
-        <span><b>Howard Dynamics</b><small>Primary workspace</small></span>
+      <div className="workspace-switcher" aria-label="Current workspace">
+        <span className="workspace-avatar">{session?.organization.name.slice(0, 2).toUpperCase()}</span>
+        <span><b>{session?.organization.name}</b><small>Primary workspace</small></span>
         <ChevronDown size={16}/>
-      </button>
+      </div>
 
       <Link href="/assistant" className={`ai-launch ${pathname === "/assistant" ? "active" : ""}`} onClick={() => setMenuOpen(false)}>
         <Sparkles size={18}/><span><b>ForgeGov AI</b><small>Research & capture copilot</small></span><ChevronRight size={16}/>
@@ -76,10 +83,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </form>
         </div>
         <div className="topbar-actions">
-          <span className="live-source"><i/> Federal data connected</span>
-          <button className="quick-create"><Plus size={16}/> Create</button>
-          <button className="shell-icon"><Bell size={18}/><i className="notify-dot"/></button>
-          <button className="user-chip"><span>RH</span><div><b>Rod Howard</b><small>Workspace owner</small></div><ChevronDown size={14}/></button>
+          <span className="live-source"><i/> Federal data workspace</span>
+          <button className="user-chip" onClick={() => router.push("/account")}><span>{initials}</span><div><b>{displayName}</b><small>{session?.role}</small></div><ChevronDown size={14}/></button>
+          <button className="toolbar-button" onClick={() => void logout()}>Sign out</button>
         </div>
       </header>
       <div className="forge-content">{children}</div>

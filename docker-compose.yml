@@ -27,7 +27,9 @@ services:
   backend:
     build: ./backend
     env_file: .env
-    command: sh -c "python manage.py migrate && gunicorn forgegov.wsgi:application --bind 0.0.0.0:8000 --workers 3"
+    environment:
+      RUN_MIGRATIONS: "true"
+    command: gunicorn forgegov.wsgi:application --bind 0.0.0.0:8000 --workers 3
     volumes:
       - ./backend:/app
     ports:
@@ -63,9 +65,12 @@ services:
         condition: service_healthy
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      target: development
+    command: npm run dev
     environment:
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000/api
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api}
     volumes:
       - ./frontend:/app
       - /app/node_modules

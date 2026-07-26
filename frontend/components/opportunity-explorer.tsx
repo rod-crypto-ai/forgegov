@@ -1,9 +1,9 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
-import { ArrowDownToLine, ChevronLeft, ChevronRight, ExternalLink, Save, Search, Target } from "lucide-react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowDownToLine, ChevronLeft, ChevronRight, ExternalLink, LoaderCircle, Save, Search, Target } from "lucide-react";
 import { useSearchParams } from "next/navigation";
-import { API_BASE_URL, apiPost } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 
 export type OpportunityMode = "federal-contracts" | "federal-forecasts" | "federal-vehicles" | "state-local" | "federal-grants";
 
@@ -21,6 +21,13 @@ type SearchResult = {
   persisted?: { enabled: boolean; created: number; updated: number };
 };
 
+type Filters = {
+  q: string; agency: string; naics: string; psc: string; state: string; set_aside: string;
+  posted_from: string; posted_to: string; opportunity_number: string; aln: string;
+  funding_categories: string; eligibilities: string; funding_instruments: string;
+  statuses: string; sort_by: string;
+};
+
 const copy = {
   "federal-contracts": ["Federal Contract Opportunities", "Search the live SAM.gov Contract Opportunities API and move qualified work directly into your capture pipeline."],
   "federal-forecasts": ["Federal Forecasts", "Agency forecast connectors are being added as source-specific feeds."],
@@ -29,49 +36,118 @@ const copy = {
   "federal-grants": ["Federal Grant Opportunities", "Search live Grants.gov opportunities, save searches, export results, and move qualified grants into the same ForgeGov pipeline."],
 } as const;
 
+
+function defaultFilters(query = ""): Filters {
+  return {
+    q: query, agency: "", naics: "", psc: "", state: "", set_aside: "",
+    posted_from: "", posted_to: "", opportunity_number: "", aln: "", funding_categories: "",
+    eligibilities: "", funding_instruments: "", statuses: "forecasted|posted", sort_by: "",
+  };
+}
+
+function hasCustomFilters(filters: Filters, isGrants: boolean) {
+  const ignored = new Set(isGrants ? ["statuses", "sort_by"] : []);
+  return Object.entries(filters).some(([key, value]) => !ignored.has(key) && value.trim() !== "")
+    || (isGrants && filters.statuses !== "forecasted|posted")
+    || (isGrants && filters.sort_by.trim() !== "");
+}
+
+function recentTimestamp(row: LiveOpportunity) {
+  const value = row.postedDate ?? row.openDate ?? "";
+  const usDate = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value.trim());
+  if (usDate) return Date.UTC(Number(usDate[3]), Number(usDate[1]) - 1, Number(usDate[2]));
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
   const sp = useSearchParams();
+  const queryFromUrl = sp.get("q") ?? "";
+  const autoSearch = sp.get("auto") === "1";
+  const lastUrlQuery = useRef(queryFromUrl);
+  const lastAutoSearch = useRef("");
+  const initialLoadMode = useRef("");
   const isSam = mode === "federal-contracts";
   const isGrants = mode === "federal-grants";
   const live = isSam || isGrants;
-  const [filters, setFilters] = useState({
-    q: sp.get("q") ?? "", agency: "", naics: "", psc: "", state: "", set_aside: "",
-    posted_from: "", posted_to: "", opportunity_number: "", aln: "", funding_categories: "",
-    eligibilities: "", funding_instruments: "", statuses: "forecasted|posted", sort_by: "",
-  });
+  const [filters, setFilters] = useState<Filters>(() => defaultFilters(sp.get("q") ?? ""));
   const [result, setResult] = useState<SearchResult | null>(null);
   const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState(isGrants ? "Ready to search live Grants.gov opportunities." : "Ready to search live federal notices.");
+  const [showingRecent, setShowingRecent] = useState(true);
+  const [message, setMessage] = useState(live ? "Loading the most recent live opportunities…" : "This connector is not configured yet.");
   const [busyId, setBusyId] = useState("");
 
   const page = result ? Math.floor(result.offset / result.limit) + 1 : 1;
   const totalPages = result ? Math.max(1, Math.ceil(result.total_records / result.limit)) : 1;
   const rows = result?.opportunities ?? [];
+  const displayRows = useMemo(() => showingRecent ? [...rows].sort((left, right) => recentTimestamp(right) - recentTimestamp(left)) : rows, [rows, showingRecent]);
 
-  function update(name: string, value: string) { setFilters((current) => ({ ...current, [name]: value })); }
+  function update(name: keyof Filters, value: string) { setFilters((current) => ({ ...current, [name]: value })); }
 
-  async function search(offset = 0) {
+  const search = useCallback(async (offset = 0, selectedFilters = filters) => {
     if (!live) { setMessage("This connector is not configured yet. ForgeGov will not display mock live records."); return; }
-    setLoading(true); setMessage("");
+    const recentView = !hasCustomFilters(selectedFilters, isGrants);
+    setShowingRecent(recentView);
+    setLoading(true);
+    setMessage(recentView ? "Refreshing the latest live opportunities…" : "Searching live opportunity data…");
     const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset), persist: "true" });
-    const allowed = isGrants
+    const allowed: Array<keyof Filters> = isGrants
       ? ["q", "agency", "opportunity_number", "aln", "funding_categories", "eligibilities", "funding_instruments", "statuses", "sort_by"]
       : ["q", "agency", "naics", "psc", "state", "set_aside", "posted_from", "posted_to"];
-    allowed.forEach((key) => { const value = filters[key as keyof typeof filters]; if (value) params.set(key, value); });
+    allowed.forEach((key) => { const value = selectedFilters[key]; if (value) params.set(key, value); });
     const endpoint = isGrants ? "/live/grants/opportunities/" : "/live/sam/opportunities/";
     try {
-      const response = await fetch(`${API_BASE_URL}${endpoint}?${params}`, { cache: "no-store" });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail ?? "Live opportunity search failed");
+      const data = await apiGet<SearchResult>(`${endpoint}?${params.toString()}`);
       setResult(data);
-      setMessage(`${Number(data.total_records ?? 0).toLocaleString()} matching opportunities. Page ${Math.floor(data.offset / data.limit) + 1} of ${Math.max(1, Math.ceil(data.total_records / data.limit))}.`);
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Search failed"); }
-    finally { setLoading(false); }
-  }
+      const pageNumber = Math.floor(data.offset / data.limit) + 1;
+      const pageTotal = Math.max(1, Math.ceil(data.total_records / data.limit));
+      setMessage(recentView
+        ? `Loaded the latest ${Number(data.opportunities?.length ?? 0).toLocaleString()} records from ${isGrants ? "Grants.gov" : "SAM.gov"}. ${Number(data.total_records ?? 0).toLocaleString()} active matches are available.`
+        : `${Number(data.total_records ?? 0).toLocaleString()} matching opportunities. Page ${pageNumber} of ${pageTotal}.`);
+      if (offset > 0) window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (error) {
+      setResult(null);
+      setMessage(error instanceof Error ? error.message : "Search failed");
+    } finally {
+      setLoading(false);
+    }
+  }, [filters, isGrants, live, pageSize]);
 
-  async function submit(event: FormEvent) { event.preventDefault(); await search(0); }
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (initialLoadMode.current === mode) return;
+    initialLoadMode.current = mode;
+    const selectedFilters = defaultFilters(queryFromUrl);
+    setFilters(selectedFilters);
+    setResult(null);
+    setShowingRecent(true);
+    if (!live) {
+      setLoading(false);
+      setMessage("This connector is not configured yet. ForgeGov will not display mock live records.");
+      return;
+    }
+    if (autoSearch && queryFromUrl) lastAutoSearch.current = queryFromUrl;
+    void search(0, selectedFilters);
+    // Route changes are the external synchronization performed by this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, live]);
+
+  useEffect(() => {
+    if (!queryFromUrl) return;
+    const selectedFilters = { ...filters, q: queryFromUrl };
+    if (lastUrlQuery.current !== queryFromUrl) {
+      lastUrlQuery.current = queryFromUrl;
+      setFilters(selectedFilters);
+    }
+    if (autoSearch && live && lastAutoSearch.current !== queryFromUrl) {
+      lastAutoSearch.current = queryFromUrl;
+      void search(0, selectedFilters);
+    }
+  }, [autoSearch, filters, live, queryFromUrl, search]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  async function submit(event: FormEvent) { event.preventDefault(); await search(0, filters); }
 
   async function saveSearch() {
     const defaultName = filters.q ? `${filters.q} ${isGrants ? "grants" : "opportunities"}` : `${copy[mode][0]} search`;
@@ -96,15 +172,15 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
     finally { setBusyId(""); }
   }
 
-  const agencies = useMemo(() => new Set(rows.map((row) => row.fullParentPathName ?? row.agencyName ?? row.agencyCode).filter(Boolean)).size, [rows]);
+  const agencies = useMemo(() => new Set(displayRows.map((row) => row.fullParentPathName ?? row.agencyName ?? row.agencyCode).filter(Boolean)).size, [displayRows]);
 
   function exportCsv() {
     const headers = ["Title","Opportunity number","Agency","Status/type","NAICS/ALN","Posted","Deadline","URL"];
     const esc = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
-    const body = rows.map((row) => [
+    const body = displayRows.map((row) => [
       row.title, row.solicitationNumber ?? row.number, row.fullParentPathName ?? row.agencyName ?? row.agencyCode,
       row.type ?? row.oppStatus, row.naicsCode ?? row.alnist?.join("; "), row.postedDate ?? row.openDate,
-      row.responseDeadLine ?? row.closeDate, row.uiLink ?? row.source_url,
+      row.responseDeadLine ?? row.closeDate, row.source_url ?? row.uiLink,
     ].map(esc).join(","));
     const anchor = document.createElement("a");
     anchor.href = URL.createObjectURL(new Blob([[headers.map(esc).join(","), ...body].join("\n")], { type: "text/csv" }));
@@ -114,7 +190,7 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
 
   return <>
     <header className="feature-hero"><div><span className="eyebrow">Opportunity intelligence</span><h1>{copy[mode][0]}</h1><p>{copy[mode][1]}</p></div></header>
-    <section className="insight-strip"><div><span>Total matches</span><strong>{result?.total_records?.toLocaleString() ?? "—"}</strong></div><div><span>Current page</span><strong>{page} / {totalPages}</strong></div><div><span>Loaded</span><strong>{rows.length}</strong></div><div><span>Agencies</span><strong>{agencies}</strong></div></section>
+    <section className="insight-strip"><div><span>Total matches</span><strong>{result?.total_records?.toLocaleString() ?? "—"}</strong></div><div><span>Current page</span><strong>{page} / {totalPages}</strong></div><div><span>Loaded</span><strong>{displayRows.length}</strong></div><div><span>Agencies</span><strong>{agencies}</strong></div></section>
 
     <section className="data-panel opportunity-search-panel">
       <form className="advanced-filter-grid" onSubmit={submit}>
@@ -137,16 +213,17 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
         </>}
         <label><span>Results per page</span><select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))}><option>25</option><option>50</option><option>100</option></select></label>
         <button className="secondary-button" type="button" onClick={saveSearch}><Save size={16} /> Save search</button>
-        <button className="primary-button search-submit" disabled={loading}><Search size={17} />{loading ? "Searching…" : "Search live data"}</button>
+        <button className="primary-button search-submit" disabled={loading || !live}>{loading ? <LoaderCircle className="spin" size={17} /> : <Search size={17} />}{loading ? "Loading…" : "Search live data"}</button>
       </form>
       <p className="inline-message">{message}</p>
     </section>
 
     <section className="data-panel">
-      <div className="data-toolbar"><div className="result-title"><Target size={18} /><strong>Opportunity results</strong><span>{rows.length} loaded</span></div><button className="toolbar-button" onClick={exportCsv} disabled={!rows.length}><ArrowDownToLine size={16} /> Export</button></div>
-      {!rows.length ? <div className="table-state"><Search size={28} /><strong>No results loaded</strong><p>Run a live search to retrieve current records.</p></div> :
-        <div className="opportunity-results">{rows.map((row, index) => {
-          const id = sourceId(row); const url = row.uiLink ?? row.source_url;
+      <div className="data-toolbar"><div className="result-title"><Target size={18} /><strong>{showingRecent ? "Latest opportunity results" : "Opportunity results"}</strong><span>{displayRows.length} loaded</span></div><button className="toolbar-button" onClick={exportCsv} disabled={!displayRows.length}><ArrowDownToLine size={16} /> Export</button></div>
+      {loading && !result ? <div className="table-state"><LoaderCircle className="spin" size={28} /><strong>Loading recent live data</strong><p>ForgeGov is requesting the newest available records from the source.</p></div> :
+        !displayRows.length ? <div className="table-state"><Search size={28} /><strong>{live ? "No results found" : "Connector not configured"}</strong><p>{live ? "Try changing the filters or refreshing the page." : "ForgeGov will show live records here when this source connector is added."}</p></div> :
+        <div className="opportunity-results">{displayRows.map((row, index) => {
+          const id = sourceId(row); const url = row.source_url ?? row.uiLink;
           return <article className="opportunity-result-card" key={id || String(index)}>
             <div className="opportunity-result-main">
               <div className="result-meta"><span>{row.type ?? row.oppStatus ?? (isGrants ? "Federal grant" : "Opportunity")}</span><span>{row.solicitationNumber ?? row.number ?? "No number"}</span></div>
@@ -161,7 +238,7 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
           </article>;
         })}</div>
       }
-      {result && <div className="pagination-bar"><button className="secondary-button" disabled={loading || result.offset <= 0} onClick={() => void search(Math.max(0, result.offset - result.limit))}><ChevronLeft size={16} /> Previous</button><span>Page {page.toLocaleString()} of {totalPages.toLocaleString()} · {result.total_records.toLocaleString()} total</span><button className="secondary-button" disabled={loading || result.offset + result.limit >= result.total_records} onClick={() => void search(result.offset + result.limit)}>Next <ChevronRight size={16} /></button></div>}
+      {result && <div className="pagination-bar"><button className="secondary-button" disabled={loading || result.offset <= 0} onClick={() => void search(Math.max(0, result.offset - result.limit), filters)}><ChevronLeft size={16} /> Previous</button><span>Page {page.toLocaleString()} of {totalPages.toLocaleString()} · {result.total_records.toLocaleString()} total</span><button className="secondary-button" disabled={loading || result.offset + result.limit >= result.total_records} onClick={() => void search(result.offset + result.limit, filters)}>Next <ChevronRight size={16} /></button></div>}
     </section>
   </>;
 }

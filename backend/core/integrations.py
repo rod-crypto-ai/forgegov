@@ -52,9 +52,29 @@ def _sam_datetime(value: Any) -> datetime | None:
     return parsed
 
 
+
+
+def _sam_date_param(value: str | None, fallback: date) -> str:
+    if not value:
+        return fallback.strftime("%m/%d/%Y")
+    raw = str(value).strip()
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(raw, fmt).strftime("%m/%d/%Y")
+        except ValueError:
+            continue
+    raise IntegrationError("SAM.gov dates must use YYYY-MM-DD or MM/DD/YYYY format.")
+
 def _safe_text(value: Any, *, max_length: int | None = None) -> str:
     text = "" if value is None else str(value).strip()
     return text[:max_length] if max_length else text
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _organization_parts(record: dict[str, Any]) -> tuple[str, str, str, str]:
@@ -98,7 +118,8 @@ def upsert_sam_opportunity(record: dict[str, Any]) -> tuple[Opportunity, bool]:
 
     agency, subagency, office, organization_path = _organization_parts(record)
     raw_type = record.get("type") or record.get("baseType")
-    source_url = _safe_text(record.get("uiLink"), max_length=2000) or f"https://sam.gov/opp/{notice_id}/view"
+    # The API-provided uiLink can require a SAM.gov role and return a 404 for public users.
+    source_url = f"https://sam.gov/opp/{notice_id}/view"
     resource_links = record.get("resourceLinks") if isinstance(record.get("resourceLinks"), list) else []
 
     defaults = {
@@ -152,8 +173,8 @@ def _build_sam_params(
         "api_key": settings.SAM_GOV_API_KEY,
         "limit": max(1, min(limit, 1000)),
         "offset": max(0, offset),
-        "postedFrom": posted_from or (today - timedelta(days=30)).strftime("%m/%d/%Y"),
-        "postedTo": posted_to or today.strftime("%m/%d/%Y"),
+        "postedFrom": _sam_date_param(posted_from, today - timedelta(days=30)),
+        "postedTo": _sam_date_param(posted_to, today),
     }
 
     optional = {
@@ -183,6 +204,15 @@ def search_sam_opportunities(*, persist: bool = False, **filters: Any) -> dict[s
         response = requests.get(settings.SAM_GOV_BASE_URL, params=params, timeout=30)
     except requests.RequestException as exc:
         raise IntegrationError("SAM.gov could not be reached. Check network access and try again.") from exc
+
+    if response.status_code == 404:
+        return {
+            "total_records": 0,
+            "limit": params["limit"],
+            "offset": params["offset"],
+            "opportunities": [],
+            "persisted": {"enabled": persist, "created": 0, "updated": 0, "errors": []},
+        }
 
     if not response.ok:
         detail = ""
@@ -217,11 +247,22 @@ def search_sam_opportunities(*, persist: bool = False, **filters: Any) -> dict[s
             except IntegrationError as exc:
                 persistence_errors.append(str(exc))
 
+    normalized_opportunities = []
+    for record in opportunities:
+        if not isinstance(record, dict):
+            continue
+        notice_id = _safe_text(record.get("noticeId") or record.get("noticeid"), max_length=255)
+        normalized_opportunities.append({
+            **record,
+            "source_id": notice_id,
+            "source_url": f"https://sam.gov/opp/{notice_id}/view" if notice_id else "",
+        })
+
     return {
-        "total_records": payload.get("totalRecords", 0),
-        "limit": payload.get("limit", params["limit"]),
-        "offset": payload.get("offset", params["offset"]),
-        "opportunities": opportunities,
+        "total_records": max(0, _safe_int(payload.get("totalRecords"), 0)),
+        "limit": max(1, _safe_int(payload.get("limit"), params["limit"])),
+        "offset": max(0, _safe_int(payload.get("offset"), params["offset"])),
+        "opportunities": normalized_opportunities,
         "persisted": {
             "enabled": persist,
             "created": created,
@@ -414,8 +455,6 @@ def search_usaspending_awards(
     }
 
 
-GRANTS_GOV_SEARCH_URL = "https://api.grants.gov/v1/api/search2"
-GRANTS_GOV_DETAIL_URL = "https://api.grants.gov/v1/api/fetchOpportunity"
 
 
 def _grant_source_id(opportunity_id: Any) -> str:
@@ -520,7 +559,7 @@ def search_grants_opportunities(
     payload = {key: value for key, value in payload.items() if value not in ("", None)}
 
     try:
-        response = requests.post(GRANTS_GOV_SEARCH_URL, json=payload, timeout=30)
+        response = requests.post(f"{settings.GRANTS_GOV_BASE_URL.rstrip('/')}/search2", json=payload, timeout=30)
     except requests.RequestException as exc:
         raise IntegrationError("Grants.gov could not be reached. Check network access and try again.") from exc
 
@@ -582,7 +621,7 @@ def search_grants_opportunities(
 def fetch_grants_opportunity(opportunity_id: str, *, persist: bool = True) -> dict[str, Any]:
     try:
         numeric_id = int(opportunity_id)
-        response = requests.post(GRANTS_GOV_DETAIL_URL, json={"opportunityId": numeric_id}, timeout=30)
+        response = requests.post(f"{settings.GRANTS_GOV_BASE_URL.rstrip('/')}/fetchOpportunity", json={"opportunityId": numeric_id}, timeout=30)
     except ValueError as exc:
         raise IntegrationError("A valid Grants.gov opportunity ID is required.") from exc
     except requests.RequestException as exc:
@@ -591,7 +630,10 @@ def fetch_grants_opportunity(opportunity_id: str, *, persist: bool = True) -> di
     if not response.ok:
         raise IntegrationError(f"Grants.gov returned HTTP {response.status_code}: {_safe_text(response.text, max_length=300)}")
 
-    body = response.json()
+    try:
+        body = response.json()
+    except ValueError as exc:
+        raise IntegrationError("Grants.gov returned a response that was not valid JSON.") from exc
     if body.get("errorcode") not in (0, "0", None):
         raise IntegrationError(_safe_text(body.get("msg") or "Grants.gov detail request failed.", max_length=300))
 

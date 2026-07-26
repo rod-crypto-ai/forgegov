@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import { notFound, usePathname } from "next/navigation";
 import { AssistantWorkspace } from "@/components/assistant-workspace";
 import { WorkspacePage } from "@/components/workspace-page";
@@ -12,7 +13,7 @@ import { PipelineWorkspace, PursuitsWorkspace, TasksWorkspace, SavedSearchesWork
 export default function DynamicFeaturePage() {
   const pathname = usePathname();
   const feature = getFeatureByPath(pathname);
-  if (!feature) notFound();
+  if (!feature) return notFound();
 
   if (pathname === "/assistant") return <AssistantWorkspace />;
   if (pathname === "/reports/funding") return <ReportPage type="funding" />;
@@ -23,7 +24,7 @@ export default function DynamicFeaturePage() {
   if (pathname === "/capture/tasks") return <TasksWorkspace />;
   if (pathname === "/capture/saved-searches") return <SavedSearchesWorkspace />;
   if (pathname.startsWith("/opportunities/")) {
-    return <OpportunityExplorer mode={pathname.split("/").at(-1) as OpportunityMode} />;
+    return <Suspense fallback={<div className="table-state"><strong>Loading opportunity search…</strong></div>}><OpportunityExplorer mode={pathname.split("/").at(-1) as OpportunityMode} /></Suspense>;
   }
   return <WorkspacePage feature={feature} />;
 }

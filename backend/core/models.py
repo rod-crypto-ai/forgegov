@@ -403,3 +403,39 @@ class Category(TimeStampedModel):
 
     def __str__(self):
         return f"{self.category_type.upper()} {self.code}"
+
+
+class Invitation(TimeStampedModel):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        ACCEPTED = "accepted", "Accepted"
+        REVOKED = "revoked", "Revoked"
+        EXPIRED = "expired", "Expired"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="invitations")
+    email = models.EmailField()
+    role = models.CharField(max_length=20, choices=Membership.Role.choices, default=Membership.Role.VIEWER)
+    token = models.CharField(max_length=128, unique=True)
+    invited_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="sent_forgegov_invitations")
+    expires_at = models.DateTimeField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=("organization", "email"), condition=models.Q(status="pending"), name="unique_pending_invitation_per_org_email"),
+        ]
+
+
+class AuditLog(TimeStampedModel):
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.SET_NULL, related_name="audit_logs")
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="forgegov_audit_logs")
+    action = models.CharField(max_length=120)
+    object_type = models.CharField(max_length=120, blank=True)
+    object_id = models.CharField(max_length=120, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["organization", "-created_at"]), models.Index(fields=["action"])]

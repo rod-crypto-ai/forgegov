@@ -1,102 +1,71 @@
-# ForgeGov
+# ForgeGov v1.0.2
 
-ForgeGov is a government-contracting intelligence and capture-management platform built with Django, PostgreSQL, Redis, Celery, Next.js, and GitHub Actions.
+ForgeGov is a government-contracting intelligence and capture-management platform built with Django, Django REST Framework, PostgreSQL, Redis, Celery, Next.js, TypeScript, and Docker.
 
-## ForgeGov v0.3 foundation
+## Working capabilities
 
-The application now follows the deeper product structure shown in the GovTribe reference screenshots while retaining original ForgeGov branding and interface design.
+- Secure registration, sign-in, sign-out, cookie JWT refresh, CSRF protection, and organization-scoped roles.
+- Team invitations, member administration, and workspace audit logs.
+- Live SAM.gov federal opportunity search with automatic recent-data loading, filters, pagination, persistence, CSV export, and pipeline actions.
+- Live Grants.gov opportunity search with automatic current-data loading.
+- USAspending award search and stored award intelligence.
+- OpenAI Responses API integration through the Django backend.
+- Grounded ForgeGov AI context from recent opportunities, awards, pipeline items, pursuits, tasks, contacts, and file metadata.
+- Organization-isolated pipelines, pursuits, tasks, saved searches, contacts, contact groups, teaming records, and file metadata.
+- Docker development environment and production Docker targets.
 
-### Navigation and workspace modules
+## Install this update
 
-- ForgeGov AI.
-- Capture: dashboard, teaming, pipelines, pursuits, tasks, and saved searches.
-- Beacon: contacts and contact groups.
-- Reports: funding and new entrants.
-- Opportunities: federal forecasts, federal contracts, federal contract vehicles, state/local contracts, and federal grants.
-- Awards: federal contracts, IDVs, contract vehicles, grants, state/local contracts, state/local IDVs, and state/local vehicles.
-- Participants: federal agencies, states, jurisdictions, and vendors.
-- Files: government files and user files.
-- Categories: NAICS, PSC, NIGP, and UNSPSC.
-- Workspace and settings.
-
-### Operational functionality
-
-- Responsive, collapsible desktop and mobile navigation.
-- Live SAM.gov opportunity search through the Django backend.
-- Advanced opportunity filters, result persistence, CSV export, and source links.
-- Real dashboard metrics from the database—no fabricated totals.
-- API-backed tables with search, filtering controls, refresh, and CSV export.
-- Django CRUD endpoints for pursuits, awards, agencies, vendors, contacts, contact groups, teaming requests, files, participants, and categories.
-- Expanded capture, buyer, vendor, award, file, and classification data models.
-- AI workspace prepared for a grounded model connection; it explicitly refuses to invent results while no model service is configured.
-- Docker Compose and GitHub Actions configuration.
-
-## Secure local configuration
-
-The SAM.gov key is a secret. It must never be committed to GitHub or placed in frontend code.
+The installer preserves `.git` and `.env`, creates a timestamped backup, adds any missing non-secret OpenAI settings, rebuilds Docker services, and recreates the containers so current `.env` values are loaded.
 
 ```bash
-python3 scripts/configure_local.py
-```
-
-The script securely prompts for the key, generates a Django secret, and writes a local `.env` file. `.env` is ignored by Git.
-
-## Start with Docker
-
-```bash
-docker compose up --build -d
-docker compose ps
+cd ~/Downloads/forgegov-v1.0.2
+chmod +x INSTALL.command VERIFY.command
+./INSTALL.command
 ```
 
 Open:
 
 - ForgeGov: `http://localhost:3000`
-- API: `http://localhost:8000/api/`
-- Django admin: `http://localhost:8000/admin/`
+- ForgeGov AI: `http://localhost:3000/assistant`
+- Federal opportunities: `http://localhost:3000/opportunities/federal-contracts`
+- Federal grants: `http://localhost:3000/opportunities/federal-grants`
+- API health: `http://localhost:8000/api/health/`
 
-Create an administrator:
+## Configure local secrets
 
-```bash
-docker compose exec backend python manage.py createsuperuser
+The installer preserves the existing project `.env`. Verify these server-side values:
+
+```env
+SAM_GOV_API_KEY=your_real_sam_key
+OPENAI_API_KEY=your_real_openai_api_key
+OPENAI_API_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-5-mini
+DJANGO_SECRET_KEY=a-long-random-secret
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api
 ```
 
-## Run without Docker
+Never place the OpenAI key in a `NEXT_PUBLIC_*` variable or frontend source file. Docker Compose reads `env_file` values when containers are created, so use `docker compose up -d --force-recreate` after changing `.env`.
 
-Backend:
-
-```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python manage.py migrate
-python manage.py runserver
-```
-
-Frontend, in another Terminal window:
+## Verify the release
 
 ```bash
-cd frontend
-npm install
-npm run dev
+cd ~/Documents/GitHub/forgegov
+./VERIFY.command
 ```
 
-## Verification performed for v0.3
+The verification script checks Django configuration, migrations, backend tests, a live SAM.gov request, a minimal live OpenAI Responses API request, frontend linting, TypeScript, the production Next.js image, and both local health endpoints.
+
+## Manual restart after changing `.env`
 
 ```bash
-python manage.py test
-ruff check .
-npm run lint
-npm run build
+cd ~/Documents/GitHub/forgegov
+docker compose up -d --force-recreate backend worker beat frontend
 ```
 
-- Five Django tests passed.
-- Django system checks passed.
-- Ruff passed.
-- ESLint passed.
-- Next.js production build passed.
-- Home, opportunity, and contact routes returned HTTP 200 in a local production-server check.
+## Remaining product limitations
 
-## Honest product status
-
-This is now a substantially broader application foundation, but it is not yet a finished GovTribe or HigherGov replacement. A complete commercial platform still requires organization-scoped authorization, onboarding, working create/edit forms for every module, award ingestion, Grants.gov ingestion, state/local data licensing and connectors, document storage and extraction, a grounded AI service, alerts, email delivery, payment plans, and production deployment hardening.
+- AI answers use the bounded ForgeGov record snapshot supplied with each request; semantic retrieval across full document contents is not implemented yet.
+- File records store metadata only. Actual upload storage, malware scanning, previews, OCR, and document extraction are not implemented.
+- Password recovery, email verification, MFA, billing, and workspace switching are not implemented.
+- Federal forecasts, contract vehicles, and state/local connectors are not configured; those pages clearly show connector status instead of mock records.

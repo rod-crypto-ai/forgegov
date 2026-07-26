@@ -2,10 +2,14 @@ from pathlib import Path
 from datetime import timedelta
 import os
 import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "development-only-key-change-me")
 DEBUG = os.getenv("DJANGO_DEBUG", "true").lower() == "true"
+_insecure_secret_keys = {"", "development-only-key-change-me", "replace-with-a-long-random-value"}
+if not DEBUG and (SECRET_KEY in _insecure_secret_keys or len(SECRET_KEY) < 40):
+    raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set to a strong value of at least 40 characters when DJANGO_DEBUG=false.")
 ALLOWED_HOSTS = [x.strip() for x in os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if x.strip()]
 
 INSTALLED_APPS = [
@@ -17,6 +21,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "corsheaders",
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",
     "core",
 ]
 
@@ -72,24 +77,42 @@ CORS_ALLOWED_ORIGINS = [x.strip() for x in os.getenv("CORS_ALLOWED_ORIGINS", "ht
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "core.authentication.CookieJWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ),
-    "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.AllowAny",),
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
-    "PAGE_SIZE": 25,
+    "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
+    "DEFAULT_PAGINATION_CLASS": "core.pagination.ForgeGovPagination",
+    "PAGE_SIZE": 50,
     "DEFAULT_THROTTLE_RATES": {
-        "sam_live": os.getenv("SAM_LIVE_SEARCH_RATE", "10/day"),
+        "sam_live": os.getenv("SAM_LIVE_SEARCH_RATE", "120/hour"),
+        "auth_login": os.getenv("AUTH_LOGIN_RATE", "10/minute"),
+        "auth_register": os.getenv("AUTH_REGISTER_RATE", "5/hour"),
+        "openai_chat": os.getenv("OPENAI_CHAT_RATE", "60/hour"),
     },
 }
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "UPDATE_LAST_LOGIN": True,
 }
+
+AUTH_ACCESS_COOKIE_NAME = "forgegov_access"
+AUTH_REFRESH_COOKIE_NAME = "forgegov_refresh"
+AUTH_ACCESS_COOKIE_MAX_AGE = 30 * 60
+AUTH_REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60
 
 CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": os.getenv("CACHE_URL", CELERY_BROKER_URL),
+        "KEY_PREFIX": "forgegov",
+    }
+}
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60
 CELERY_BEAT_SCHEDULE = {}
@@ -105,3 +128,27 @@ SAM_GOV_BASE_URL = os.getenv("SAM_GOV_BASE_URL", "https://api.sam.gov/opportunit
 USASPENDING_BASE_URL = os.getenv("USASPENDING_BASE_URL", "https://api.usaspending.gov")
 
 GRANTS_GOV_BASE_URL = os.getenv("GRANTS_GOV_BASE_URL", "https://api.grants.gov/v1/api")
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_API_BASE_URL = os.getenv("OPENAI_API_BASE_URL", "https://api.openai.com/v1")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
+OPENAI_TIMEOUT_SECONDS = int(os.getenv("OPENAI_TIMEOUT_SECONDS", "90"))
+OPENAI_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "1800"))
+
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+PUBLIC_REGISTRATION_ENABLED = os.getenv("PUBLIC_REGISTRATION_ENABLED", "true").lower() == "true"
+CSRF_TRUSTED_ORIGINS = [x.strip() for x in os.getenv("CSRF_TRUSTED_ORIGINS", FRONTEND_URL).split(",") if x.strip()]
+CORS_ALLOW_CREDENTIALS = True
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_SAMESITE = "None" if not DEBUG else "Lax"
+CSRF_COOKIE_SAMESITE = "None" if not DEBUG else "Lax"
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "false").lower() == "true"
+SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "0"))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = SECURE_HSTS_SECONDS > 0
+SECURE_HSTS_PRELOAD = SECURE_HSTS_SECONDS > 0
+X_FRAME_OPTIONS = "DENY"
+SECURE_CONTENT_TYPE_NOSNIFF = True
+REFERRER_POLICY = "same-origin"

@@ -8,24 +8,29 @@ import {
   ShieldCheck, Sparkles, Target, TrendingUp, Users,
 } from "lucide-react";
 import { apiGet } from "@/lib/api";
+import { useAuth } from "@/components/auth-provider";
 
 type Summary = { opportunities?: { total?: number; active?: number }; awards?: { total?: number; obligated_total?: number }; pipeline?: { total?: number; by_stage?: Record<string, number>; weighted_value?: number }; pursuits?: { total?: number }; tasks?: { open?: number; overdue?: number }; contacts?: number; vendors?: number; agencies?: number; saved_searches?: number; };
 type Integrations = { sam_gov?: { configured?: boolean }; usaspending?: { reachable?: boolean; stored_awards?: number } };
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 });
 
 export default function DashboardPage() {
+  const { session } = useAuth();
   const [summary, setSummary] = useState<Summary>({});
   const [integrations, setIntegrations] = useState<Integrations>({});
   const [error, setError] = useState("");
   useEffect(() => { Promise.all([apiGet<Summary>("/dashboard/summary/"), apiGet<Integrations>("/integrations/status/?probe=true")]).then(([a,b]) => {setSummary(a); setIntegrations(b);}).catch((e) => setError(e instanceof Error ? e.message : "Backend unavailable")); }, []);
   const stages = useMemo(() => Object.entries(summary.pipeline?.by_stage ?? {}), [summary]);
   const total = Math.max(summary.pipeline?.total ?? 0, 1);
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  const displayName = session?.user.first_name?.trim() || session?.user.email?.split("@")[0] || "there";
 
   return <div className="executive-dashboard">
     <section className="executive-head">
       <div>
         <span className="page-kicker">CAPTURE COMMAND CENTER</span>
-        <h1>Good evening, Rod.</h1>
+        <h1>{greeting}, {displayName}.</h1>
         <p>Find the right work, understand the market, and move every pursuit forward from one operating picture.</p>
       </div>
       <div className="head-actions"><Link href="/assistant" className="button ghost"><Sparkles size={17}/> Ask ForgeGov AI</Link><Link href="/opportunities/federal-contracts" className="button solid"><Search size={17}/> Find opportunities</Link></div>

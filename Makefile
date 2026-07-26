@@ -1,10 +1,10 @@
-.PHONY: up down logs test migrate makemigrations lint
+.PHONY: up down logs test test-backend lint build verify migrate makemigrations
 
 up:
-	docker compose up --build
+	docker compose up -d --build
 
 down:
-	docker compose down
+	docker compose down --remove-orphans
 
 logs:
 	docker compose logs -f
@@ -15,10 +15,17 @@ migrate:
 makemigrations:
 	docker compose exec backend python manage.py makemigrations
 
-test:
-	docker compose exec backend python manage.py test
-	docker compose exec frontend npm test -- --runInBand
+test-backend:
+	docker compose exec backend python manage.py test core
+
+test: test-backend
+	docker compose run --rm frontend npm run lint
 
 lint:
 	docker compose exec backend ruff check .
-	docker compose exec frontend npm run lint
+
+build:
+	docker build --target runner -t forgegov-frontend-production ./frontend
+
+verify:
+	./VERIFY.command

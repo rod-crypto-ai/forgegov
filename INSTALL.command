@@ -1,25 +1,53 @@
 #!/bin/bash
-set -e
+set -euo pipefail
+
 PROJECT="$HOME/Documents/GitHub/forgegov"
 PACKAGE_DIR="$(cd "$(dirname "$0")" && pwd)"
-echo "ForgeGov v0.8 functional-workflows installer"
-if [ ! -f "$PROJECT/docker-compose.yml" ]; then echo "ERROR: ForgeGov was not found at $PROJECT"; exit 1; fi
 BACKUP="$HOME/Documents/GitHub/forgegov-backup-$(date +%Y%m%d-%H%M%S)"
+
+echo "ForgeGov v1.0.2 AI and recent-data installer"
+if [ ! -f "$PROJECT/docker-compose.yml" ]; then
+  echo "ERROR: ForgeGov was not found at $PROJECT"
+  exit 1
+fi
+
 echo "Creating backup: $BACKUP"
 cp -R "$PROJECT" "$BACKUP"
-[ -f "$PROJECT/.env" ] && cp "$PROJECT/.env" "$HOME/forgegov-env-backup"
+
 cd "$PROJECT"
 docker compose down --remove-orphans || true
-echo "Installing v0.8 source..."
-rsync -a --delete --exclude=".git" --exclude=".env" --exclude="node_modules" --exclude=".next" "$PACKAGE_DIR/" "$PROJECT/"
-[ -f "$HOME/forgegov-env-backup" ] && cp "$HOME/forgegov-env-backup" "$PROJECT/.env"
-grep -q "Add to pipeline" "$PROJECT/frontend/components/opportunity-explorer.tsx" || { echo "ERROR: v0.8 frontend files were not installed"; exit 1; }
-grep -q "opportunity-to-pipeline" "$PROJECT/backend/core/urls.py" || { echo "ERROR: v0.8 backend files were not installed"; exit 1; }
-cd "$PROJECT"
-echo "Building backend and frontend..."
-docker compose build backend frontend
-echo "Starting ForgeGov and applying migrations..."
-docker compose up -d
+
+echo "Installing v1.0.2 while preserving .git and .env..."
+rsync -a \
+  --exclude='.git' \
+  --exclude='.env' \
+  --exclude='node_modules' \
+  --exclude='.next' \
+  "$PACKAGE_DIR/" "$PROJECT/"
+
+python3 -m compileall -q backend
+grep -q 'path("ai/chat/", ai_chat)' backend/core/urls.py
+grep -q 'OPENAI_API_KEY' backend/forgegov/settings.py
+grep -q 'Loading the most recent live opportunities' frontend/components/opportunity-explorer.tsx
+
+if [ ! -f .env ]; then
+  cp .env.example .env
+  echo "Created .env from .env.example. Add your SAM.gov and OpenAI keys before using those integrations."
+else
+  grep -Eq '^[[:space:]]*OPENAI_API_KEY[[:space:]]*=' .env || printf '\nOPENAI_API_KEY=\n' >> .env
+  grep -Eq '^[[:space:]]*OPENAI_API_BASE_URL[[:space:]]*=' .env || printf 'OPENAI_API_BASE_URL=https://api.openai.com/v1\n' >> .env
+  grep -Eq '^[[:space:]]*OPENAI_MODEL[[:space:]]*=' .env || printf 'OPENAI_MODEL=gpt-5-mini\n' >> .env
+  grep -Eq '^[[:space:]]*OPENAI_TIMEOUT_SECONDS[[:space:]]*=' .env || printf 'OPENAI_TIMEOUT_SECONDS=90\n' >> .env
+  grep -Eq '^[[:space:]]*OPENAI_MAX_OUTPUT_TOKENS[[:space:]]*=' .env || printf 'OPENAI_MAX_OUTPUT_TOKENS=1800\n' >> .env
+  grep -Eq '^[[:space:]]*OPENAI_CHAT_RATE[[:space:]]*=' .env || printf 'OPENAI_CHAT_RATE=60/hour\n' >> .env
+fi
+
+echo "Rebuilding and recreating ForgeGov containers so updated environment variables are loaded..."
+docker compose build --no-cache backend frontend
+docker compose up -d --force-recreate
+sleep 15
 docker compose ps
+
 echo
-echo "ForgeGov v0.8 installed. Open http://localhost:3000"
+echo "ForgeGov v1.0.2 installed. Open http://localhost:3000"
+echo "Run ./VERIFY.command for the full verification suite, including an OpenAI API probe when a key is configured."

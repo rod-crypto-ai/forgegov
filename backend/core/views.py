@@ -2,8 +2,11 @@ from django.conf import settings
 from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
 from django.utils import timezone
 from rest_framework import status, viewsets
-from rest_framework.decorators import api_view, throttle_classes
+from rest_framework.decorators import api_view, throttle_classes, permission_classes
 from rest_framework.response import Response
+from rest_framework.permissions import AllowAny
+from .permissions import ReadOnlyOrContributor, active_membership
+from .ai import OpenAIIntegrationError, ask_openai
 
 from .integrations import (
     IntegrationError,
@@ -49,7 +52,7 @@ from .serializers import (
     TeamingRequestSerializer,
     VendorSerializer,
 )
-from .throttles import SamLiveSearchThrottle
+from .throttles import OpenAIChatThrottle, SamLiveSearchThrottle
 
 
 def _truthy(value: str | None) -> bool:
@@ -57,8 +60,9 @@ def _truthy(value: str | None) -> bool:
 
 
 @api_view(["GET"])
+@permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "0.8"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "1.0.2"})
 
 
 @api_view(["GET"])
@@ -73,24 +77,33 @@ def integration_status(request):
             "latest_sync": DataSyncRunSerializer(latest_sync).data if latest_sync else None,
         },
         "usaspending": {**usaspending_status(probe=probe), "latest_sync": DataSyncRunSerializer(latest_usa_sync).data if latest_usa_sync else None, "stored_awards": Award.objects.filter(source="usaspending.gov").count()},
+        "openai": {
+            "configured": bool(settings.OPENAI_API_KEY),
+            "model": settings.OPENAI_MODEL,
+            "base_url": settings.OPENAI_API_BASE_URL,
+        },
     })
 
 
 @api_view(["GET"])
 def dashboard_summary(request):
+    organization = _request_organization(request)
+    pipeline_base = PipelineItem.objects.filter(organization=organization)
+    pursuit_base = Pursuit.objects.filter(organization=organization)
+    task_base = Task.objects.filter(organization=organization)
     pipeline_counts = {
         row["stage"]: row["count"]
-        for row in PipelineItem.objects.values("stage").annotate(count=Count("id"))
+        for row in pipeline_base.values("stage").annotate(count=Count("id"))
     }
     pursuit_counts = {
         row["stage"]: row["count"]
-        for row in Pursuit.objects.values("stage").annotate(count=Count("id"))
+        for row in pursuit_base.values("stage").annotate(count=Count("id"))
     }
     weighted_expression = ExpressionWrapper(
         F("estimated_value") * F("probability_of_win") / 100,
         output_field=DecimalField(max_digits=20, decimal_places=2),
     )
-    weighted_value = Pursuit.objects.exclude(estimated_value__isnull=True).aggregate(total=Sum(weighted_expression))["total"] or 0
+    weighted_value = pursuit_base.exclude(estimated_value__isnull=True).aggregate(total=Sum(weighted_expression))["total"] or 0
     award_totals = Award.objects.aggregate(total=Sum("obligated_amount"))
     now = timezone.now()
     return Response({
@@ -103,26 +116,46 @@ def dashboard_summary(request):
             "obligated_total": award_totals["total"] or 0,
         },
         "pipeline": {
-            "total": PipelineItem.objects.count(),
+            "total": pipeline_base.count(),
             "by_stage": pipeline_counts,
             "weighted_value": weighted_value,
         },
         "pursuits": {
-            "total": Pursuit.objects.count(),
+            "total": pursuit_base.count(),
             "by_stage": pursuit_counts,
         },
         "tasks": {
-            "open": Task.objects.filter(completed=False).count(),
-            "completed": Task.objects.filter(completed=True).count(),
-            "overdue": Task.objects.filter(completed=False, due_at__lt=now).count(),
+            "open": task_base.filter(completed=False).count(),
+            "completed": task_base.filter(completed=True).count(),
+            "overdue": task_base.filter(completed=False, due_at__lt=now).count(),
         },
-        "contacts": Contact.objects.count(),
+        "contacts": Contact.objects.filter(organization=organization).count(),
         "vendors": Vendor.objects.count(),
         "agencies": Agency.objects.count(),
-        "workspaces": Organization.objects.count(),
-        "saved_searches": SavedSearch.objects.filter(enabled=True).count(),
-        "files": FileRecord.objects.count(),
+        "workspaces": 1,
+        "saved_searches": SavedSearch.objects.filter(organization=organization, enabled=True).count(),
+        "files": FileRecord.objects.filter(organization=organization).count(),
     })
+
+
+@api_view(["POST"])
+@throttle_classes([OpenAIChatThrottle])
+def ai_chat(request):
+    message = str(request.data.get("message") or "").strip()
+    if not message:
+        return Response({"detail": "A message is required."}, status=status.HTTP_400_BAD_REQUEST)
+    if len(message) > 8000:
+        return Response({"detail": "The message is too long. Limit requests to 8,000 characters."}, status=status.HTTP_400_BAD_REQUEST)
+    history = request.data.get("history") or []
+    if not isinstance(history, list):
+        return Response({"detail": "history must be a list."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        organization = _request_organization(request)
+        return Response(ask_openai(message=message, history=history, organization=organization))
+    except Organization.DoesNotExist:
+        return Response({"detail": "An active workspace membership is required."}, status=status.HTTP_403_FORBIDDEN)
+    except OpenAIIntegrationError as exc:
+        return Response({"detail": str(exc)}, status=exc.status_code)
 
 
 @api_view(["GET"])
@@ -149,7 +182,10 @@ def live_sam_search(request):
             persist=_truthy(request.query_params.get("persist")),
         )
         return Response(data)
-    except (IntegrationError, TypeError, ValueError) as exc:
+    except IntegrationError as exc:
+        code = status.HTTP_503_SERVICE_UNAVAILABLE if not settings.SAM_GOV_API_KEY else status.HTTP_502_BAD_GATEWAY
+        return Response({"detail": str(exc)}, status=code)
+    except (TypeError, ValueError) as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -173,14 +209,15 @@ def live_usaspending_awards(request):
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
 
-def _default_organization() -> Organization:
-    organization = Organization.objects.order_by("id").first()
-    if organization:
-        return organization
-    return Organization.objects.create(name="Howard Dynamics", slug="howard-dynamics")
+def _request_organization(request) -> Organization:
+    membership = active_membership(request.user)
+    if not membership:
+        raise Organization.DoesNotExist
+    return membership.organization
 
 
 @api_view(["POST"])
+@permission_classes([ReadOnlyOrContributor])
 def add_opportunity_to_pipeline(request):
     source_id = str(request.data.get("source_id") or request.data.get("notice_id") or "").strip()
     if not source_id:
@@ -189,21 +226,26 @@ def add_opportunity_to_pipeline(request):
         opportunity = Opportunity.objects.get(source_id=source_id)
     except Opportunity.DoesNotExist:
         return Response({"detail": "Search with Store results enabled before adding this opportunity."}, status=status.HTTP_404_NOT_FOUND)
-    organization = _default_organization()
+    organization = _request_organization(request)
+    requested_stage = str(request.data.get("stage") or PipelineItem.Stage.REVIEWING)
+    valid_stages = {value for value, _ in PipelineItem.Stage.choices}
+    if requested_stage not in valid_stages:
+        return Response({"detail": "A valid pipeline stage is required."}, status=status.HTTP_400_BAD_REQUEST)
     item, created = PipelineItem.objects.get_or_create(
         organization=organization, opportunity=opportunity,
-        defaults={"stage": request.data.get("stage") or PipelineItem.Stage.REVIEWING, "next_action": "Complete qualification review"},
+        defaults={"stage": requested_stage, "owner": request.user, "next_action": "Complete qualification review"},
     )
     if not created and request.data.get("stage"):
-        item.stage = request.data["stage"]
+        item.stage = requested_stage
         item.save(update_fields=["stage", "updated_at"])
     return Response(PipelineItemSerializer(item).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
 
 @api_view(["POST"])
+@permission_classes([ReadOnlyOrContributor])
 def pipeline_to_pursuit(request, pipeline_id: int):
     try:
-        item = PipelineItem.objects.select_related("opportunity", "organization").get(pk=pipeline_id)
+        item = PipelineItem.objects.select_related("opportunity", "organization").get(pk=pipeline_id, organization=_request_organization(request))
     except PipelineItem.DoesNotExist:
         return Response({"detail": "Pipeline item not found."}, status=status.HTTP_404_NOT_FOUND)
     pursuit, created = Pursuit.objects.get_or_create(
@@ -222,25 +264,30 @@ def pipeline_to_pursuit(request, pipeline_id: int):
 
 
 @api_view(["POST"])
+@permission_classes([ReadOnlyOrContributor])
 def create_saved_search(request):
     name = str(request.data.get("name") or "").strip()
     filters = request.data.get("filters") or {}
     if not name:
         return Response({"detail": "A saved-search name is required."}, status=status.HTTP_400_BAD_REQUEST)
-    record = SavedSearch.objects.create(organization=_default_organization(), name=name, filters=filters, alert_frequency=request.data.get("alert_frequency") or "daily", enabled=True)
+    record = SavedSearch.objects.create(organization=_request_organization(request), owner=request.user, name=name, filters=filters, alert_frequency=request.data.get("alert_frequency") or "daily", enabled=True)
     return Response(SavedSearchSerializer(record).data, status=status.HTTP_201_CREATED)
 
 
 @api_view(["POST"])
+@permission_classes([ReadOnlyOrContributor])
 def create_workspace_task(request):
     title = str(request.data.get("title") or "").strip()
     if not title:
         return Response({"detail": "Task title is required."}, status=status.HTTP_400_BAD_REQUEST)
+    organization = _request_organization(request)
     pipeline_item = None
     pipeline_id = request.data.get("pipeline_item")
     if pipeline_id:
-        pipeline_item = PipelineItem.objects.filter(pk=pipeline_id).first()
-    record = Task.objects.create(organization=_default_organization(), pipeline_item=pipeline_item, title=title, description=request.data.get("description") or "", due_at=request.data.get("due_at") or None)
+        pipeline_item = PipelineItem.objects.filter(pk=pipeline_id, organization=organization).first()
+        if not pipeline_item:
+            return Response({"detail": "Pipeline item not found in this workspace."}, status=status.HTTP_400_BAD_REQUEST)
+    record = Task.objects.create(organization=organization, assigned_to=request.user, pipeline_item=pipeline_item, title=title, description=request.data.get("description") or "", due_at=request.data.get("due_at") or None)
     return Response(TaskSerializer(record).data, status=status.HTTP_201_CREATED)
 
 
@@ -274,12 +321,35 @@ def live_grants_detail(request, opportunity_id: str):
         return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
 
-class OrganizationViewSet(viewsets.ModelViewSet):
-    queryset = Organization.objects.all().order_by("name")
+class OrganizationScopedViewSetMixin:
+    permission_classes = [ReadOnlyOrContributor]
+
+    def get_organization(self):
+        return _request_organization(self.request)
+
+    def scope_queryset(self, queryset):
+        return queryset.filter(organization=self.get_organization())
+
+    def perform_create(self, serializer):
+        extra = {"organization": self.get_organization()}
+        model = serializer.Meta.model
+        field_names = {field.name for field in model._meta.fields}
+        if "owner" in field_names and not serializer.validated_data.get("owner"):
+            extra["owner"] = self.request.user
+        if "assigned_to" in field_names and not serializer.validated_data.get("assigned_to"):
+            extra["assigned_to"] = self.request.user
+        serializer.save(**extra)
+
+
+class OrganizationViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = OrganizationSerializer
+    permission_classes = [ReadOnlyOrContributor]
+
+    def get_queryset(self):
+        return Organization.objects.filter(pk=_request_organization(self.request).pk)
 
 
-class OpportunityViewSet(viewsets.ModelViewSet):
+class OpportunityViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = OpportunitySerializer
 
     def get_queryset(self):
@@ -306,16 +376,17 @@ class OpportunityViewSet(viewsets.ModelViewSet):
         return queryset
 
 
-class PipelineItemViewSet(viewsets.ModelViewSet):
-    queryset = PipelineItem.objects.select_related("opportunity", "organization", "owner").all()
+class PipelineItemViewSet(OrganizationScopedViewSetMixin, viewsets.ModelViewSet):
     serializer_class = PipelineItemSerializer
+    def get_queryset(self):
+        return self.scope_queryset(PipelineItem.objects.select_related("opportunity", "organization", "owner"))
 
 
-class PursuitViewSet(viewsets.ModelViewSet):
+class PursuitViewSet(OrganizationScopedViewSetMixin, viewsets.ModelViewSet):
     serializer_class = PursuitSerializer
 
     def get_queryset(self):
-        queryset = Pursuit.objects.select_related("opportunity", "organization", "owner").all()
+        queryset = self.scope_queryset(Pursuit.objects.select_related("opportunity", "organization", "owner"))
         stage = self.request.query_params.get("stage")
         search = self.request.query_params.get("search")
         if stage:
@@ -325,14 +396,16 @@ class PursuitViewSet(viewsets.ModelViewSet):
         return queryset
 
 
-class TaskViewSet(viewsets.ModelViewSet):
-    queryset = Task.objects.select_related("organization", "pipeline_item", "assigned_to").all()
+class TaskViewSet(OrganizationScopedViewSetMixin, viewsets.ModelViewSet):
     serializer_class = TaskSerializer
+    def get_queryset(self):
+        return self.scope_queryset(Task.objects.select_related("organization", "pipeline_item", "assigned_to"))
 
 
-class SavedSearchViewSet(viewsets.ModelViewSet):
-    queryset = SavedSearch.objects.select_related("organization", "owner").all()
+class SavedSearchViewSet(OrganizationScopedViewSetMixin, viewsets.ModelViewSet):
     serializer_class = SavedSearchSerializer
+    def get_queryset(self):
+        return self.scope_queryset(SavedSearch.objects.select_related("organization", "owner"))
 
 
 class DataSyncRunViewSet(viewsets.ReadOnlyModelViewSet):
@@ -340,7 +413,7 @@ class DataSyncRunViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = DataSyncRunSerializer
 
 
-class AgencyViewSet(viewsets.ModelViewSet):
+class AgencyViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = AgencySerializer
 
     def get_queryset(self):
@@ -351,7 +424,7 @@ class AgencyViewSet(viewsets.ModelViewSet):
         return queryset
 
 
-class VendorViewSet(viewsets.ModelViewSet):
+class VendorViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = VendorSerializer
 
     def get_queryset(self):
@@ -362,7 +435,7 @@ class VendorViewSet(viewsets.ModelViewSet):
         return queryset
 
 
-class AwardViewSet(viewsets.ModelViewSet):
+class AwardViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = AwardSerializer
 
     def get_queryset(self):
@@ -383,11 +456,11 @@ class AwardViewSet(viewsets.ModelViewSet):
         return queryset
 
 
-class ContactViewSet(viewsets.ModelViewSet):
+class ContactViewSet(OrganizationScopedViewSetMixin, viewsets.ModelViewSet):
     serializer_class = ContactSerializer
 
     def get_queryset(self):
-        queryset = Contact.objects.select_related("organization", "relationship_owner").all()
+        queryset = self.scope_queryset(Contact.objects.select_related("organization", "relationship_owner"))
         search = self.request.query_params.get("search")
         contact_type = self.request.query_params.get("contact_type")
         if contact_type:
@@ -403,34 +476,35 @@ class ContactViewSet(viewsets.ModelViewSet):
         return queryset
 
 
-class ContactGroupViewSet(viewsets.ModelViewSet):
-    queryset = ContactGroup.objects.prefetch_related("contacts").all()
+class ContactGroupViewSet(OrganizationScopedViewSetMixin, viewsets.ModelViewSet):
     serializer_class = ContactGroupSerializer
+    def get_queryset(self):
+        return self.scope_queryset(ContactGroup.objects.prefetch_related("contacts"))
 
 
-class TeamingRequestViewSet(viewsets.ModelViewSet):
+class TeamingRequestViewSet(OrganizationScopedViewSetMixin, viewsets.ModelViewSet):
     serializer_class = TeamingRequestSerializer
 
     def get_queryset(self):
-        queryset = TeamingRequest.objects.select_related("organization", "pursuit").all()
+        queryset = self.scope_queryset(TeamingRequest.objects.select_related("organization", "pursuit"))
         request_status = self.request.query_params.get("status")
         if request_status:
             queryset = queryset.filter(status=request_status)
         return queryset
 
 
-class FileRecordViewSet(viewsets.ModelViewSet):
+class FileRecordViewSet(OrganizationScopedViewSetMixin, viewsets.ModelViewSet):
     serializer_class = FileRecordSerializer
 
     def get_queryset(self):
-        queryset = FileRecord.objects.select_related("organization", "opportunity", "pursuit").all()
+        queryset = self.scope_queryset(FileRecord.objects.select_related("organization", "opportunity", "pursuit"))
         source = self.request.query_params.get("source")
         if source:
             queryset = queryset.filter(source=source)
         return queryset
 
 
-class ParticipantViewSet(viewsets.ModelViewSet):
+class ParticipantViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ParticipantSerializer
 
     def get_queryset(self):
@@ -441,7 +515,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         return queryset
 
 
-class CategoryViewSet(viewsets.ModelViewSet):
+class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = CategorySerializer
 
     def get_queryset(self):
