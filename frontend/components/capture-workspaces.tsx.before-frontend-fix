@@ -16,7 +16,7 @@ const money=new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",maxim
 export function PipelineWorkspace(){
  const [rows,setRows]=useState<Pipeline[]>([]); const [error,setError]=useState(""); const [loading,setLoading]=useState(true);
  async function load(){setLoading(true);try{setRows(normalizeList(await apiGet<Pipeline[]>("/pipeline/?page_size=250")));setError("")}catch(e){setError(e instanceof Error?e.message:"Unable to load pipeline")}finally{setLoading(false)}}
- useEffect(()=>{const timer=window.setTimeout(()=>{void load()},0);return()=>window.clearTimeout(timer)},[]);
+ useEffect(()=>{void load()},[]);
  async function update(id:number,payload:Record<string,unknown>){try{await apiPatch(`/pipeline/${id}/`,payload);await load()}catch(e){setError(e instanceof Error?e.message:"Update failed")}}
  async function pursue(id:number){try{await apiPost(`/workflow/pipeline/${id}/create-pursuit/`,{});await load();setError("Pursuit created and linked.")}catch(e){setError(e instanceof Error?e.message:"Could not create pursuit")}}
  const total=useMemo(()=>rows.reduce((s,r)=>s+Number(r.estimated_value??0),0),[rows]);
@@ -29,7 +29,7 @@ export function PipelineWorkspace(){
 export function PursuitsWorkspace(){
  const [rows,setRows]=useState<Pursuit[]>([]);const [error,setError]=useState("");
  async function load(){try{setRows(normalizeList(await apiGet<Pursuit[]>("/pursuits/?page_size=250")));setError("")}catch(e){setError(e instanceof Error?e.message:"Unable to load pursuits")}}
- useEffect(()=>{const timer=window.setTimeout(()=>{void load()},0);return()=>window.clearTimeout(timer)},[]);
+ useEffect(()=>{void load()},[]);
  async function patch(id:number,payload:Record<string,unknown>){try{await apiPatch(`/pursuits/${id}/`,payload);await load()}catch(e){setError(e instanceof Error?e.message:"Update failed")}}
  return <><header className="module-header"><div><span className="eyebrow">Capture management</span><h1>Pursuits</h1><p>Manage qualified opportunities from capture planning through proposal submission and award.</p></div><button className="secondary-button" onClick={load}><RefreshCw size={16}/> Refresh</button></header>{error&&<div className="system-banner warning">{error}</div>}<section className="data-panel"><div className="kanban-board">{["triage","qualify","bid_decision","capture","proposal","submitted","awarded"].map(stage=><section className="kanban-column" key={stage}><header><span>{human(stage)}</span><b>{rows.filter(r=>r.stage===stage).length}</b></header>{rows.filter(r=>r.stage===stage).map(r=><article className="kanban-card" key={r.id}><strong>{r.title}</strong><p>{r.next_action||"No next action set"}</p><label><span>Move to</span><select value={r.stage} onChange={e=>void patch(r.id,{stage:e.target.value})}>{["triage","qualify","bid_decision","capture","proposal","submitted","awarded","lost","no_bid"].map(s=><option key={s} value={s}>{human(s)}</option>)}</select></label><label><span>Win probability</span><input type="number" min="0" max="100" value={r.probability_of_win} onChange={e=>void patch(r.id,{probability_of_win:Number(e.target.value)})}/></label></article>)}</section>)}</div></section></>;
 }
@@ -37,7 +37,7 @@ export function PursuitsWorkspace(){
 export function TasksWorkspace(){
  const [rows,setRows]=useState<Task[]>([]);const [title,setTitle]=useState("");const [due,setDue]=useState("");const [error,setError]=useState("");
  async function load(){try{setRows(normalizeList(await apiGet<Task[]>("/tasks/?page_size=250")));setError("")}catch(e){setError(e instanceof Error?e.message:"Unable to load tasks")}}
- useEffect(()=>{const timer=window.setTimeout(()=>{void load()},0);return()=>window.clearTimeout(timer)},[]);
+ useEffect(()=>{void load()},[]);
  async function create(e:FormEvent){e.preventDefault();try{await apiPost("/workflow/tasks/",{title,due_at:due||null});setTitle("");setDue("");await load()}catch(e){setError(e instanceof Error?e.message:"Could not create task")}}
  async function toggle(t:Task){await apiPatch(`/tasks/${t.id}/`,{completed:!t.completed});await load()}
  async function remove(id:number){await apiDelete(`/tasks/${id}/`);await load()}
@@ -47,7 +47,7 @@ export function TasksWorkspace(){
 export function SavedSearchesWorkspace(){
  const [rows,setRows]=useState<SavedSearch[]>([]);const [error,setError]=useState("");
  async function load(){try{setRows(normalizeList(await apiGet<SavedSearch[]>("/saved-searches/?page_size=250")));setError("")}catch(e){setError(e instanceof Error?e.message:"Unable to load searches")}}
- useEffect(()=>{const timer=window.setTimeout(()=>{void load()},0);return()=>window.clearTimeout(timer)},[]);
+ useEffect(()=>{void load()},[]);
  async function remove(id:number){await apiDelete(`/saved-searches/${id}/`);await load()}
  return <><header className="module-header"><div><span className="eyebrow">Opportunity monitoring</span><h1>Saved Searches</h1><p>Reuse live SAM.gov filters and maintain searches that feed future alerts.</p></div><button className="secondary-button" onClick={load}><RefreshCw size={16}/> Refresh</button></header>{error&&<div className="system-banner warning">{error}</div>}<section className="data-panel"><div className="saved-search-grid">{rows.map(r=>{const {source,...searchFilters}=r.filters;const q=new URLSearchParams(searchFilters).toString();const route=source==="grants.gov"?"/opportunities/federal-grants":"/opportunities/federal-contracts";return <article className="saved-search-card" key={r.id}><div><Save size={18}/><span>{r.alert_frequency}</span></div><h3>{r.name}</h3><p>{Object.entries(r.filters).filter(([,v])=>v).map(([k,v])=>`${human(k)}: ${v}`).join(" · ")||"No filters"}</p><footer><a className="primary-button" href={`${route}?${q}`}>Run search</a><button className="icon-button" onClick={()=>void remove(r.id)}><Trash2 size={17}/></button></footer></article>})}</div></section></>;
 }

@@ -54,7 +54,7 @@ export function AwardIntelligence() {
     }
   }
 
-  useEffect(() => { const timer = window.setTimeout(() => { void search(1); }, 0); return () => window.clearTimeout(timer); }, []);
+  useEffect(() => { void search(1); }, []);
 
   const total = useMemo(() => (data?.results ?? []).reduce((sum, item) => sum + Number(item["Award Amount"] ?? 0), 0), [data]);
   const agencies = useMemo(() => new Set((data?.results ?? []).map((item) => item["Awarding Agency"]).filter(Boolean)).size, [data]);

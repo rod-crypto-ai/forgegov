@@ -43,7 +43,14 @@ docker compose exec -T backend python manage.py makemigrations --check --dry-run
 docker compose exec -T backend python manage.py test core
 
 echo "[7/10] Verifying live SAM.gov opportunity access"
-docker compose exec -T backend python manage.py shell -c 'from django.conf import settings; from core.integrations import search_sam_opportunities; assert settings.SAM_GOV_API_KEY, "SAM_GOV_API_KEY is missing from .env"; result=search_sam_opportunities(limit=1, persist=False); print(f"SAM.gov live search passed: {result[\"total_records\"]} records available")'
+docker compose exec -T backend python manage.py shell <<'PY_SAM'
+from django.conf import settings
+from core.integrations import search_sam_opportunities
+
+assert settings.SAM_GOV_API_KEY, "SAM_GOV_API_KEY is missing from .env"
+result = search_sam_opportunities(limit=1, persist=False)
+print("SAM.gov live search passed: {} records available".format(result["total_records"]))
+PY_SAM
 
 echo "[8/10] Verifying OpenAI server-side configuration and API access"
 docker compose exec -T backend python manage.py shell <<'PY'

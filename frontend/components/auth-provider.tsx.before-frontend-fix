@@ -37,7 +37,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  useEffect(() => { const timer = window.setTimeout(() => { void reload(); }, 0); return () => window.clearTimeout(timer); }, [reload]);
+  useEffect(() => { void reload(); }, [reload]);
 
   useEffect(() => {
     if (!loading && !session && !publicPaths.some((path) => pathname.startsWith(path))) {
