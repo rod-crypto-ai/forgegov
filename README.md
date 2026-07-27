@@ -1,4 +1,4 @@
-# ForgeGov v1.0.2
+# ForgeGov v1.1.0
 
 ForgeGov is a government-contracting intelligence and capture-management platform built with Django, Django REST Framework, PostgreSQL, Redis, Celery, Next.js, TypeScript, and Docker.
 
@@ -19,7 +19,7 @@ ForgeGov is a government-contracting intelligence and capture-management platfor
 The installer preserves `.git` and `.env`, creates a timestamped backup, adds any missing non-secret OpenAI settings, rebuilds Docker services, and recreates the containers so current `.env` values are loaded.
 
 ```bash
-cd ~/Downloads/forgegov-v1.0.2
+cd ~/Downloads/forgegov-v1.1.0
 chmod +x INSTALL.command VERIFY.command
 ./INSTALL.command
 ```

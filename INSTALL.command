@@ -5,7 +5,7 @@ PROJECT="$HOME/Documents/GitHub/forgegov"
 PACKAGE_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKUP="$HOME/Documents/GitHub/forgegov-backup-$(date +%Y%m%d-%H%M%S)"
 
-echo "ForgeGov v1.0.2 AI and recent-data installer"
+echo "ForgeGov v1.1.0 AI and recent-data installer"
 if [ ! -f "$PROJECT/docker-compose.yml" ]; then
   echo "ERROR: ForgeGov was not found at $PROJECT"
   exit 1
@@ -17,7 +17,7 @@ cp -R "$PROJECT" "$BACKUP"
 cd "$PROJECT"
 docker compose down --remove-orphans || true
 
-echo "Installing v1.0.2 while preserving .git and .env..."
+echo "Installing v1.1.0 while preserving .git and .env..."
 rsync -a \
   --exclude='.git' \
   --exclude='.env' \
@@ -49,5 +49,5 @@ sleep 15
 docker compose ps
 
 echo
-echo "ForgeGov v1.0.2 installed. Open http://localhost:3000"
+echo "ForgeGov v1.1.0 installed. Open http://localhost:3000"
 echo "Run ./VERIFY.command for the full verification suite, including an OpenAI API probe when a key is configured."
