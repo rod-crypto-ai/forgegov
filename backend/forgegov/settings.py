@@ -1,6 +1,7 @@
 from pathlib import Path
 from datetime import timedelta
 import os
+from urllib.parse import urlparse
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
 
@@ -10,7 +11,26 @@ DEBUG = os.getenv("DJANGO_DEBUG", "true").lower() == "true"
 _insecure_secret_keys = {"", "development-only-key-change-me", "replace-with-a-long-random-value"}
 if not DEBUG and (SECRET_KEY in _insecure_secret_keys or len(SECRET_KEY) < 40):
     raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set to a strong value of at least 40 characters when DJANGO_DEBUG=false.")
-ALLOWED_HOSTS = [x.strip() for x in os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if x.strip()]
+def _hostname_from_url(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    parsed = urlparse(value if "://" in value else f"https://{value}")
+    return parsed.hostname or ""
+
+
+_allowed_hosts = {
+    x.strip()
+    for x in os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    if x.strip()
+}
+for candidate in (
+    os.getenv("RENDER_EXTERNAL_HOSTNAME", ""),
+    _hostname_from_url(os.getenv("API_PUBLIC_URL", "")),
+):
+    if candidate:
+        _allowed_hosts.add(candidate)
+ALLOWED_HOSTS = sorted(_allowed_hosts)
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -26,6 +46,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "core.middleware.RenderHealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
@@ -115,6 +136,11 @@ CACHES = {
 }
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_WORKER_CONCURRENCY = int(os.getenv("CELERY_WORKER_CONCURRENCY", "1"))
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_BEAT_SCHEDULE = {}
 if os.getenv("SAM_SYNC_ENABLED", "false").lower() == "true":
     CELERY_BEAT_SCHEDULE["sync-recent-sam-opportunities"] = {

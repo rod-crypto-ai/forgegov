@@ -72,7 +72,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "1.2.0"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "1.2.1"})
 
 
 @api_view(["GET"])

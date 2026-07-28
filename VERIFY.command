@@ -103,4 +103,4 @@ echo "[11/11] Checking local health endpoints"
 curl --fail --silent http://localhost:8000/api/health/ >/dev/null
 curl --fail --silent http://localhost:3000 >/dev/null
 
-echo "ForgeGov v1.2.0 verification passed."
+echo "ForgeGov v1.2.1 verification passed."
