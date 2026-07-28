@@ -1,120 +1,148 @@
 databases:
-  - name: forgegov-db
-    databaseName: forgegov
-    user: forgegov
-
+- name: forgegov-db
+  databaseName: forgegov
+  user: forgegov
 services:
-  - type: keyvalue
-    name: forgegov-redis
-    ipAllowList: []
-    maxmemoryPolicy: noeviction
-
-  - type: web
-    name: forgegov-api
-    runtime: docker
-    rootDir: backend
-    dockerfilePath: ./Dockerfile
-    dockerCommand: /bin/sh -c 'gunicorn forgegov.wsgi:application --bind 0.0.0.0:$PORT --workers ${WEB_CONCURRENCY:-1} --timeout 120 --access-logfile - --error-logfile -'
-    healthCheckPath: /api/health/
-    maxShutdownDelaySeconds: 60
-    envVars:
-      - key: RUN_MIGRATIONS
-        value: "true"
-      - key: COLLECTSTATIC
-        value: "true"
-      - key: MIGRATION_MAX_ATTEMPTS
-        value: "12"
-      - key: DATABASE_URL
-        fromDatabase: { name: forgegov-db, property: connectionString }
-      - key: REDIS_URL
-        fromService: { type: keyvalue, name: forgegov-redis, property: connectionString }
-      - key: DJANGO_SECRET_KEY
-        generateValue: true
-      - key: DJANGO_DEBUG
-        value: "false"
-      - key: API_PUBLIC_URL
-        sync: false
-      - key: DJANGO_ALLOWED_HOSTS
-        sync: false
-      - key: FRONTEND_URL
-        sync: false
-      - key: CORS_ALLOWED_ORIGINS
-        sync: false
-      - key: CSRF_TRUSTED_ORIGINS
-        sync: false
-      - key: PUBLIC_REGISTRATION_ENABLED
-        value: "true"
-      - key: SECURE_SSL_REDIRECT
-        value: "true"
-      - key: SECURE_HSTS_SECONDS
-        value: "31536000"
-      - key: SAM_GOV_API_KEY
-        sync: false
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: ALERTS_ENABLED
-        value: "true"
-
-  - type: worker
-    name: forgegov-worker
-    runtime: docker
-    rootDir: backend
-    dockerfilePath: ./Dockerfile
-    dockerCommand: celery -A forgegov worker --loglevel=INFO --concurrency=1 --max-tasks-per-child=50
-    maxShutdownDelaySeconds: 120
-    envVars:
-      - key: RUN_MIGRATIONS
-        value: "false"
-      - key: COLLECTSTATIC
-        value: "false"
-      - key: DATABASE_URL
-        fromDatabase: { name: forgegov-db, property: connectionString }
-      - key: REDIS_URL
-        fromService: { type: keyvalue, name: forgegov-redis, property: connectionString }
-      - key: DJANGO_SECRET_KEY
-        fromService: { type: web, name: forgegov-api, envVarKey: DJANGO_SECRET_KEY }
-      - key: DJANGO_DEBUG
-        value: "false"
-      - key: CELERY_WORKER_CONCURRENCY
-        value: "1"
-      - key: SAM_GOV_API_KEY
-        fromService: { type: web, name: forgegov-api, envVarKey: SAM_GOV_API_KEY }
-      - key: OPENAI_API_KEY
-        fromService: { type: web, name: forgegov-api, envVarKey: OPENAI_API_KEY }
-      - key: ALERTS_ENABLED
-        value: "true"
-
-  - type: worker
-    name: forgegov-beat
-    runtime: docker
-    rootDir: backend
-    dockerfilePath: ./Dockerfile
-    dockerCommand: celery -A forgegov beat --loglevel=INFO --pidfile=/tmp/celerybeat.pid --schedule=/tmp/celerybeat-schedule
-    maxShutdownDelaySeconds: 60
-    envVars:
-      - key: RUN_MIGRATIONS
-        value: "false"
-      - key: COLLECTSTATIC
-        value: "false"
-      - key: DATABASE_URL
-        fromDatabase: { name: forgegov-db, property: connectionString }
-      - key: REDIS_URL
-        fromService: { type: keyvalue, name: forgegov-redis, property: connectionString }
-      - key: DJANGO_SECRET_KEY
-        fromService: { type: web, name: forgegov-api, envVarKey: DJANGO_SECRET_KEY }
-      - key: DJANGO_DEBUG
-        value: "false"
-      - key: SAM_GOV_API_KEY
-        fromService: { type: web, name: forgegov-api, envVarKey: SAM_GOV_API_KEY }
-      - key: ALERTS_ENABLED
-        value: "true"
-
-  - type: web
-    name: forgegov
-    runtime: docker
-    rootDir: frontend
-    dockerfilePath: ./Dockerfile
-    dockerCommand: node server.js
-    envVars:
-      - key: NEXT_PUBLIC_API_BASE_URL
-        sync: false
+- type: keyvalue
+  name: forgegov-redis
+  ipAllowList: []
+  maxmemoryPolicy: noeviction
+- type: web
+  name: forgegov-api
+  runtime: docker
+  rootDir: backend
+  dockerfilePath: ./Dockerfile
+  healthCheckPath: /api/health/
+  maxShutdownDelaySeconds: 60
+  envVars:
+  - key: SERVICE_ROLE
+    value: web
+  - key: RUN_MIGRATIONS
+    value: 'true'
+  - key: COLLECTSTATIC
+    value: 'true'
+  - key: MIGRATION_MAX_ATTEMPTS
+    value: '12'
+  - key: DATABASE_URL
+    fromDatabase:
+      name: forgegov-db
+      property: connectionString
+  - key: REDIS_URL
+    fromService:
+      type: keyvalue
+      name: forgegov-redis
+      property: connectionString
+  - key: DJANGO_SECRET_KEY
+    generateValue: true
+  - key: DJANGO_DEBUG
+    value: 'false'
+  - key: API_PUBLIC_URL
+    sync: false
+  - key: DJANGO_ALLOWED_HOSTS
+    sync: false
+  - key: FRONTEND_URL
+    sync: false
+  - key: CORS_ALLOWED_ORIGINS
+    sync: false
+  - key: CSRF_TRUSTED_ORIGINS
+    sync: false
+  - key: PUBLIC_REGISTRATION_ENABLED
+    value: 'true'
+  - key: SECURE_SSL_REDIRECT
+    value: 'true'
+  - key: SECURE_HSTS_SECONDS
+    value: '31536000'
+  - key: SAM_GOV_API_KEY
+    sync: false
+  - key: OPENAI_API_KEY
+    sync: false
+  - key: ALERTS_ENABLED
+    value: 'true'
+- type: worker
+  name: forgegov-worker
+  runtime: docker
+  rootDir: backend
+  dockerfilePath: ./Dockerfile
+  maxShutdownDelaySeconds: 120
+  envVars:
+  - key: SERVICE_ROLE
+    value: worker
+  - key: RUN_MIGRATIONS
+    value: 'false'
+  - key: COLLECTSTATIC
+    value: 'false'
+  - key: DATABASE_URL
+    fromDatabase:
+      name: forgegov-db
+      property: connectionString
+  - key: REDIS_URL
+    fromService:
+      type: keyvalue
+      name: forgegov-redis
+      property: connectionString
+  - key: DJANGO_SECRET_KEY
+    fromService:
+      type: web
+      name: forgegov-api
+      envVarKey: DJANGO_SECRET_KEY
+  - key: DJANGO_DEBUG
+    value: 'false'
+  - key: CELERY_WORKER_CONCURRENCY
+    value: '1'
+  - key: SAM_GOV_API_KEY
+    fromService:
+      type: web
+      name: forgegov-api
+      envVarKey: SAM_GOV_API_KEY
+  - key: OPENAI_API_KEY
+    fromService:
+      type: web
+      name: forgegov-api
+      envVarKey: OPENAI_API_KEY
+  - key: ALERTS_ENABLED
+    value: 'true'
+- type: worker
+  name: forgegov-beat
+  runtime: docker
+  rootDir: backend
+  dockerfilePath: ./Dockerfile
+  maxShutdownDelaySeconds: 60
+  envVars:
+  - key: SERVICE_ROLE
+    value: beat
+  - key: RUN_MIGRATIONS
+    value: 'false'
+  - key: COLLECTSTATIC
+    value: 'false'
+  - key: DATABASE_URL
+    fromDatabase:
+      name: forgegov-db
+      property: connectionString
+  - key: REDIS_URL
+    fromService:
+      type: keyvalue
+      name: forgegov-redis
+      property: connectionString
+  - key: DJANGO_SECRET_KEY
+    fromService:
+      type: web
+      name: forgegov-api
+      envVarKey: DJANGO_SECRET_KEY
+  - key: DJANGO_DEBUG
+    value: 'false'
+  - key: SAM_GOV_API_KEY
+    fromService:
+      type: web
+      name: forgegov-api
+      envVarKey: SAM_GOV_API_KEY
+  - key: ALERTS_ENABLED
+    value: 'true'
+- type: web
+  name: forgegov
+  runtime: docker
+  rootDir: frontend
+  dockerfilePath: ./Dockerfile
+  dockerCommand: node server.js
+  envVars:
+  - key: NEXT_PUBLIC_API_BASE_URL
+    sync: false

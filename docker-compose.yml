@@ -29,7 +29,7 @@ services:
     env_file: .env
     environment:
       RUN_MIGRATIONS: "true"
-    command: gunicorn forgegov.wsgi:application --bind 0.0.0.0:8000 --workers 3
+    command: gunicorn forgegov.wsgi:application --bind 0.0.0.0:8000 --workers 1 --timeout 120 --access-logfile - --error-logfile -
     volumes:
       - ./backend:/app
     ports:
@@ -43,7 +43,7 @@ services:
   worker:
     build: ./backend
     env_file: .env
-    command: celery -A forgegov worker -l info
+    command: celery -A forgegov worker --loglevel=INFO --concurrency=1 --max-tasks-per-child=50
     volumes:
       - ./backend:/app
     depends_on:
@@ -55,7 +55,7 @@ services:
   beat:
     build: ./backend
     env_file: .env
-    command: celery -A forgegov beat -l info
+    command: celery -A forgegov beat --loglevel=INFO --pidfile=/tmp/celerybeat.pid --schedule=/tmp/celerybeat-schedule
     volumes:
       - ./backend:/app
     depends_on:
