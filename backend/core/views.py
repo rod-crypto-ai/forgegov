@@ -11,8 +11,16 @@ from .ai import OpenAIIntegrationError, ask_openai
 from .integrations import (
     IntegrationError,
     fetch_grants_opportunity,
+    fetch_sam_opportunity_detail,
     search_grants_opportunities,
     search_sam_opportunities,
+    search_sam_contract_awards,
+    search_sam_subawards,
+    search_sba_subnet_opportunities,
+    search_federal_forecast_sources,
+    search_state_local_sources,
+    search_usaspending_contract_vehicles,
+    fetch_sam_opportunity_documents,
     search_usaspending_awards,
     usaspending_status,
 )
@@ -24,6 +32,7 @@ from .models import (
     ContactGroup,
     DataSyncRun,
     FileRecord,
+    IntelligenceAlert,
     Opportunity,
     Organization,
     Participant,
@@ -42,6 +51,7 @@ from .serializers import (
     ContactSerializer,
     DataSyncRunSerializer,
     FileRecordSerializer,
+    IntelligenceAlertSerializer,
     OpportunitySerializer,
     OrganizationSerializer,
     ParticipantSerializer,
@@ -62,7 +72,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "1.0.2"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "1.2.0"})
 
 
 @api_view(["GET"])
@@ -81,6 +91,12 @@ def integration_status(request):
             "configured": bool(settings.OPENAI_API_KEY),
             "model": settings.OPENAI_MODEL,
             "base_url": settings.OPENAI_API_BASE_URL,
+        },
+        "expansion": {
+            "forecast_directory": "https://www.acquisition.gov/procurement-forecasts",
+            "subnet": settings.SBA_SUBNET_URL,
+            "sam_subawards_configured": bool(settings.SAM_GOV_API_KEY),
+            "stored_contract_vehicles": Award.objects.filter(award_type=Award.AwardType.VEHICLE).count(),
         },
     })
 
@@ -128,6 +144,10 @@ def dashboard_summary(request):
             "open": task_base.filter(completed=False).count(),
             "completed": task_base.filter(completed=True).count(),
             "overdue": task_base.filter(completed=False, due_at__lt=now).count(),
+        },
+        "alerts": {
+            "unread": IntelligenceAlert.objects.filter(organization=organization, read=False, dismissed=False).count(),
+            "total": IntelligenceAlert.objects.filter(organization=organization, dismissed=False).count(),
         },
         "contacts": Contact.objects.filter(organization=organization).count(),
         "vendors": Vendor.objects.count(),
@@ -187,6 +207,34 @@ def live_sam_search(request):
         return Response({"detail": str(exc)}, status=code)
     except (TypeError, ValueError) as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET"])
+@throttle_classes([SamLiveSearchThrottle])
+def live_sam_contract_awards(request):
+    try:
+        data = search_sam_contract_awards(
+            record_type=request.query_params.get("record_type", "contracts"),
+            keyword=request.query_params.get("q", ""),
+            agency=request.query_params.get("agency", ""),
+            naics=request.query_params.get("naics", ""),
+            psc=request.query_params.get("psc", ""),
+            state=request.query_params.get("state", ""),
+            fiscal_year=request.query_params.get("fiscal_year", ""),
+            limit=int(request.query_params.get("limit", 25)),
+            offset=int(request.query_params.get("offset", 0)),
+        )
+        return Response(data)
+    except (IntegrationError, TypeError, ValueError) as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET"])
+def sam_opportunity_documents(request, notice_id):
+    try:
+        return Response(fetch_sam_opportunity_documents(notice_id))
+    except IntegrationError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
 
 
 @api_view(["GET", "POST"])
@@ -526,4 +574,250 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
             queryset = queryset.filter(category_type=category_type)
         if search:
             queryset = queryset.filter(Q(code__icontains=search) | Q(title__icontains=search) | Q(description__icontains=search))
+        return queryset
+
+
+@api_view(["GET"])
+@throttle_classes([SamLiveSearchThrottle])
+def sam_opportunity_detail(request, notice_id: str):
+    try:
+        return Response(fetch_sam_opportunity_detail(notice_id))
+    except IntegrationError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+
+
+@api_view(["GET", "POST"])
+def live_usaspending_contract_vehicles(request):
+    params = request.query_params if request.method == "GET" else request.data
+    try:
+        return Response(search_usaspending_contract_vehicles(
+            keyword=params.get("q", ""),
+            recipient=params.get("recipient", ""),
+            agency=params.get("agency", ""),
+            naics=params.get("naics", ""),
+            start_date=params.get("start_date") or None,
+            end_date=params.get("end_date") or None,
+            page=int(params.get("page", 1)),
+            limit=int(params.get("limit", 25)),
+            persist=_truthy(params.get("persist")),
+        ))
+    except (IntegrationError, TypeError, ValueError) as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET"])
+def federal_forecast_sources(request):
+    return Response(search_federal_forecast_sources(query=request.query_params.get("q", "")))
+
+
+@api_view(["GET"])
+def state_local_source_directory(request):
+    return Response(search_state_local_sources(
+        query=request.query_params.get("q", ""),
+        state=request.query_params.get("state", ""),
+    ))
+
+
+@api_view(["GET"])
+@throttle_classes([SamLiveSearchThrottle])
+def live_sam_subaward_search(request):
+    try:
+        return Response(search_sam_subawards(
+            piid=request.query_params.get("piid", ""),
+            referenced_idv=request.query_params.get("referenced_idv", ""),
+            agency_id=request.query_params.get("agency_id", ""),
+            from_date=request.query_params.get("from_date", ""),
+            to_date=request.query_params.get("to_date", ""),
+            page=int(request.query_params.get("page", 0)),
+            limit=int(request.query_params.get("limit", 25)),
+        ))
+    except (IntegrationError, TypeError, ValueError) as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET"])
+def live_sba_subnet_search(request):
+    try:
+        return Response(search_sba_subnet_opportunities(
+            query=request.query_params.get("q", ""),
+            state=request.query_params.get("state", ""),
+        ))
+    except IntegrationError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+@api_view(["GET"])
+def agency_intelligence(request):
+    name = str(request.query_params.get("name") or request.query_params.get("q") or "").strip()
+    base = Agency.objects.all()
+    if name:
+        base = base.filter(name__icontains=name)
+    agencies = list(base.order_by("name")[:50])
+    results = []
+    for agency in agencies:
+        awards = Award.objects.filter(Q(awarding_agency=agency.name) | Q(funding_agency=agency.name))
+        opportunities = Opportunity.objects.filter(Q(agency=agency.name) | Q(subagency=agency.name) | Q(organization_path__icontains=agency.name))
+        top_vendors = list(
+            awards.exclude(recipient_name="")
+            .values("recipient_name")
+            .annotate(obligated=Sum("obligated_amount"), awards=Count("id"))
+            .order_by("-obligated")[:5]
+        )
+        top_naics = list(
+            awards.exclude(naics_code="")
+            .values("naics_code")
+            .annotate(obligated=Sum("obligated_amount"), awards=Count("id"))
+            .order_by("-obligated")[:5]
+        )
+        results.append({
+            "id": agency.id,
+            "name": agency.name,
+            "agency_code": agency.agency_code,
+            "website": agency.website,
+            "award_count": awards.count(),
+            "obligated_amount": awards.aggregate(total=Sum("obligated_amount"))["total"] or 0,
+            "active_opportunities": opportunities.filter(active=True).count(),
+            "top_vendors": top_vendors,
+            "top_naics": top_naics,
+            "recent_awards": AwardSerializer(awards.order_by("-start_date", "-updated_at")[:5], many=True).data,
+            "recent_opportunities": OpportunitySerializer(opportunities.order_by("-posted_date")[:5], many=True).data,
+        })
+    return Response({"total_records": len(results), "results": results})
+
+
+@api_view(["GET"])
+def vendor_intelligence(request):
+    name = str(request.query_params.get("name") or request.query_params.get("q") or "").strip()
+    base = Vendor.objects.all()
+    if name:
+        base = base.filter(Q(name__icontains=name) | Q(uei__icontains=name) | Q(cage_code__icontains=name))
+    vendors = list(base.order_by("name")[:50])
+    results = []
+    for vendor in vendors:
+        awards = Award.objects.filter(recipient_name=vendor.name)
+        top_agencies = list(
+            awards.exclude(awarding_agency="")
+            .values("awarding_agency")
+            .annotate(obligated=Sum("obligated_amount"), awards=Count("id"))
+            .order_by("-obligated")[:5]
+        )
+        top_naics = list(
+            awards.exclude(naics_code="")
+            .values("naics_code")
+            .annotate(obligated=Sum("obligated_amount"), awards=Count("id"))
+            .order_by("-obligated")[:5]
+        )
+        results.append({
+            "id": vendor.id,
+            "name": vendor.name,
+            "uei": vendor.uei,
+            "cage_code": vendor.cage_code,
+            "city": vendor.city,
+            "state": vendor.state,
+            "socioeconomic_statuses": vendor.socioeconomic_statuses,
+            "award_count": awards.count(),
+            "obligated_amount": awards.aggregate(total=Sum("obligated_amount"))["total"] or 0,
+            "top_agencies": top_agencies,
+            "top_naics": top_naics,
+            "recent_awards": AwardSerializer(awards.order_by("-start_date", "-updated_at")[:10], many=True).data,
+        })
+    return Response({"total_records": len(results), "results": results})
+
+
+@api_view(["GET"])
+def partner_discovery(request):
+    query = str(request.query_params.get("q") or "").strip()
+    naics = str(request.query_params.get("naics") or "").strip()
+    state_code = str(request.query_params.get("state") or "").strip()
+    socioeconomic = str(request.query_params.get("status") or "").strip()
+
+    vendors = Vendor.objects.all()
+    if query:
+        vendors = vendors.filter(Q(name__icontains=query) | Q(uei__icontains=query) | Q(cage_code__icontains=query))
+    if state_code:
+        vendors = vendors.filter(state__iexact=state_code)
+    # JSON containment behavior varies by database backend, so list filters are
+    # applied in Python after the portable name/state query.
+    candidates = list(vendors.order_by("-obligated_amount", "-award_count", "name")[:500])
+    if naics:
+        candidates = [vendor for vendor in candidates if naics in [str(code) for code in (vendor.naics_codes or [])] or naics.lower() in str(vendor.raw_data).lower()]
+    if socioeconomic:
+        term = socioeconomic.lower()
+        candidates = [vendor for vendor in candidates if any(term in str(item).lower() for item in (vendor.socioeconomic_statuses or [])) or term in str(vendor.raw_data).lower()]
+
+    results = []
+    for vendor in candidates[:100]:
+        awards = Award.objects.filter(recipient_name=vendor.name)
+        top_agencies = list(
+            awards.exclude(awarding_agency="")
+            .values("awarding_agency")
+            .annotate(obligated=Sum("obligated_amount"), awards=Count("id"))
+            .order_by("-obligated")[:3]
+        )
+        results.append({
+            "id": vendor.id,
+            "name": vendor.name,
+            "uei": vendor.uei,
+            "cage_code": vendor.cage_code,
+            "city": vendor.city,
+            "state": vendor.state,
+            "website": vendor.website,
+            "socioeconomic_statuses": vendor.socioeconomic_statuses,
+            "naics_codes": vendor.naics_codes,
+            "award_count": awards.count() or vendor.award_count,
+            "obligated_amount": awards.aggregate(total=Sum("obligated_amount"))["total"] or vendor.obligated_amount,
+            "top_agencies": top_agencies,
+        })
+    return Response({"total_records": len(results), "results": results})
+
+
+@api_view(["GET"])
+def category_market_intelligence(request):
+    category_type = str(request.query_params.get("type") or "naics").lower()
+    if category_type not in {"naics", "psc"}:
+        return Response({"detail": "type must be naics or psc."}, status=status.HTTP_400_BAD_REQUEST)
+    code_field = "naics_code" if category_type == "naics" else "psc_code"
+    award_rows = list(
+        Award.objects.exclude(**{code_field: ""})
+        .values(code_field)
+        .annotate(obligated=Sum("obligated_amount"), award_count=Count("id"), vendor_count=Count("recipient_name", distinct=True), agency_count=Count("awarding_agency", distinct=True))
+        .order_by("-obligated")[:100]
+    )
+    opportunity_counts = {
+        row[code_field]: row["opportunity_count"]
+        for row in Opportunity.objects.exclude(**{code_field: ""}).values(code_field).annotate(opportunity_count=Count("id"))
+    }
+    results = []
+    for row in award_rows:
+        code = row.pop(code_field)
+        results.append({"code": code, **row, "opportunity_count": opportunity_counts.get(code, 0)})
+    return Response({"category_type": category_type, "total_records": len(results), "results": results})
+
+
+@api_view(["POST"])
+@permission_classes([ReadOnlyOrContributor])
+def run_saved_search_alerts(request):
+    from .tasks import evaluate_saved_search_alerts
+    try:
+        organization = _request_organization(request)
+    except Organization.DoesNotExist:
+        return Response({"detail": "A valid workspace membership is required."}, status=status.HTTP_403_FORBIDDEN)
+    result = evaluate_saved_search_alerts.run(organization_id=organization.id)
+    return Response(result)
+
+
+class IntelligenceAlertViewSet(OrganizationScopedViewSetMixin, viewsets.ModelViewSet):
+    serializer_class = IntelligenceAlertSerializer
+    http_method_names = ["get", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        queryset = self.scope_queryset(
+            IntelligenceAlert.objects.select_related("organization", "saved_search", "opportunity")
+        )
+        read = self.request.query_params.get("read")
+        dismissed = self.request.query_params.get("dismissed")
+        if read is not None:
+            queryset = queryset.filter(read=_truthy(read))
+        if dismissed is not None:
+            queryset = queryset.filter(dismissed=_truthy(dismissed))
         return queryset

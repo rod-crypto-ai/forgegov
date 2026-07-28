@@ -7,8 +7,19 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .integrations import _build_sam_params, search_sam_opportunities, upsert_sam_opportunity
-from .models import Invitation, Membership, Opportunity, Organization, PipelineItem
+from .integrations import (
+    _build_sam_params,
+    fetch_sam_opportunity_documents,
+    fetch_sam_opportunity_detail,
+    search_sam_contract_awards,
+    search_sam_subawards,
+    search_sba_subnet_opportunities,
+    search_federal_forecast_sources,
+    search_usaspending_contract_vehicles,
+    search_sam_opportunities,
+    upsert_sam_opportunity,
+)
+from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Vendor
 
 User = get_user_model()
 
@@ -59,7 +70,7 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "1.0.2")
+        self.assertEqual(response.json()["version"], "1.2.0")
 
 
 class RouterRegressionTests(TestCase):
@@ -69,6 +80,7 @@ class RouterRegressionTests(TestCase):
         self.assertEqual(reverse("task-list"), "/api/tasks/")
         self.assertEqual(reverse("saved-search-list"), "/api/saved-searches/")
         self.assertEqual(reverse("contact-group-list"), "/api/contact-groups/")
+        self.assertEqual(reverse("intelligence-alert-list"), "/api/alerts/")
 
 
 class OpportunityTests(AuthenticatedApiTestCase):
@@ -188,6 +200,64 @@ class SamIntegrationTests(TestCase):
 
         self.assertEqual(result["total_records"], 0)
         self.assertEqual(result["opportunities"], [])
+
+
+class SamContractAwardsIntegrationTests(TestCase):
+    @override_settings(SAM_GOV_API_KEY="test-key", SAM_CONTRACT_AWARDS_BASE_URL="https://api.sam.gov/contract-awards/v1/search")
+    @patch("core.integrations.requests.get")
+    def test_contract_awards_are_normalized(self, mock_get):
+        response = Mock()
+        response.ok = True
+        response.status_code = 200
+        response.json.return_value = {
+            "totalRecords": "1",
+            "awardSummary": [{
+                "contractId": {"piid": "W56HZV26C0001", "modificationNumber": "0", "referencedIDVPiid": "W56HZV20D0001"},
+                "coreData": {
+                    "awardOrIDV": "AWARD",
+                    "awardOrIDVType": {"name": "DELIVERY ORDER"},
+                    "title": "JLTV maintenance support",
+                    "federalOrganization": {"contractingInformation": {"contractingDepartment": {"name": "DEPT OF DEFENSE"}}},
+                },
+                "awardDetails": {
+                    "dollarsObligated": 125000,
+                    "totalDollarsObligated": 500000,
+                    "awardeeData": {"awardeeHeader": {"awardeeName": "HOWARD DYNAMICS LLC"}},
+                },
+            }],
+        }
+        mock_get.return_value = response
+
+        result = search_sam_contract_awards(record_type="contracts", keyword="JLTV", limit=1)
+
+        self.assertEqual(result["total_records"], 1)
+        self.assertEqual(result["results"][0]["piid"], "W56HZV26C0001")
+        self.assertEqual(result["results"][0]["recipient_name"], "HOWARD DYNAMICS LLC")
+        params = mock_get.call_args.kwargs["params"]
+        self.assertEqual(params["awardOrIDV"], "Award")
+        self.assertEqual(params["q"], "JLTV")
+
+    @override_settings(SAM_GOV_API_KEY="test-key")
+    @patch("core.integrations.requests.get")
+    def test_opportunity_documents_include_description_and_links(self, mock_get):
+        Opportunity.objects.create(
+            source_id="notice-123",
+            title="Document test",
+            description="Fallback",
+            source_url="https://sam.gov/opp/notice-123/view",
+            resource_links=["https://example.gov/pws.pdf"],
+            raw_data={"description": "https://api.sam.gov/description/notice-123"},
+        )
+        response = Mock()
+        response.ok = True
+        response.json.return_value = {"description": "Live description"}
+        mock_get.return_value = response
+
+        result = fetch_sam_opportunity_documents("notice-123")
+
+        self.assertEqual(result["description"], "Live description")
+        self.assertEqual(result["documents"][0]["url"], "https://example.gov/pws.pdf")
+        self.assertTrue(result["documents"][0]["preview_available"])
 
 
 class UsaSpendingIntegrationTests(AuthenticatedApiTestCase):
@@ -316,3 +386,240 @@ class OpenAIIntegrationTests(AuthenticatedApiTestCase):
         sent_input = mock_post.call_args.kwargs["json"]["input"]
         self.assertIn("Visible task", sent_input)
         self.assertNotIn("Secret foreign task", sent_input)
+
+
+class ExpansionIntegrationTests(AuthenticatedApiTestCase):
+    @patch("core.integrations.requests.post")
+    def test_contract_vehicle_search_persists_vehicle_award(self, mock_post):
+        response = Mock()
+        response.ok = True
+        response.status_code = 200
+        response.json.return_value = {
+            "page_metadata": {"page": 1, "hasNext": False},
+            "results": [{
+                "Award ID": "GS00Q14OADU428",
+                "generated_unique_award_id": "CONT_IDV_GS00Q14OADU428_4732",
+                "Recipient Name": "EXAMPLE PRIME LLC",
+                "Award Amount": 1000000,
+                "Potential Award Amount": 25000000,
+                "Description": "Governmentwide acquisition contract",
+                "Start Date": "2024-01-01",
+                "End Date": "2029-12-31",
+                "Awarding Agency": "General Services Administration",
+            }],
+        }
+        mock_post.return_value = response
+
+        result = search_usaspending_contract_vehicles(keyword="acquisition", persist=True)
+
+        self.assertEqual(result["persisted"]["created"], 1)
+        award = Award.objects.get(source_id="CONT_IDV_GS00Q14OADU428_4732")
+        self.assertEqual(award.award_type, Award.AwardType.VEHICLE)
+        codes = mock_post.call_args.kwargs["json"]["filters"]["award_type_codes"]
+        self.assertIn("IDV_A", codes)
+
+    @patch("core.integrations.requests.get")
+    def test_forecast_directory_parses_official_agency_links(self, mock_get):
+        response = Mock()
+        response.text = """
+            <table><tbody><tr>
+              <td><a href='https://agency.gov'>Department of Testing</a></td>
+              <td><a href='https://agency.gov/forecast'>Agency Procurement Forecast</a></td>
+            </tr></tbody></table>
+        """
+        response.raise_for_status.return_value = None
+        mock_get.return_value = response
+
+        result = search_federal_forecast_sources(query="testing")
+
+        self.assertTrue(result["reachable"])
+        self.assertEqual(result["results"][0]["agency"], "Department of Testing")
+        self.assertEqual(result["results"][0]["forecast_url"], "https://agency.gov/forecast")
+
+    @override_settings(SAM_GOV_API_KEY="test-key", SAM_SUBAWARDS_BASE_URL="https://api.sam.gov/prod/contract/v1/subcontracts/search")
+    @patch("core.integrations.requests.get")
+    def test_subaward_search_normalizes_records(self, mock_get):
+        response = Mock()
+        response.ok = True
+        response.status_code = 200
+        response.json.return_value = {
+            "totalRecords": 1,
+            "totalPages": 1,
+            "pageNumber": 0,
+            "data": [{
+                "piid": "W91QVN20F0157",
+                "referencedIDVPIID": "W52P1J18DA075",
+                "primeEntityName": "PRIME LLC",
+                "primeEntityUei": "PRIMEUEI123",
+                "subEntityLegalBusinessName": "SMALL BUSINESS LLC",
+                "subEntityUei": "SUBUEI456",
+                "subAwardAmount": 325000,
+                "subAwardDescription": "Vehicle maintenance",
+                "subAwardDate": "2026-01-10",
+                "subContractorNaics": {"code": "811111", "description": "Automotive Mechanical and Electrical Repair"},
+                "entityPhysicalAddress": {"city": "Killeen", "state": {"code": "TX", "name": "Texas"}},
+                "subEntityBusinessTypes": ["Small Business"],
+            }],
+        }
+        mock_get.return_value = response
+
+        result = search_sam_subawards(referenced_idv="W52P1J18DA075")
+
+        self.assertEqual(result["total_records"], 1)
+        record = result["results"][0]
+        self.assertEqual(record["prime_contractor"], "PRIME LLC")
+        self.assertEqual(record["subcontractor"], "SMALL BUSINESS LLC")
+        self.assertEqual(record["action_date"], "2026-01-10")
+        self.assertEqual(record["naics"], "811111")
+        self.assertEqual(record["place_of_performance"], "Killeen, TX")
+        self.assertEqual(record["sub_entity_uei"], "SUBUEI456")
+        self.assertEqual(mock_get.call_args.kwargs["params"]["referencedIDVPIID"], "W52P1J18DA075")
+
+    @override_settings(SBA_SUBNET_URL="https://www.sba.gov/subnet")
+    @patch("core.integrations.requests.get")
+    def test_sba_subnet_parser_separates_title_and_description(self, mock_get):
+        response = Mock()
+        response.url = "https://www.sba.gov/subnet"
+        response.text = """
+            <table><tbody><tr>
+              <td><a href='/subnet/opportunity/123'>JLTV Maintenance Support</a> Regional field maintenance subcontract</td>
+              <td>08/31/2026</td><td>10/01/2026</td><td>Fort Hood, TX</td><td>811310</td><td>Jane Doe</td>
+            </tr></tbody></table>
+        """
+        response.raise_for_status.return_value = None
+        mock_get.return_value = response
+
+        result = search_sba_subnet_opportunities(query="maintenance", state="TX")
+
+        self.assertEqual(result["total_records"], 1)
+        record = result["results"][0]
+        self.assertEqual(record["title"], "JLTV Maintenance Support")
+        self.assertEqual(record["description"], "Regional field maintenance subcontract")
+        self.assertEqual(record["source_url"], "https://www.sba.gov/subnet/opportunity/123")
+
+    @override_settings(SAM_GOV_API_KEY="test-key")
+    @patch("core.integrations.requests.get")
+    def test_opportunity_detail_combines_record_and_documents(self, mock_get):
+        search_response = Mock()
+        search_response.ok = True
+        search_response.status_code = 200
+        search_response.json.return_value = {
+            "totalRecords": 1,
+            "limit": 1,
+            "offset": 0,
+            "opportunitiesData": [{
+                "noticeId": "detail-123",
+                "title": "Detail opportunity",
+                "fullParentPathName": "Department of Testing",
+                "naicsCode": "811310",
+                "resourceLinks": ["https://example.gov/pws.pdf"],
+            }],
+        }
+        mock_get.return_value = search_response
+        Award.objects.create(
+            source_id="incumbent-award-1",
+            award_number="N00000-25-C-0001",
+            recipient_name="EXAMPLE INCUMBENT LLC",
+            awarding_agency="Department of Testing",
+            naics_code="811310",
+            obligated_amount=1250000,
+        )
+
+        result = fetch_sam_opportunity_detail("detail-123")
+
+        self.assertEqual(result["opportunity"]["noticeId"], "detail-123")
+        self.assertEqual(result["documents"][0]["name"], "Attachment 1")
+        self.assertIn("not confirmed incumbents", result["incumbent_signal_note"])
+        self.assertEqual(result["incumbent_signals"][0]["recipient_name"], "EXAMPLE INCUMBENT LLC")
+
+
+class IntelligenceAlertTests(AuthenticatedApiTestCase):
+    @patch("core.tasks.search_sam_opportunities")
+    def test_saved_search_evaluation_creates_deduplicated_alert(self, mock_search):
+        from .tasks import evaluate_saved_search_alerts
+
+        saved = SavedSearch.objects.create(
+            organization=self.organization,
+            owner=self.user,
+            name="Maintenance",
+            filters={"source": "sam.gov", "q": "maintenance"},
+        )
+        mock_search.return_value = {
+            "opportunities": [{
+                "source_id": "alert-opp-1",
+                "noticeId": "alert-opp-1",
+                "title": "Maintenance requirement",
+                "source_url": "https://sam.gov/opp/alert-opp-1/view",
+            }],
+        }
+        Opportunity.objects.create(source_id="alert-opp-1", title="Maintenance requirement")
+
+        first = evaluate_saved_search_alerts.run()
+        second = evaluate_saved_search_alerts.run()
+
+        self.assertEqual(first["alerts_created"], 1)
+        self.assertEqual(second["alerts_created"], 0)
+        alert = IntelligenceAlert.objects.get(saved_search=saved)
+        self.assertEqual(alert.organization, self.organization)
+        self.assertFalse(alert.read)
+
+    @patch("core.tasks.evaluate_saved_search_alerts.run")
+    def test_manual_alert_evaluation_is_scoped_to_current_workspace(self, mock_run):
+        mock_run.return_value = {"saved_searches_evaluated": 0, "alerts_created": 0}
+
+        response = self.client.post("/api/workflow/saved-searches/evaluate/", {}, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        mock_run.assert_called_once_with(organization_id=self.organization.id)
+
+    def test_alert_patch_only_changes_read_and_dismissed_state(self):
+        alert = IntelligenceAlert.objects.create(organization=self.organization, title="Original", source_id="patch-1")
+
+        response = self.client.patch(
+            f"/api/alerts/{alert.id}/",
+            {"title": "Tampered", "read": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        alert.refresh_from_db()
+        self.assertEqual(alert.title, "Original")
+        self.assertTrue(alert.read)
+
+    def test_alerts_are_organization_scoped(self):
+        other_user = User.objects.create_user(username="other-alert@example.com", email="other-alert@example.com", password="StrongPass!234")
+        other_org = Organization.objects.create(name="Other Alerts", slug="other-alerts")
+        Membership.objects.create(user=other_user, organization=other_org, role=Membership.Role.OWNER)
+        IntelligenceAlert.objects.create(organization=other_org, title="Other alert", source_id="other-1")
+        IntelligenceAlert.objects.create(organization=self.organization, title="My alert", source_id="mine-1")
+
+        response = self.client.get("/api/alerts/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["count"], 1)
+        self.assertEqual(response.json()["results"][0]["title"], "My alert")
+
+
+class PartnerDiscoveryTests(AuthenticatedApiTestCase):
+    def test_partner_discovery_filters_portably_and_returns_award_signals(self):
+        Vendor.objects.create(
+            name="HOWARD PARTNER LLC",
+            uei="UEI123",
+            state="TX",
+            naics_codes=["811310"],
+            socioeconomic_statuses=["SDVOSB"],
+        )
+        Vendor.objects.create(name="OTHER VENDOR LLC", state="VA", naics_codes=["541512"])
+        Award.objects.create(
+            source_id="partner-award-1",
+            recipient_name="HOWARD PARTNER LLC",
+            awarding_agency="Department of the Army",
+            obligated_amount=750000,
+        )
+
+        response = self.client.get("/api/intelligence/partners/?naics=811310&state=TX&status=SDVOSB")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["total_records"], 1)
+        self.assertEqual(response.json()["results"][0]["name"], "HOWARD PARTNER LLC")
+        self.assertEqual(response.json()["results"][0]["award_count"], 1)

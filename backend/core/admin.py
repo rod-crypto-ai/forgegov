@@ -8,6 +8,7 @@ from .models import (
     ContactGroup,
     DataSyncRun,
     FileRecord,
+    IntelligenceAlert,
     Membership,
     Opportunity,
     Organization,
@@ -40,6 +41,7 @@ for model in (
     ContactGroup,
     TeamingRequest,
     FileRecord,
+    IntelligenceAlert,
     Participant,
     Category,
 ):

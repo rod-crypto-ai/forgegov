@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpRight, Building2, Database, Download, RefreshCw, Search, ShieldCheck, Users } from "lucide-react";
 import { API_BASE_URL, apiGet } from "@/lib/api";
 
@@ -36,7 +36,7 @@ export function AwardIntelligence() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
 
-  async function search(requestedPage = page) {
+  const search = useCallback(async (requestedPage: number) => {
     setLoading(true);
     setError("");
     const params = new URLSearchParams({ limit: String(pageSize), page: String(requestedPage), persist: String(persist) });
@@ -52,9 +52,13 @@ export function AwardIntelligence() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [agency, naics, pageSize, persist, query, recipient]);
 
-  useEffect(() => { const timer = window.setTimeout(() => { void search(1); }, 0); return () => window.clearTimeout(timer); }, []);
+  const initialSearch = useRef(search);
+  useEffect(() => {
+    const timer = window.setTimeout(() => void initialSearch.current(1), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const total = useMemo(() => (data?.results ?? []).reduce((sum, item) => sum + Number(item["Award Amount"] ?? 0), 0), [data]);
   const agencies = useMemo(() => new Set((data?.results ?? []).map((item) => item["Awarding Agency"]).filter(Boolean)).size, [data]);

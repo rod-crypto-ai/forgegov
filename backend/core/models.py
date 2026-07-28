@@ -439,3 +439,39 @@ class AuditLog(TimeStampedModel):
     class Meta:
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["organization", "-created_at"]), models.Index(fields=["action"])]
+
+
+class IntelligenceAlert(TimeStampedModel):
+    class AlertType(models.TextChoices):
+        NEW_OPPORTUNITY = "new_opportunity", "New Opportunity"
+        DEADLINE = "deadline", "Upcoming Deadline"
+        AWARD = "award", "Award Intelligence"
+        FORECAST = "forecast", "Forecast Update"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="intelligence_alerts")
+    saved_search = models.ForeignKey(SavedSearch, null=True, blank=True, on_delete=models.SET_NULL, related_name="alerts")
+    opportunity = models.ForeignKey(Opportunity, null=True, blank=True, on_delete=models.SET_NULL, related_name="alerts")
+    alert_type = models.CharField(max_length=40, choices=AlertType.choices, default=AlertType.NEW_OPPORTUNITY)
+    title = models.CharField(max_length=500)
+    summary = models.TextField(blank=True)
+    source_id = models.CharField(max_length=255, blank=True)
+    source_url = models.URLField(blank=True)
+    matched_filters = models.JSONField(default=dict, blank=True)
+    read = models.BooleanField(default=False)
+    dismissed = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("organization", "saved_search", "source_id", "alert_type"),
+                name="unique_saved_search_intelligence_alert",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["organization", "read", "-created_at"], name="core_intell_organiz_3309e7_idx"),
+            models.Index(fields=["source_id"], name="core_intell_source__cba733_idx"),
+        ]
+
+    def __str__(self):
+        return self.title

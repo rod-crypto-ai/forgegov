@@ -122,9 +122,17 @@ if os.getenv("SAM_SYNC_ENABLED", "false").lower() == "true":
         "schedule": 24 * 60 * 60,
         "kwargs": {"days": 1, "limit": int(os.getenv("SAM_DAILY_SYNC_LIMIT", "1000"))},
     }
+if os.getenv("ALERTS_ENABLED", "true").lower() == "true":
+    CELERY_BEAT_SCHEDULE["evaluate-saved-search-alerts"] = {
+        "task": "core.tasks.evaluate_saved_search_alerts",
+        "schedule": 24 * 60 * 60,
+    }
 
 SAM_GOV_API_KEY = os.getenv("SAM_GOV_API_KEY", "")
 SAM_GOV_BASE_URL = os.getenv("SAM_GOV_BASE_URL", "https://api.sam.gov/opportunities/v2/search")
+SAM_CONTRACT_AWARDS_BASE_URL = os.getenv("SAM_CONTRACT_AWARDS_BASE_URL", "https://api.sam.gov/contract-awards/v1/search")
+SAM_SUBAWARDS_BASE_URL = os.getenv("SAM_SUBAWARDS_BASE_URL", "https://api.sam.gov/prod/contract/v1/subcontracts/search")
+SBA_SUBNET_URL = os.getenv("SBA_SUBNET_URL", "https://www.sba.gov/federal-contracting/contracting-guide/prime-subcontracting/subcontracting-opportunities")
 USASPENDING_BASE_URL = os.getenv("USASPENDING_BASE_URL", "https://api.usaspending.gov")
 
 GRANTS_GOV_BASE_URL = os.getenv("GRANTS_GOV_BASE_URL", "https://api.grants.gov/v1/api")

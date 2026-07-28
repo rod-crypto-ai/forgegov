@@ -10,3 +10,5 @@ requests>=2.32,<3
 gunicorn>=23,<24
 whitenoise>=6.9,<7
 ruff>=0.12,<1
+
+beautifulsoup4>=4.13,<5

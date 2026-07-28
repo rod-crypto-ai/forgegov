@@ -69,8 +69,10 @@ export function FeaturePage({ feature }: { feature: NavItem }) {
     setStatus("loading");
     setError("");
     try {
-      const payload = await apiGet<unknown[]>(feature.apiPath);
-      setRows(normalizeList(payload as never) as Array<Record<string, unknown>>);
+      const payload = await apiGet<unknown>(feature.apiPath);
+      const objectPayload = payload as Record<string, unknown>;
+      const liveRows = Array.isArray(objectPayload?.results) ? objectPayload.results : Array.isArray(objectPayload?.opportunities) ? objectPayload.opportunities : normalizeList(payload as never);
+      setRows(liveRows as Array<Record<string, unknown>>);
       setLastUpdated(new Date());
       setStatus("ready");
     } catch (loadError) {

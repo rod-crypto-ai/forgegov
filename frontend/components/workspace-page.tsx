@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowDownToLine, Columns3, LayoutList, Plus, RefreshCw, Search, X } from "lucide-react";
 import { apiGet, apiPost, normalizeList } from "@/lib/api";
 import type { NavItem } from "@/lib/navigation";
@@ -72,13 +72,16 @@ export function WorkspacePage({ feature }: { feature: NavItem }) {
   const [saving, setSaving] = useState(false);
   const fields = schemaByPath[feature.href] ?? [];
 
-  async function load() {
+  const load = useCallback(async () => {
     if (!feature.apiPath) { setRows([]); setStatus("ready"); return; }
     setStatus("loading"); setError("");
     try { setRows(normalizeList(await apiGet<Row[]>(feature.apiPath)) as Row[]); setStatus("ready"); }
     catch (err) { setError(err instanceof Error ? err.message : "Unable to load records"); setStatus("error"); }
-  }
-  useEffect(() => { const timer = window.setTimeout(() => { void load(); }, 0); return () => window.clearTimeout(timer); }, [feature.href]);
+  }, [feature.apiPath]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
 
   const columns = useMemo(() => {
     const keys = new Set(rows.flatMap(Object.keys));

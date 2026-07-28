@@ -10,6 +10,7 @@ from .models import (
     DataSyncRun,
     FileRecord,
     Invitation,
+    IntelligenceAlert,
     Membership,
     AuditLog,
     Opportunity,
@@ -103,6 +104,21 @@ class SavedSearchSerializer(WorkspaceRelationshipValidationMixin, serializers.Mo
         model = SavedSearch
         fields = "__all__"
         read_only_fields = ("id", "organization", "owner", "created_at", "updated_at")
+
+
+class IntelligenceAlertSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = IntelligenceAlert
+        fields = (
+            "id", "organization", "saved_search", "opportunity", "alert_type",
+            "title", "summary", "source_id", "source_url", "matched_filters",
+            "read", "dismissed", "created_at", "updated_at",
+        )
+        read_only_fields = (
+            "id", "organization", "saved_search", "opportunity", "alert_type",
+            "title", "summary", "source_id", "source_url", "matched_filters",
+            "created_at", "updated_at",
+        )
 
 
 class DataSyncRunSerializer(serializers.ModelSerializer):

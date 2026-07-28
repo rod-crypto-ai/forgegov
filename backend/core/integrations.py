@@ -311,7 +311,7 @@ def _usa_value(record: dict[str, Any], *keys: str, default: Any = "") -> Any:
     return default
 
 
-def upsert_usaspending_award(record: dict[str, Any]):
+def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None = None):
     from django.db import models
     from .models import Agency, Award, Vendor
 
@@ -334,7 +334,7 @@ def upsert_usaspending_award(record: dict[str, Any]):
     defaults = {
         "source": "usaspending.gov",
         "award_number": award_number,
-        "award_type": Award.AwardType.CONTRACT,
+        "award_type": award_type or Award.AwardType.CONTRACT,
         "description": description,
         "recipient_name": recipient,
         "recipient_uei": recipient_uei,
@@ -655,3 +655,446 @@ def fetch_grants_opportunity(opportunity_id: str, *, persist: bool = True) -> di
         merged["forgegov_opportunity_id"] = opportunity.id
         merged["source_id"] = opportunity.source_id
     return merged
+
+
+SAM_CONTRACT_AWARD_TYPES = {
+    "contracts": {"awardOrIDV": "Award"},
+    "idv": {"awardOrIDV": "IDV"},
+    "vehicles": {"awardOrIDV": "IDV"},
+}
+
+
+def search_sam_contract_awards(
+    *,
+    record_type: str = "contracts",
+    keyword: str = "",
+    agency: str = "",
+    naics: str = "",
+    psc: str = "",
+    state: str = "",
+    fiscal_year: str = "",
+    limit: int = 25,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Search SAM.gov Contract Awards using the same server-side SAM API key."""
+    if not settings.SAM_GOV_API_KEY:
+        raise IntegrationError("SAM_GOV_API_KEY is not configured.")
+    if record_type not in SAM_CONTRACT_AWARD_TYPES:
+        raise IntegrationError("record_type must be contracts, idv, or vehicles.")
+
+    params: dict[str, Any] = {
+        "api_key": settings.SAM_GOV_API_KEY,
+        "limit": max(1, min(limit, 100)),
+        "offset": max(0, offset),
+        "includeSections": "contractId,coreData,awardDetails,awardeeData",
+        **SAM_CONTRACT_AWARD_TYPES[record_type],
+    }
+    optional = {
+        "q": keyword,
+        "contractingDepartmentName": agency,
+        "naicsCode": naics,
+        "productOrServiceCode": psc,
+        "placeOfPerformStateCode": state,
+        "fiscalYear": fiscal_year,
+    }
+    params.update({key: value for key, value in optional.items() if value})
+
+    try:
+        response = requests.get(settings.SAM_CONTRACT_AWARDS_BASE_URL, params=params, timeout=45)
+    except requests.RequestException as exc:
+        raise IntegrationError("SAM.gov Contract Awards could not be reached.") from exc
+    if response.status_code == 204:
+        return {"total_records": 0, "limit": params["limit"], "offset": params["offset"], "results": []}
+    if not response.ok:
+        raise IntegrationError(f"SAM.gov Contract Awards returned HTTP {response.status_code}. {_safe_text(response.text, max_length=400)}")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise IntegrationError("SAM.gov Contract Awards returned invalid JSON.") from exc
+
+    records = payload.get("awardSummary") or payload.get("results") or []
+    if not isinstance(records, list):
+        records = []
+
+    normalized = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        contract_id = record.get("contractId") or {}
+        core = record.get("coreData") or {}
+        details = record.get("awardDetails") or {}
+        awardee = details.get("awardeeData") or record.get("awardeeData") or {}
+        header = awardee.get("awardeeHeader") or {}
+        award_type = core.get("awardOrIDVType") or {}
+        contracting = (core.get("federalOrganization") or {}).get("contractingInformation") or {}
+        department = contracting.get("contractingDepartment") or {}
+        normalized.append({
+            "piid": contract_id.get("piid", ""),
+            "modification_number": contract_id.get("modificationNumber", ""),
+            "referenced_idv": contract_id.get("referencedIDVPiid", ""),
+            "award_or_idv": core.get("awardOrIDV", ""),
+            "award_type": award_type.get("name", "") if isinstance(award_type, dict) else award_type,
+            "title": core.get("title", "") or details.get("descriptionOfContractRequirement", ""),
+            "recipient_name": header.get("awardeeName", "") if isinstance(header, dict) else "",
+            "awarding_agency": department.get("name", "") if isinstance(department, dict) else "",
+            "date_signed": core.get("dateSigned", "") or details.get("dateSigned", ""),
+            "dollars_obligated": details.get("dollarsObligated", 0),
+            "potential_amount": details.get("totalDollarsObligated", 0),
+            "raw_data": record,
+        })
+    total = payload.get("totalRecords") or payload.get("total_records") or len(normalized)
+    return {"total_records": _safe_int(total, len(normalized)), "limit": params["limit"], "offset": params["offset"], "results": normalized}
+
+
+def fetch_sam_opportunity_documents(notice_id: str) -> dict[str, Any]:
+    """Return public SAM attachment metadata and fetch the protected description when available."""
+    if not settings.SAM_GOV_API_KEY:
+        raise IntegrationError("SAM_GOV_API_KEY is not configured.")
+    opportunity = Opportunity.objects.filter(source_id=notice_id).first()
+    if not opportunity:
+        data = search_sam_opportunities(notice_id=notice_id, limit=1, persist=True)
+        opportunity = Opportunity.objects.filter(source_id=notice_id).first()
+        if not opportunity and not data.get("opportunities"):
+            raise IntegrationError("The SAM.gov opportunity could not be found.")
+    raw = opportunity.raw_data if opportunity else {}
+    description_url = raw.get("description") or raw.get("descriptionUrl") or raw.get("descriptionURL")
+    description = opportunity.description if opportunity else ""
+    if isinstance(description_url, str) and description_url.startswith("http"):
+        try:
+            response = requests.get(description_url, params={"api_key": settings.SAM_GOV_API_KEY}, timeout=30)
+            if response.ok:
+                try:
+                    body = response.json()
+                    description = body.get("description") or body.get("content") or body.get("text") or description
+                except ValueError:
+                    description = response.text or description
+        except requests.RequestException:
+            pass
+    links = opportunity.resource_links if opportunity else raw.get("resourceLinks", [])
+    documents = []
+    for index, link in enumerate(links if isinstance(links, list) else []):
+        if isinstance(link, dict):
+            url = link.get("url") or link.get("link") or link.get("href") or ""
+            name = link.get("name") or link.get("title") or link.get("filename") or f"Attachment {index + 1}"
+        else:
+            url, name = str(link), f"Attachment {index + 1}"
+        if url:
+            documents.append({"name": name, "url": url, "source": "sam.gov", "preview_available": url.lower().endswith(".pdf")})
+    return {"notice_id": notice_id, "description": description, "documents": documents, "source_url": opportunity.source_url if opportunity else ""}
+
+
+USASPENDING_IDV_CODES = ["IDV_A", "IDV_B", "IDV_B_A", "IDV_B_B", "IDV_B_C", "IDV_C", "IDV_D", "IDV_E"]
+
+
+def search_usaspending_contract_vehicles(
+    *,
+    keyword: str = "",
+    recipient: str = "",
+    agency: str = "",
+    naics: str = "",
+    start_date: str | None = None,
+    end_date: str | None = None,
+    page: int = 1,
+    limit: int = 25,
+    persist: bool = False,
+) -> dict[str, Any]:
+    """Search public USAspending IDV records used as federal contract vehicles."""
+    today = date.today()
+    start_date = start_date or f"{today.year - 5}-01-01"
+    end_date = end_date or today.isoformat()
+    filters: dict[str, Any] = {
+        "time_period": [{"start_date": start_date, "end_date": end_date}],
+        "award_type_codes": USASPENDING_IDV_CODES,
+    }
+    if keyword:
+        filters["keywords"] = [keyword]
+    if recipient:
+        filters["recipient_search_text"] = [recipient]
+    if agency:
+        filters["agencies"] = [{"type": "awarding", "tier": "toptier", "name": agency}]
+    if naics:
+        filters["naics_codes"] = {"require": [naics]}
+
+    payload = {
+        "filters": filters,
+        "fields": [
+            "Award ID", "Recipient Name", "Award Amount", "Potential Award Amount", "Description",
+            "Start Date", "End Date", "Awarding Agency", "Funding Agency", "Award Type",
+            "generated_unique_award_id",
+        ],
+        "page": max(1, page),
+        "limit": max(1, min(limit, 100)),
+        "subawards": False,
+    }
+    url = f"{settings.USASPENDING_BASE_URL.rstrip('/')}/api/v2/search/spending_by_award/"
+    try:
+        response = requests.post(url, json=payload, timeout=45)
+    except requests.RequestException as exc:
+        raise IntegrationError("USAspending contract vehicle search could not be reached.") from exc
+    if not response.ok:
+        raise IntegrationError(f"USAspending returned HTTP {response.status_code}. {_safe_text(response.text, max_length=400)}")
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise IntegrationError("USAspending returned invalid JSON for contract vehicles.") from exc
+
+    results = data.get("results") if isinstance(data, dict) else []
+    if not isinstance(results, list):
+        results = []
+    created = updated = 0
+    errors: list[str] = []
+    if persist:
+        from .models import Award
+        for record in results:
+            if not isinstance(record, dict):
+                continue
+            try:
+                _, was_created = upsert_usaspending_award(record, award_type=Award.AwardType.VEHICLE)
+                created += int(was_created)
+                updated += int(not was_created)
+            except IntegrationError as exc:
+                errors.append(str(exc))
+    return {
+        "page_metadata": data.get("page_metadata", {}),
+        "results": results,
+        "persisted": {"enabled": persist, "created": created, "updated": updated, "errors": errors},
+        "request": {"start_date": start_date, "end_date": end_date, "keyword": keyword, "recipient": recipient, "agency": agency, "naics": naics},
+    }
+
+
+def fetch_sam_opportunity_detail(notice_id: str) -> dict[str, Any]:
+    """Return one normalized SAM opportunity, public documents, and evidence-based incumbent signals."""
+    result = search_sam_opportunities(notice_id=notice_id, limit=1, persist=True)
+    records = result.get("opportunities") or []
+    if not records:
+        raise IntegrationError("The SAM.gov opportunity could not be found.")
+    documents = fetch_sam_opportunity_documents(notice_id)
+    record = records[0]
+
+    # SAM opportunities do not normally identify a confirmed incumbent. These signals
+    # rank recent stored awardees that match the opportunity's agency and/or NAICS.
+    from django.db.models import Count, Max, Q, Sum
+    from .models import Award
+    agency = _safe_text(record.get("fullParentPathName") or record.get("department") or record.get("subTier"), max_length=255)
+    naics = _safe_text(record.get("naicsCode"), max_length=12)
+    candidates = Award.objects.exclude(recipient_name="")
+    evidence = Q()
+    if agency:
+        evidence |= Q(awarding_agency__icontains=agency) | Q(funding_agency__icontains=agency)
+        # Parent paths can be much longer than the stored top-tier agency name.
+        agency_parts = [part.strip() for part in agency.split(".") if len(part.strip()) > 4]
+        for part in agency_parts[-3:]:
+            evidence |= Q(awarding_agency__icontains=part) | Q(funding_agency__icontains=part)
+    if naics:
+        evidence |= Q(naics_code=naics)
+    signals = []
+    if evidence:
+        signals = list(
+            candidates.filter(evidence)
+            .values("recipient_name", "recipient_uei")
+            .annotate(award_count=Count("id"), obligated=Sum("obligated_amount"), latest_end=Max("end_date"))
+            .order_by("-award_count", "-obligated")[:8]
+        )
+
+    return {
+        "opportunity": record,
+        "description": documents.get("description", ""),
+        "documents": documents.get("documents", []),
+        "source_url": documents.get("source_url") or record.get("source_url", ""),
+        "incumbent_signals": signals,
+        "incumbent_signal_note": "Candidates are inferred from stored award history matching the agency or NAICS and are not confirmed incumbents.",
+    }
+
+
+FORECAST_FALLBACK = [
+    {
+        "agency": "Federal acquisition forecast directory",
+        "forecast_url": "https://www.acquisition.gov/procurement-forecasts",
+        "agency_url": "https://www.acquisition.gov/",
+        "source": "Acquisition.gov",
+    }
+]
+
+
+def search_federal_forecast_sources(*, query: str = "") -> dict[str, Any]:
+    """Read the official Acquisition.gov directory of recurring agency procurement forecasts."""
+    from bs4 import BeautifulSoup
+    from urllib.parse import urljoin
+
+    directory_url = "https://www.acquisition.gov/procurement-forecasts"
+    try:
+        response = requests.get(directory_url, timeout=30, headers={"User-Agent": "ForgeGov/1.2 (+https://forgegov.com)"})
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+        rows: list[dict[str, str]] = []
+        for tr in soup.select("table tr"):
+            cells = tr.find_all("td")
+            if len(cells) < 2:
+                continue
+            agency_link = cells[0].find("a")
+            forecast_link = cells[1].find("a")
+            agency = cells[0].get_text(" ", strip=True)
+            forecast_url = urljoin(directory_url, forecast_link.get("href", "")) if forecast_link else ""
+            agency_url = urljoin(directory_url, agency_link.get("href", "")) if agency_link else ""
+            if agency and forecast_url:
+                rows.append({
+                    "agency": agency,
+                    "forecast_url": forecast_url,
+                    "agency_url": agency_url,
+                    "source": "Acquisition.gov",
+                })
+        sources = rows or FORECAST_FALLBACK
+        reachable = True
+    except (requests.RequestException, ValueError):
+        sources = FORECAST_FALLBACK
+        reachable = False
+    term = query.strip().lower()
+    if term:
+        sources = [item for item in sources if term in item["agency"].lower()]
+    return {
+        "total_records": len(sources),
+        "results": sources,
+        "directory_url": directory_url,
+        "reachable": reachable,
+    }
+
+
+STATE_LOCAL_SOURCE_DIRECTORY = [
+    {"jurisdiction": "National state procurement directory", "state": "US", "portal": "https://www.naspo.org/research-and-innovation/rosp-category/procurement-website/", "coverage": "Official state procurement websites"},
+    {"jurisdiction": "California", "state": "CA", "portal": "https://caleprocure.ca.gov/pages/index.aspx", "coverage": "State solicitations and bid events"},
+    {"jurisdiction": "Texas", "state": "TX", "portal": "https://www.txsmartbuy.gov/esbd", "coverage": "Electronic State Business Daily"},
+    {"jurisdiction": "Virginia", "state": "VA", "portal": "https://eva.virginia.gov/", "coverage": "State and participating local opportunities"},
+    {"jurisdiction": "Maryland", "state": "MD", "portal": "https://emma.maryland.gov/", "coverage": "State procurement opportunities"},
+    {"jurisdiction": "New York", "state": "NY", "portal": "https://www.nyscr.ny.gov/home/contracts", "coverage": "New York State Contract Reporter"},
+    {"jurisdiction": "Florida", "state": "FL", "portal": "https://vendor.myfloridamarketplace.com/", "coverage": "State bid advertisements"},
+    {"jurisdiction": "North Carolina", "state": "NC", "portal": "https://evp.nc.gov/", "coverage": "Electronic Vendor Portal"},
+    {"jurisdiction": "Washington", "state": "WA", "portal": "https://pr-webs-vendor.des.wa.gov/bidcalendar.aspx", "coverage": "Washington Electronic Business Solution"},
+    {"jurisdiction": "Georgia", "state": "GA", "portal": "https://www.doas.ga.gov/state-purchasing/bids-and-contracts", "coverage": "Georgia Procurement Registry"},
+]
+
+
+def search_state_local_sources(*, query: str = "", state: str = "") -> dict[str, Any]:
+    term = query.strip().lower()
+    state_code = state.strip().upper()
+    results = STATE_LOCAL_SOURCE_DIRECTORY
+    if term:
+        results = [r for r in results if term in r["jurisdiction"].lower() or term in r["coverage"].lower()]
+    if state_code:
+        results = [r for r in results if r["state"] == state_code]
+    return {"total_records": len(results), "results": results, "source": "Official procurement portals"}
+
+
+def search_sam_subawards(
+    *,
+    piid: str = "",
+    referenced_idv: str = "",
+    agency_id: str = "",
+    from_date: str = "",
+    to_date: str = "",
+    page: int = 0,
+    limit: int = 25,
+) -> dict[str, Any]:
+    """Search the public SAM Acquisition Subaward Reporting API."""
+    if not settings.SAM_GOV_API_KEY:
+        raise IntegrationError("SAM_GOV_API_KEY is not configured.")
+    today = date.today()
+    params: dict[str, Any] = {
+        "api_key": settings.SAM_GOV_API_KEY,
+        "pageNumber": max(0, page),
+        "pageSize": max(1, min(limit, 1000)),
+        "status": "Published",
+        "fromDate": from_date or (today - timedelta(days=365)).isoformat(),
+        "toDate": to_date or today.isoformat(),
+    }
+    optional = {"piid": piid, "referencedIDVPIID": referenced_idv, "agencyId": agency_id}
+    params.update({k: v for k, v in optional.items() if v})
+    try:
+        response = requests.get(settings.SAM_SUBAWARDS_BASE_URL, params=params, timeout=45)
+    except requests.RequestException as exc:
+        raise IntegrationError("SAM.gov subaward reporting could not be reached.") from exc
+    if not response.ok:
+        raise IntegrationError(f"SAM.gov subaward reporting returned HTTP {response.status_code}. {_safe_text(response.text, max_length=400)}")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise IntegrationError("SAM.gov subaward reporting returned invalid JSON.") from exc
+    records = payload.get("data") or []
+    if not isinstance(records, list):
+        records = []
+    normalized = []
+    for row in records:
+        if not isinstance(row, dict):
+            continue
+        sub_naics = row.get("subContractorNaics") or {}
+        if not isinstance(sub_naics, dict):
+            sub_naics = {}
+        address = row.get("entityPhysicalAddress") or {}
+        if not isinstance(address, dict):
+            address = {}
+        state_value = address.get("state") or {}
+        if isinstance(state_value, dict):
+            state_label = state_value.get("code") or state_value.get("name") or ""
+        else:
+            state_label = str(state_value or "")
+        place_parts = [str(address.get("city") or "").strip(), str(state_label).strip()]
+        place_of_performance = ", ".join(part for part in place_parts if part)
+        business_types = row.get("subEntityBusinessTypes") or row.get("subBusinessTypes") or []
+        normalized.append({
+            "piid": row.get("piid") or row.get("primeAwardPIID") or "",
+            "referenced_idv": row.get("referencedIDVPIID") or "",
+            "prime_contractor": row.get("primeEntityName") or row.get("primeAwardeeName") or row.get("primeRecipientName") or "",
+            "subcontractor": row.get("subEntityLegalBusinessName") or row.get("subAwardeeName") or row.get("subawardeeName") or row.get("subcontractorName") or "",
+            "amount": row.get("subAwardAmount") or row.get("subawardAmount") or 0,
+            "description": row.get("subAwardDescription") or row.get("descriptionOfRequirement") or "",
+            "action_date": row.get("subAwardDate") or row.get("subAwardActionDate") or row.get("actionDate") or "",
+            "place_of_performance": place_of_performance or row.get("subAwardPlaceOfPerformanceCity") or row.get("placeOfPerformanceCity") or "",
+            "naics": sub_naics.get("code") or row.get("naicsCode") or "",
+            "sub_entity_uei": row.get("subEntityUei") or row.get("subEntityUEI") or "",
+            "prime_entity_uei": row.get("primeEntityUei") or row.get("primeEntityUEI") or "",
+            "sub_business_types": business_types if isinstance(business_types, list) else [],
+            "raw_data": row,
+        })
+    return {
+        "total_records": _safe_int(payload.get("totalRecords"), len(normalized)),
+        "total_pages": _safe_int(payload.get("totalPages"), 1),
+        "page": _safe_int(payload.get("pageNumber"), params["pageNumber"]),
+        "limit": params["pageSize"],
+        "results": normalized,
+    }
+
+
+def search_sba_subnet_opportunities(*, query: str = "", state: str = "") -> dict[str, Any]:
+    """Read SBA's public SUBNet opportunity table for current prime-to-sub opportunities."""
+    from bs4 import BeautifulSoup
+    url = settings.SBA_SUBNET_URL
+    params = {"keyword": query, "state": state or "All"}
+    try:
+        response = requests.get(url, params=params, timeout=35, headers={"User-Agent": "ForgeGov/1.2 (+https://forgegov.com)"})
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise IntegrationError("SBA SUBNet could not be reached.") from exc
+    soup = BeautifulSoup(response.text, "html.parser")
+    results: list[dict[str, Any]] = []
+    for row in soup.select("table tbody tr"):
+        cells = row.find_all("td")
+        if len(cells) < 5:
+            continue
+        title_cell = cells[0]
+        link = title_cell.find("a")
+        title = link.get_text(" ", strip=True) if link else title_cell.get_text(" ", strip=True)
+        full_title_text = title_cell.get_text(" ", strip=True)
+        description = full_title_text[len(title):].strip(" -–—:") if full_title_text.startswith(title) else ""
+        href = link.get("href", "") if link else ""
+        if href.startswith("/"):
+            href = f"https://www.sba.gov{href}"
+        results.append({
+            "title": title,
+            "description": description,
+            "closing_date": cells[1].get_text(" ", strip=True),
+            "performance_start": cells[2].get_text(" ", strip=True),
+            "place_of_performance": cells[3].get_text(" ", strip=True),
+            "naics": cells[4].get_text(" ", strip=True),
+            "point_of_contact": cells[5].get_text(" ", strip=True) if len(cells) > 5 else "",
+            "source_url": href or response.url,
+        })
+    return {"total_records": len(results), "results": results, "source_url": response.url}

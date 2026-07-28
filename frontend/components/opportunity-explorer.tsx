@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownToLine, ChevronLeft, ChevronRight, ExternalLink, LoaderCircle, Save, Search, Target } from "lucide-react";
+import { ArrowDownToLine, ChevronLeft, ChevronRight, ExternalLink, FileSearch, LoaderCircle, Save, Search, Target } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { apiGet, apiPost } from "@/lib/api";
 
@@ -80,7 +80,7 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
 
   const page = result ? Math.floor(result.offset / result.limit) + 1 : 1;
   const totalPages = result ? Math.max(1, Math.ceil(result.total_records / result.limit)) : 1;
-  const rows = result?.opportunities ?? [];
+  const rows = useMemo(() => result?.opportunities ?? [], [result]);
   const displayRows = useMemo(() => showingRecent ? [...rows].sort((left, right) => recentTimestamp(right) - recentTimestamp(left)) : rows, [rows, showingRecent]);
 
   function update(name: keyof Filters, value: string) { setFilters((current) => ({ ...current, [name]: value })); }
@@ -232,6 +232,7 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
               <div className="result-facts"><span>Posted: {row.postedDate ?? row.openDate ?? "—"}</span><span>Deadline: {row.responseDeadLine ?? row.closeDate ?? "—"}</span><span>{isGrants ? `ALN: ${row.alnist?.join(", ") || "—"}` : `NAICS: ${row.naicsCode ?? "—"}`}</span></div>
             </div>
             <div className="opportunity-result-actions">
+              {isSam && id && <a className="secondary-button" href={`/opportunities/federal-contracts/${encodeURIComponent(id)}`}><FileSearch size={16} /> Details & files</a>}
               {url && <a className="secondary-button" href={url} target="_blank" rel="noreferrer"><ExternalLink size={16} /> Source</a>}
               <button className="primary-button" onClick={() => void addToPipeline(row)} disabled={!id || busyId === id}><Target size={16} />{busyId === id ? "Adding…" : "Add to pipeline"}</button>
             </div>
