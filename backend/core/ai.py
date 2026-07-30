@@ -203,6 +203,8 @@ def ask_openai(*, message: str, history: list[dict[str, str]], organization) -> 
         )
 
     grounding, sources = build_grounding_context(organization)
+    web_context, web_sources = search_live_web(message)
+    sources.extend(web_sources)
     safe_history = []
     for item in history[-12:]:
         if not isinstance(item, dict):
@@ -216,6 +218,8 @@ def ask_openai(*, message: str, history: list[dict[str, str]], organization) -> 
     prompt = (
         "FORGEGOV GROUNDED RECORDS\n"
         f"{grounding}\n\n"
+        "LIVE WEB SEARCH RESULTS\n"
+        f"{web_context or '(live web search not configured)'}\n\n"
         "PRIOR CONVERSATION\n"
         f"{conversation or '(none)'}\n\n"
         "CURRENT USER REQUEST\n"
@@ -287,4 +291,56 @@ def ask_openai(*, message: str, history: list[dict[str, str]], organization) -> 
         "request_id": response.headers.get("x-request-id") or client_request_id,
         "usage": body.get("usage") or {},
         "sources": [source.as_dict() for source in sources],
+        "provider": "openai",
+        "web_enabled": bool(getattr(settings, "SEARXNG_URL", "")),
     }
+
+
+def search_live_web(query: str) -> tuple[str, list[GroundingSource]]:
+    """Optional live search through a user-controlled SearXNG instance."""
+    if not getattr(settings, "AI_WEB_SEARCH_ENABLED", True) or not getattr(settings, "SEARXNG_URL", ""):
+        return "", []
+    try:
+        response = requests.get(settings.SEARXNG_URL.rstrip("/") + "/search", params={"q": query, "format": "json", "language": "en-US", "safesearch": 1}, timeout=18, headers={"User-Agent": "ForgeGov/2.0"})
+        response.raise_for_status()
+        rows = response.json().get("results", [])[:8]
+    except (requests.RequestException, ValueError, AttributeError):
+        return "", []
+    lines=[]; sources=[]
+    for index,row in enumerate(rows,1):
+        label=f"[WEB-{index}]"; title=_text(row.get("title"),300); url=_text(row.get("url"),1000)
+        lines.append(_record_line(label,{"title":title,"url":url,"snippet":_text(row.get("content"),900)}))
+        sources.append(GroundingSource(label,"web",title,url))
+    return "\n".join(lines), sources
+
+
+def ask_ollama(*, message: str, history: list[dict[str, str]], organization) -> dict[str, Any]:
+    grounding, sources = build_grounding_context(organization)
+    web_context, web_sources = search_live_web(message)
+    sources.extend(web_sources)
+    safe_history=[{"role":i.get("role"),"content":_text(i.get("content"),4000)} for i in history[-12:] if isinstance(i,dict) and i.get("role") in {"user","assistant"}]
+    system=("You are ForgeGov AI, a government-contracting research and capture assistant. Cite exact source labels. "
+            "Separate verified facts, analysis, risks, and recommended next actions. Never invent records or live-web facts.")
+    user = (
+        "FORGEGOV RECORDS\n"
+        f"{grounding}\n\n"
+        "LIVE WEB RESULTS\n"
+        f"{web_context or '(not configured)'}\n\n"
+        "REQUEST\n"
+        f"{message.strip()}"
+    )
+    try:
+        response=requests.post(settings.OLLAMA_BASE_URL.rstrip("/")+"/api/chat",json={"model":settings.OLLAMA_MODEL,"stream":False,"messages":[{"role":"system","content":system},*safe_history,{"role":"user","content":user}],"options":{"temperature":0.2}},timeout=max(settings.OPENAI_TIMEOUT_SECONDS,90))
+        response.raise_for_status(); body=response.json(); answer=_text((body.get("message") or {}).get("content"),20000)
+    except (requests.RequestException,ValueError) as exc:
+        raise OpenAIIntegrationError("The self-hosted Ollama model could not be reached. Confirm Ollama is running and the configured model is installed.",status_code=502) from exc
+    if not answer: raise OpenAIIntegrationError("The self-hosted model returned no usable answer.",status_code=502)
+    return {"answer":answer,"model":settings.OLLAMA_MODEL,"provider":"ollama","sources":[source.as_dict() for source in sources],"web_enabled":bool(settings.SEARXNG_URL)}
+
+
+def ask_ai(*, message: str, history: list[dict[str, str]], organization) -> dict[str, Any]:
+    provider=getattr(settings,"AI_PROVIDER","openai").lower()
+    if provider == "ollama":
+        return ask_ollama(message=message,history=history,organization=organization)
+    # Include optional self-hosted web results in the hosted-provider prompt too.
+    return ask_openai(message=message,history=history,organization=organization)

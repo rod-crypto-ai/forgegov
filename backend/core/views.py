@@ -6,7 +6,7 @@ from rest_framework.decorators import api_view, throttle_classes, permission_cla
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from .permissions import ReadOnlyOrContributor, active_membership
-from .ai import OpenAIIntegrationError, ask_openai
+from .ai import OpenAIIntegrationError, ask_ai
 
 from .integrations import (
     IntegrationError,
@@ -96,6 +96,12 @@ def integration_status(request):
             "model": settings.OPENAI_MODEL,
             "base_url": settings.OPENAI_API_BASE_URL,
         },
+        "ai": {
+            "provider": settings.AI_PROVIDER,
+            "model": settings.OLLAMA_MODEL if settings.AI_PROVIDER == "ollama" else settings.OPENAI_MODEL,
+            "configured": bool(settings.OLLAMA_BASE_URL) if settings.AI_PROVIDER == "ollama" else bool(settings.OPENAI_API_KEY),
+            "web_search": bool(settings.SEARXNG_URL and settings.AI_WEB_SEARCH_ENABLED),
+        },
         "expansion": {
             "forecast_directory": "https://www.acquisition.gov/procurement-forecasts",
             "subnet": settings.SBA_SUBNET_URL,
@@ -175,7 +181,7 @@ def ai_chat(request):
         return Response({"detail": "history must be a list."}, status=status.HTTP_400_BAD_REQUEST)
     try:
         organization = _request_organization(request)
-        return Response(ask_openai(message=message, history=history, organization=organization))
+        return Response(ask_ai(message=message, history=history, organization=organization))
     except Organization.DoesNotExist:
         return Response({"detail": "An active workspace membership is required."}, status=status.HTTP_403_FORBIDDEN)
     except OpenAIIntegrationError as exc:
@@ -698,9 +704,7 @@ def live_sba_subnet_search(request):
             page=int(request.query_params.get("page", 0)),
         ))
     except IntegrationError as exc:
-        return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
-
-
+        return Response({"results": [], "status": "unavailable", "reachable": False, "warning": str(exc), "page": 0, "has_next": False})
 
 
 @api_view(["GET"])
@@ -720,11 +724,11 @@ def global_search(request):
     ).order_by("name")[:limit]:
         results.append({"type":"vendor","id":item.id,"title":item.name,"subtitle":" · ".join(filter(None,[item.uei,item.cage_code,item.state])),"href":f"/participants/vendors/profile?id={item.id}"})
     for item in Agency.objects.filter(Q(name__icontains=query) | Q(agency_code__icontains=query)).order_by("name")[:limit]:
-        results.append({"type":"agency","id":item.id,"title":item.name,"subtitle":item.agency_code,"href":f"/participants/federal-agencies?q={item.name}"})
+        results.append({"type":"agency","id":item.id,"title":item.name,"subtitle":item.agency_code,"href":f"/intelligence/agency/{item.name}"})
     for item in Award.objects.filter(
         Q(recipient_name__icontains=query) | Q(award_number__icontains=query) | Q(description__icontains=query) | Q(awarding_agency__icontains=query)
     ).order_by("-start_date", "-updated_at")[:limit]:
-        results.append({"type":"award","id":item.id,"title":item.description or item.award_number or "Federal award","subtitle":f"{item.recipient_name} · {item.awarding_agency}".strip(" ·"),"href":f"/participants/vendors/profile?name={item.recipient_name}" if item.recipient_name else "/awards/federal-contracts"})
+        results.append({"type":"award","id":item.id,"title":item.description or item.award_number or "Federal award","subtitle":f"{item.recipient_name} · {item.awarding_agency}".strip(" ·"),"href":f"/intelligence/award/{item.award_number or item.source_id or item.id}"})
     return Response({"query": query, "results": results[:limit * 3]})
 
 

@@ -1070,39 +1070,63 @@ def search_sam_subawards(
 
 
 def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: int = 0) -> dict[str, Any]:
-    """Read SBA's public SUBNet opportunity table for current prime-to-sub opportunities."""
+    """Read SBA SUBNet with retries, resilient parsing, and a last-good cache."""
     from bs4 import BeautifulSoup
+    from django.core.cache import cache
+    import time
+
     url = settings.SBA_SUBNET_URL
-    params = {"keyword": query, "state": state or "All", "page": max(0, page)}
-    try:
-        response = requests.get(url, params=params, timeout=35, headers={"User-Agent": "ForgeGov/1.2 (+https://forgegov.com)"})
-        response.raise_for_status()
-    except requests.RequestException as exc:
-        raise IntegrationError("SBA SUBNet could not be reached.") from exc
+    page = max(0, page)
+    params = {"keyword": query, "state": state or "All", "page": page}
+    cache_key = f"sba-subnet:v2:{query.strip().lower()}:{state.strip().lower()}:{page}"
+    response = None
+    last_error = None
+    for attempt in range(3):
+        try:
+            response = requests.get(url, params=params, timeout=40, headers={
+                "User-Agent": "Mozilla/5.0 (compatible; ForgeGov/2.0; +https://forge-gov.com)",
+                "Accept": "text/html,application/xhtml+xml",
+                "Accept-Language": "en-US,en;q=0.9",
+            })
+            response.raise_for_status()
+            break
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt < 2:
+                time.sleep(.5 * (2 ** attempt))
+    if response is None or last_error is not None and not getattr(response, "ok", True):
+        cached = cache.get(cache_key)
+        if cached:
+            return {**cached, "status": "cached", "reachable": False, "warning": "SBA SUBNet is temporarily unavailable. Showing the most recent cached results."}
+        return {"total_records": 0, "results": [], "source_url": url, "page": page, "has_next": False, "status": "unavailable", "reachable": False, "warning": "SBA SUBNet is temporarily unavailable. ForgeGov will retry automatically."}
+
     soup = BeautifulSoup(response.text, "html.parser")
     results: list[dict[str, Any]] = []
-    for row in soup.select("table tbody tr"):
+    rows = soup.select("table tbody tr, .views-row")
+    for row in rows:
         cells = row.find_all("td")
-        if len(cells) < 5:
+        if len(cells) >= 5:
+            title_cell = cells[0]
+            link = title_cell.find("a")
+            title = link.get_text(" ", strip=True) if link else title_cell.get_text(" ", strip=True)
+            full_title_text = title_cell.get_text(" ", strip=True)
+            description = full_title_text[len(title):].strip(" -–—:") if full_title_text.startswith(title) else ""
+            values = [c.get_text(" ", strip=True) for c in cells]
+            href = link.get("href", "") if link else ""
+            if href.startswith("/"): href = f"https://www.sba.gov{href}"
+            results.append({"title": title, "description": description, "closing_date": values[1], "performance_start": values[2], "place_of_performance": values[3], "naics": values[4], "point_of_contact": values[5] if len(values)>5 else "", "source_url": href or response.url})
             continue
-        title_cell = cells[0]
-        link = title_cell.find("a")
-        title = link.get_text(" ", strip=True) if link else title_cell.get_text(" ", strip=True)
-        full_title_text = title_cell.get_text(" ", strip=True)
-        description = full_title_text[len(title):].strip(" -–—:") if full_title_text.startswith(title) else ""
-        href = link.get("href", "") if link else ""
-        if href.startswith("/"):
-            href = f"https://www.sba.gov{href}"
-        results.append({
-            "title": title,
-            "description": description,
-            "closing_date": cells[1].get_text(" ", strip=True),
-            "performance_start": cells[2].get_text(" ", strip=True),
-            "place_of_performance": cells[3].get_text(" ", strip=True),
-            "naics": cells[4].get_text(" ", strip=True),
-            "point_of_contact": cells[5].get_text(" ", strip=True) if len(cells) > 5 else "",
-            "source_url": href or response.url,
-        })
+        # Drupal's responsive rendering may expose each opportunity as a views-row rather than a table row.
+        link = row.select_one("h2 a, h3 a, .views-field-title a, a[href*='subcontracting-opportunities']")
+        if not link: continue
+        labels = {node.get_text(" ", strip=True).lower(): node.find_next().get_text(" ", strip=True) for node in row.select(".field__label") if node.find_next()}
+        title = link.get_text(" ", strip=True)
+        href = link.get("href", "")
+        if href.startswith("/"): href=f"https://www.sba.gov{href}"
+        results.append({"title": title, "description": row.get_text(" ", strip=True).replace(title, "", 1).strip()[:1200], "closing_date": labels.get("closing date", ""), "performance_start": labels.get("performance start", ""), "place_of_performance": labels.get("place of performance", ""), "naics": labels.get("naics code", ""), "point_of_contact": labels.get("point of contact", ""), "source_url": href or response.url})
+
     pager_links = soup.select("nav.pager a, ul.pagination a, .pager a")
     has_next = any("next" in (link.get_text(" ", strip=True) + " " + str(link.get("rel", ""))).lower() for link in pager_links)
-    return {"total_records": len(results), "results": results, "source_url": response.url, "page": max(0, page), "has_next": has_next}
+    payload = {"total_records": len(results), "results": results, "source_url": response.url, "page": page, "has_next": has_next, "status": "live", "reachable": True, "warning": ""}
+    cache.set(cache_key, payload, 60 * 60 * 12)
+    return payload
