@@ -2,93 +2,35 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
-import {
-  ChevronDown, ChevronRight, CircleHelp, Command, Menu,
-  Search, Sparkles, X,
-} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Bell, ChevronDown, ChevronRight, CircleHelp, Command, Menu, Search, Sparkles, X } from "lucide-react";
 import { navigationGroups, utilityItems } from "@/lib/navigation";
 import { useAuth } from "@/components/auth-provider";
+import { apiGet } from "@/lib/api";
+
+type SearchHit={type:string;id:string|number;title:string;subtitle?:string;href:string};
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
-  const { session, logout } = useAuth();
-  const router = useRouter();
-  const [query, setQuery] = useState("");
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(navigationGroups.map((group) => [group.label, ["Capture", "Opportunities", "Awards"].includes(group.label)])),
-  );
-  const activeGroup = useMemo(() => navigationGroups.find((group) => group.items.some((item) => pathname === item.href)), [pathname]);
+  const pathname = usePathname(); const { session, logout } = useAuth(); const router = useRouter();
+  const [query,setQuery]=useState(""); const [menuOpen,setMenuOpen]=useState(false); const [hits,setHits]=useState<SearchHit[]>([]); const [searching,setSearching]=useState(false); const [searchOpen,setSearchOpen]=useState(false); const [unreadAlerts,setUnreadAlerts]=useState(0);
+  const [expanded,setExpanded]=useState<Record<string,boolean>>(()=>Object.fromEntries(navigationGroups.map(g=>[g.label,["Capture","Opportunities","Awards"].includes(g.label)])));
+  const activeGroup=useMemo(()=>navigationGroups.find(g=>g.items.some(i=>pathname===i.href)),[pathname]);
 
-  function submit(event: React.FormEvent) {
-    event.preventDefault();
-    const value = query.trim();
-    router.push(value ? `/opportunities/federal-contracts?q=${encodeURIComponent(value)}&auto=1` : "/opportunities/federal-contracts");
-  }
-
-  if (pathname === "/sign-in" || pathname === "/register" || pathname === "/forgot-password") return <>{children}</>;
-
-  const initials = `${session?.user.first_name?.[0] ?? ""}${session?.user.last_name?.[0] ?? ""}` || session?.user.email?.[0]?.toUpperCase() || "U";
-  const displayName = `${session?.user.first_name ?? ""} ${session?.user.last_name ?? ""}`.trim() || session?.user.email || "ForgeGov user";
-
+  useEffect(()=>{const onKey=(event:KeyboardEvent)=>{if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==="k"){event.preventDefault();document.getElementById("forge-global-search")?.focus();}};window.addEventListener("keydown",onKey);return()=>window.removeEventListener("keydown",onKey)},[]);
+  useEffect(()=>{const value=query.trim();const timer=window.setTimeout(()=>{if(value.length<2){setHits([]);setSearching(false);return;}setSearching(true);apiGet<{results:SearchHit[]}>(`/intelligence/search/?q=${encodeURIComponent(value)}&limit=6`).then(r=>{setHits(r.results??[]);setSearchOpen(true)}).catch(()=>setHits([])).finally(()=>setSearching(false))},value.length<2?0:220);return()=>window.clearTimeout(timer)},[query]);
+  useEffect(()=>{let active=true;const load=()=>apiGet<{results?:unknown[]}|unknown[]>("/alerts/?read=false&dismissed=false&page_size=100").then(data=>{if(!active)return;const rows=Array.isArray(data)?data:(data.results??[]);setUnreadAlerts(rows.length)}).catch(()=>{});void load();const timer=window.setInterval(load,60000);return()=>{active=false;window.clearInterval(timer)}},[pathname]);
+  function submit(event:React.FormEvent){event.preventDefault();const value=query.trim();setSearchOpen(false);router.push(value?`/opportunities/federal-contracts?q=${encodeURIComponent(value)}&auto=1`:"/opportunities/federal-contracts")}
+  function choose(hit:SearchHit){setSearchOpen(false);setQuery("");router.push(hit.href)}
+  if(["/sign-in","/register","/forgot-password"].includes(pathname))return <>{children}</>;
+  const initials=`${session?.user.first_name?.[0]??""}${session?.user.last_name?.[0]??""}`||session?.user.email?.[0]?.toUpperCase()||"U";
+  const displayName=`${session?.user.first_name??""} ${session?.user.last_name??""}`.trim()||session?.user.email||"ForgeGov user";
   return <div className="forge-shell">
-    <aside className={`forge-sidebar ${menuOpen ? "open" : ""}`}>
-      <div className="forge-brandbar">
-        <Link href="/" className="forge-brand" onClick={() => setMenuOpen(false)}>
-          <span className="forge-logo"><span>F</span>G</span>
-          <span><b>FORGE</b>GOV<small>GovCon Intelligence</small></span>
-        </Link>
-        <button className="shell-icon mobile-only" onClick={() => setMenuOpen(false)} aria-label="Close navigation"><X size={20}/></button>
-      </div>
-
-      <div className="workspace-switcher" aria-label="Current workspace">
-        <span className="workspace-avatar">{session?.organization.name.slice(0, 2).toUpperCase()}</span>
-        <span><b>{session?.organization.name}</b><small>Primary workspace</small></span>
-        <ChevronDown size={16}/>
-      </div>
-
-      <Link href="/assistant" className={`ai-launch ${pathname === "/assistant" ? "active" : ""}`} onClick={() => setMenuOpen(false)}>
-        <Sparkles size={18}/><span><b>ForgeGov AI</b><small>Research & capture copilot</small></span><ChevronRight size={16}/>
-      </Link>
-
-      <nav className="forge-nav">
-        {navigationGroups.map((group) => {
-          const Icon = group.icon;
-          const isActive = activeGroup?.label === group.label;
-          const isExpanded = expanded[group.label] || isActive;
-          return <section className={`forge-nav-group ${isActive ? "active-group" : ""}`} key={group.label}>
-            <button onClick={() => setExpanded((current) => ({...current, [group.label]: !isExpanded}))}>
-              <span><Icon size={18}/>{group.label}</span>{isExpanded ? <ChevronDown size={15}/> : <ChevronRight size={15}/>} 
-            </button>
-            {isExpanded && <div>{group.items.map((item) => <Link key={item.href} href={item.href} onClick={() => setMenuOpen(false)} className={pathname === item.href ? "active" : ""}>{item.label}</Link>)}</div>}
-          </section>;
-        })}
-      </nav>
-
-      <div className="forge-sidebar-footer">
-        {utilityItems.map((item) => { const Icon = item.icon; return <Link href={item.href} key={item.href} className={pathname === item.href ? "active" : ""}>{Icon && <Icon size={17}/>} {item.label}</Link>; })}
-        <Link href="/settings"><CircleHelp size={17}/> Help center</Link>
-      </div>
-    </aside>
-
-    {menuOpen && <button className="shell-backdrop" onClick={() => setMenuOpen(false)} aria-label="Close navigation"/>}
-
-    <main className="forge-main">
-      <header className="forge-topbar">
-        <div className="topbar-left">
-          <button className="shell-icon mobile-only" onClick={() => setMenuOpen(true)} aria-label="Open navigation"><Menu size={21}/></button>
-          <form className="command-search" onSubmit={submit}>
-            <Search size={18}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search opportunities, awards, vendors, agencies..."/><kbd><Command size={12}/> K</kbd>
-          </form>
-        </div>
-        <div className="topbar-actions">
-          <span className="live-source"><i/> Federal data workspace</span>
-          <button className="user-chip" onClick={() => router.push("/account")}><span>{initials}</span><div><b>{displayName}</b><small>{session?.role}</small></div><ChevronDown size={14}/></button>
-          <button className="toolbar-button" onClick={() => void logout()}>Sign out</button>
-        </div>
-      </header>
-      <div className="forge-content">{children}</div>
-    </main>
+    <aside className={`forge-sidebar ${menuOpen?"open":""}`}><div className="forge-brandbar"><Link href="/" className="forge-brand" onClick={()=>setMenuOpen(false)}><span className="forge-logo"><span>F</span>G</span><span><b>FORGE</b>GOV<small>GovCon Intelligence</small></span></Link><button className="shell-icon mobile-only" onClick={()=>setMenuOpen(false)} aria-label="Close navigation"><X size={20}/></button></div>
+      <div className="workspace-switcher"><span className="workspace-avatar">{session?.organization.name.slice(0,2).toUpperCase()}</span><span><b>{session?.organization.name}</b><small>Primary workspace</small></span><ChevronDown size={16}/></div>
+      <Link href="/assistant" className={`ai-launch ${pathname==="/assistant"?"active":""}`} onClick={()=>setMenuOpen(false)}><Sparkles size={18}/><span><b>ForgeGov AI</b><small>Research & capture copilot</small></span><ChevronRight size={16}/></Link>
+      <nav className="forge-nav">{navigationGroups.map(group=>{const Icon=group.icon;const isActive=activeGroup?.label===group.label;const isExpanded=expanded[group.label]||isActive;return <section className={`forge-nav-group ${isActive?"active-group":""}`} key={group.label}><button onClick={()=>setExpanded(c=>({...c,[group.label]:!isExpanded}))}><span><Icon size={18}/>{group.label}</span>{isExpanded?<ChevronDown size={15}/>:<ChevronRight size={15}/>}</button>{isExpanded&&<div>{group.items.map(item=><Link key={item.href} href={item.href} onClick={()=>setMenuOpen(false)} className={pathname===item.href?"active":""}>{item.label}</Link>)}</div>}</section>})}</nav>
+      <div className="forge-sidebar-footer">{utilityItems.map(item=>{const Icon=item.icon;return <Link href={item.href} key={item.href}>{Icon&&<Icon size={17}/>} {item.label}</Link>})}<Link href="/settings"><CircleHelp size={17}/> Help center</Link></div>
+    </aside>{menuOpen&&<button className="shell-backdrop" onClick={()=>setMenuOpen(false)} aria-label="Close navigation"/>}
+    <main className="forge-main"><header className="forge-topbar"><div className="topbar-left"><button className="shell-icon mobile-only" onClick={()=>setMenuOpen(true)}><Menu size={21}/></button><div className="global-search-wrap"><form className="command-search" onSubmit={submit}><Search size={18}/><input id="forge-global-search" value={query} onFocus={()=>setSearchOpen(true)} onChange={e=>setQuery(e.target.value)} placeholder="Search opportunities, awards, vendors, agencies..."/><kbd><Command size={12}/> K</kbd></form>{searchOpen&&query.trim().length>=2&&<div className="global-search-results">{searching?<p>Searching ForgeGov…</p>:hits.length?hits.map(hit=><button key={`${hit.type}-${hit.id}`} onClick={()=>choose(hit)}><span>{hit.type}</span><strong>{hit.title}</strong><small>{hit.subtitle||"Open in ForgeGov"}</small></button>):<p>No indexed matches. Press Enter to search live opportunities.</p>}</div>}</div></div><div className="topbar-actions"><span className="live-source"><i/> Federal data workspace</span><button className="shell-icon notification-button" onClick={()=>router.push("/capture/alerts")} aria-label={`${unreadAlerts} unread alerts`}><Bell size={19}/>{unreadAlerts>0&&<span className="notification-count">{unreadAlerts>99?"99+":unreadAlerts}</span>}</button><button className="user-chip" onClick={()=>router.push("/account")}><span>{initials}</span><div><b>{displayName}</b><small>{session?.role}</small></div><ChevronDown size={14}/></button><button className="toolbar-button" onClick={()=>void logout()}>Sign out</button></div></header><div className="forge-content" onClick={()=>setSearchOpen(false)}>{children}</div></main>
   </div>;
 }

@@ -45,6 +45,7 @@ from .views import (
     live_usaspending_awards,
     live_usaspending_contract_vehicles,
     federal_forecast_sources,
+    global_search,
     state_local_source_directory,
     agency_intelligence,
     vendor_intelligence,
@@ -56,6 +57,9 @@ from .views import (
     pipeline_to_pursuit,
     create_saved_search,
     create_workspace_task,
+    opportunity_workspace,
+    teaming_activity_collection,
+    teaming_activity_detail,
 )
 
 router = DefaultRouter()
@@ -102,6 +106,7 @@ urlpatterns = [
     path("live/grants/opportunities/<str:opportunity_id>/", live_grants_detail),
     path("live/usaspending/awards/", live_usaspending_awards),
     path("live/usaspending/vehicles/", live_usaspending_contract_vehicles),
+    path("intelligence/search/", global_search),
     path("intelligence/forecasts/sources/", federal_forecast_sources),
     path("intelligence/state-local/sources/", state_local_source_directory),
     path("intelligence/agencies/", agency_intelligence),
@@ -113,5 +118,8 @@ urlpatterns = [
     path("workflow/saved-searches/", create_saved_search),
     path("workflow/saved-searches/evaluate/", run_saved_search_alerts),
     path("workflow/tasks/", create_workspace_task),
+    path("workflow/opportunity-workspaces/<str:source_id>/", opportunity_workspace),
+    path("workflow/teaming/<int:teaming_id>/activities/", teaming_activity_collection),
+    path("workflow/teaming-activities/<int:activity_id>/", teaming_activity_detail),
     path("", include(router.urls)),
 ]

@@ -14,6 +14,7 @@ from .models import (
     Membership,
     AuditLog,
     Opportunity,
+    OpportunityWorkspace,
     Organization,
     Participant,
     PipelineItem,
@@ -21,6 +22,7 @@ from .models import (
     SavedSearch,
     Task,
     TeamingRequest,
+    TeamingActivity,
     Vendor,
 )
 from .permissions import active_membership
@@ -171,6 +173,24 @@ class TeamingRequestSerializer(WorkspaceRelationshipValidationMixin, serializers
 
     class Meta:
         model = TeamingRequest
+        fields = "__all__"
+        read_only_fields = ("id", "organization", "created_at", "updated_at")
+
+
+class OpportunityWorkspaceSerializer(WorkspaceRelationshipValidationMixin, serializers.ModelSerializer):
+    opportunity_detail = OpportunitySerializer(source="opportunity", read_only=True)
+
+    class Meta:
+        model = OpportunityWorkspace
+        fields = "__all__"
+        read_only_fields = ("id", "organization", "opportunity", "created_at", "updated_at")
+
+
+class TeamingActivitySerializer(WorkspaceRelationshipValidationMixin, serializers.ModelSerializer):
+    workspace_foreign_keys = ("teaming_request",)
+
+    class Meta:
+        model = TeamingActivity
         fields = "__all__"
         read_only_fields = ("id", "organization", "created_at", "updated_at")
 

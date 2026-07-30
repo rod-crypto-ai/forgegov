@@ -936,6 +936,12 @@ def search_federal_forecast_sources(*, query: str = "") -> dict[str, Any]:
             agency = cells[0].get_text(" ", strip=True)
             forecast_url = urljoin(directory_url, forecast_link.get("href", "")) if forecast_link else ""
             agency_url = urljoin(directory_url, agency_link.get("href", "")) if agency_link else ""
+            # Acquisition.gov occasionally publishes stale or malformed agency links.
+            # Keep cards usable by falling back to the agency site or directory.
+            if not forecast_url.startswith(("http://", "https://")):
+                forecast_url = agency_url or directory_url
+            if "international development" in agency.lower() and "usaid.gov" not in forecast_url.lower():
+                forecast_url = "https://www.usaid.gov/work-usaid/business-forecast"
             if agency and forecast_url:
                 rows.append({
                     "agency": agency,
@@ -1063,11 +1069,11 @@ def search_sam_subawards(
     }
 
 
-def search_sba_subnet_opportunities(*, query: str = "", state: str = "") -> dict[str, Any]:
+def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: int = 0) -> dict[str, Any]:
     """Read SBA's public SUBNet opportunity table for current prime-to-sub opportunities."""
     from bs4 import BeautifulSoup
     url = settings.SBA_SUBNET_URL
-    params = {"keyword": query, "state": state or "All"}
+    params = {"keyword": query, "state": state or "All", "page": max(0, page)}
     try:
         response = requests.get(url, params=params, timeout=35, headers={"User-Agent": "ForgeGov/1.2 (+https://forgegov.com)"})
         response.raise_for_status()
@@ -1097,4 +1103,6 @@ def search_sba_subnet_opportunities(*, query: str = "", state: str = "") -> dict
             "point_of_contact": cells[5].get_text(" ", strip=True) if len(cells) > 5 else "",
             "source_url": href or response.url,
         })
-    return {"total_records": len(results), "results": results, "source_url": response.url}
+    pager_links = soup.select("nav.pager a, ul.pagination a, .pager a")
+    has_next = any("next" in (link.get_text(" ", strip=True) + " " + str(link.get("rel", ""))).lower() for link in pager_links)
+    return {"total_records": len(results), "results": results, "source_url": response.url, "page": max(0, page), "has_next": has_next}

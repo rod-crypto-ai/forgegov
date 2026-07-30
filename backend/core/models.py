@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.utils import timezone
 
 
 class TimeStampedModel(models.Model):
@@ -342,6 +343,42 @@ class TeamingRequest(TimeStampedModel):
 
     def __str__(self):
         return f"{self.company_name} - {self.role}"
+
+
+class OpportunityWorkspace(TimeStampedModel):
+    """Persistent capture workspace attached to one opportunity and organization."""
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="opportunity_workspaces")
+    opportunity = models.ForeignKey(Opportunity, on_delete=models.CASCADE, related_name="workspaces")
+    notes = models.TextField(blank=True)
+    capture_summary = models.TextField(blank=True)
+    risks = models.JSONField(default=list, blank=True)
+    compliance_items = models.JSONField(default=list, blank=True)
+    decision = models.CharField(max_length=20, default="undecided")
+
+    class Meta:
+        ordering = ["-updated_at"]
+        constraints = [models.UniqueConstraint(fields=("organization", "opportunity"), name="unique_opportunity_workspace_per_org")]
+
+
+class TeamingActivity(TimeStampedModel):
+    class ActivityType(models.TextChoices):
+        NOTE = "note", "Note"
+        EMAIL = "email", "Email"
+        CALL = "call", "Call"
+        MEETING = "meeting", "Meeting"
+        FOLLOW_UP = "follow_up", "Follow-up"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="teaming_activities")
+    teaming_request = models.ForeignKey(TeamingRequest, on_delete=models.CASCADE, related_name="activities")
+    activity_type = models.CharField(max_length=20, choices=ActivityType.choices, default=ActivityType.NOTE)
+    subject = models.CharField(max_length=255)
+    details = models.TextField(blank=True)
+    occurred_at = models.DateTimeField(default=timezone.now)
+    follow_up_at = models.DateTimeField(null=True, blank=True)
+    completed = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["-occurred_at", "-created_at"]
 
 
 class FileRecord(TimeStampedModel):

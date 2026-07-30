@@ -1,86 +1,55 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Building2, ExternalLink, FileText, LoaderCircle, Target } from "lucide-react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Building2, CheckCircle2, Circle, ExternalLink, FileText, History, ListChecks, LoaderCircle, NotebookPen, Save, Sparkles, Target, TriangleAlert, X } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPatch, apiPost } from "@/lib/api";
 
-type DocumentRow = { name: string; url: string; preview_available?: boolean };
-type IncumbentSignal = { recipient_name: string; recipient_uei?: string; award_count: number; obligated: number; latest_end?: string | null };
-type Detail = {
-  opportunity: Record<string, unknown>;
-  description: string;
-  documents: DocumentRow[];
-  source_url: string;
-  incumbent_signals?: IncumbentSignal[];
-  incumbent_signal_note?: string;
-};
-
-function value(row: Record<string, unknown>, key: string) {
-  const item = row[key];
-  return item === null || item === undefined || item === "" ? "—" : String(item);
+type DocumentRow={name:string;url:string;preview_available?:boolean};
+type IncumbentSignal={recipient_name:string;recipient_uei?:string;award_count:number;obligated:number;latest_end?:string|null};
+type Detail={opportunity:Record<string,unknown>;description:string;documents:DocumentRow[];source_url:string;incumbent_signals?:IncumbentSignal[];incumbent_signal_note?:string};
+type ComplianceItem={id:string;label:string;complete:boolean;source?:string};
+type Workspace={id:number;notes:string;capture_summary:string;risks:string[];compliance_items:ComplianceItem[];decision:string;updated_at:string};
+function value(row:Record<string,unknown>,key:string){const item=row[key];return item===null||item===undefined||item===""?"—":String(item)}
+function previewable(document:DocumentRow){return document.preview_available||/\.(pdf|txt|html?)(\?|$)/i.test(document.url)}
+function defaultChecklist(data:Detail):ComplianceItem[]{
+ const o=data.opportunity; const rows:ComplianceItem[]=[
+  {id:"deadline",label:`Confirm response deadline: ${value(o,"responseDeadLine")}`,complete:false,source:"SAM.gov"},
+  {id:"naics",label:`Validate NAICS and size standard: ${value(o,"naicsCode")}`,complete:false,source:"SAM.gov"},
+  {id:"setaside",label:`Confirm set-aside eligibility: ${value(o,"typeOfSetAsideDescription")}`,complete:false,source:"SAM.gov"},
+  {id:"scope",label:"Review scope, deliverables, and performance locations",complete:false,source:"Description"},
+  {id:"submission",label:"Identify all submission instructions and required volumes",complete:false,source:"Solicitation files"},
+  {id:"evaluation",label:"Extract evaluation factors and scoring priorities",complete:false,source:"Solicitation files"},
+ ];
+ return rows;
 }
 
-export default function FederalOpportunityDetailPage() {
-  const params = useParams<{ noticeId: string }>();
-  const noticeId = decodeURIComponent(params.noticeId);
-  const [data, setData] = useState<Detail | null>(null);
-  const [message, setMessage] = useState("Loading SAM.gov opportunity details and documents…");
-  const [adding, setAdding] = useState(false);
-
-  const load = useCallback(async () => {
-    try {
-      const result = await apiGet<Detail>(`/live/sam/opportunities/${encodeURIComponent(noticeId)}/`);
-      setData(result);
-      setMessage(`${result.documents?.length ?? 0} public documents loaded.`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Opportunity detail could not be loaded");
-    }
-  }, [noticeId]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
-  }, [load]);
-
-  async function addToPipeline() {
-    setAdding(true);
-    try {
-      await apiPost("/workflow/opportunity-to-pipeline/", { source_id: noticeId, stage: "reviewing" });
-      setMessage("Opportunity added to the capture pipeline.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Opportunity could not be added");
-    } finally { setAdding(false); }
-  }
-
-  const opportunity = data?.opportunity ?? {};
-  return <>
-    <header className="feature-hero opportunity-detail-hero">
-      <div>
-        <Link className="detail-back" href="/opportunities/federal-contracts"><ArrowLeft size={16}/> Back to search</Link>
-        <span className="eyebrow">SAM.gov opportunity intelligence</span>
-        <h1>{value(opportunity, "title")}</h1>
-        <p>{value(opportunity, "fullParentPathName")}</p>
-      </div>
-      <div className="detail-actions">
-        {data?.source_url ? <a className="secondary-button" href={data.source_url} target="_blank" rel="noreferrer">SAM.gov <ExternalLink size={16}/></a> : null}
-        <button className="primary-button" onClick={() => void addToPipeline()} disabled={adding}><Target size={16}/>{adding ? "Adding…" : "Add to pipeline"}</button>
-      </div>
-    </header>
-    <p className="inline-message">{message}</p>
-    {!data ? <div className="table-state"><LoaderCircle className="spin"/><strong>Loading opportunity</strong></div> : <>
-      <section className="insight-strip detail-facts">
-        <div><span>Solicitation</span><strong>{value(opportunity, "solicitationNumber")}</strong></div>
-        <div><span>Notice type</span><strong>{value(opportunity, "type")}</strong></div>
-        <div><span>NAICS</span><strong>{value(opportunity, "naicsCode")}</strong></div>
-        <div><span>Deadline</span><strong>{value(opportunity, "responseDeadLine")}</strong></div>
-      </section>
-      <div className="split-intelligence">
-        <section className="data-panel opportunity-description"><div className="panel-title-row"><div><span className="eyebrow">REQUIREMENT</span><h2>Description</h2></div></div><div className="rich-description">{data.description || "SAM.gov did not return a public description through the API."}</div></section>
-        <section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">FILES</span><h2>Government documents</h2></div><small>{data.documents.length} files</small></div><div className="document-list">{data.documents.length ? data.documents.map((document, index)=><a key={`${document.url}-${index}`} href={document.url} target="_blank" rel="noreferrer"><FileText/><span><strong>{document.name}</strong><small>{document.preview_available ? "PDF preview available" : "Open source file"}</small></span><ExternalLink size={16}/></a>) : <div className="table-state"><FileText/><strong>No public attachments returned</strong></div>}</div></section>
-      </div>
-      <section className="data-panel incumbent-panel"><div className="panel-title-row"><div><span className="eyebrow">MARKET EVIDENCE</span><h2>Incumbent signals</h2></div><small>{data.incumbent_signals?.length ?? 0} candidates</small></div><p className="panel-note">{data.incumbent_signal_note}</p><div className="intelligence-list">{data.incumbent_signals?.length ? data.incumbent_signals.map((signal, index)=><article key={`${signal.recipient_name}-${index}`}><Building2/><div><span>Potential incumbent / competitor signal</span><h3>{signal.recipient_name}</h3><p>{signal.award_count.toLocaleString()} matching stored awards · {new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",maximumFractionDigits:0}).format(Number(signal.obligated ?? 0))} obligated</p><small>{signal.recipient_uei ? `UEI ${signal.recipient_uei}` : "UEI unavailable"}{signal.latest_end ? ` · Latest end ${signal.latest_end}` : ""}</small></div></article>) : <div className="table-state"><Building2/><strong>Load USAspending award data to generate incumbent signals</strong></div>}</div></section>
-    </>}
-  </>;
+export default function FederalOpportunityDetailPage(){
+ const params=useParams<{noticeId:string}>();const noticeId=decodeURIComponent(params.noticeId);
+ const[data,setData]=useState<Detail|null>(null);const[message,setMessage]=useState("Loading SAM.gov opportunity details and documents…");const[adding,setAdding]=useState(false);const[viewer,setViewer]=useState<DocumentRow|null>(null);
+ const[question,setQuestion]=useState("");const[answer,setAnswer]=useState("");const[asking,setAsking]=useState(false);const[activeTab,setActiveTab]=useState<"overview"|"compliance"|"notes"|"timeline">("overview");
+ const[workspace,setWorkspace]=useState<Workspace|null>(null);const[workspaceMessage,setWorkspaceMessage]=useState("");const[saving,setSaving]=useState(false);
+ const loadWorkspace=useCallback(async()=>{try{const result=await apiGet<Workspace>(`/workflow/opportunity-workspaces/${encodeURIComponent(noticeId)}/`);setWorkspace(result)}catch(error){setWorkspaceMessage(error instanceof Error?error.message:"Workspace could not be loaded")}},[noticeId]);
+ const load=useCallback(async()=>{try{const result=await apiGet<Detail>(`/live/sam/opportunities/${encodeURIComponent(noticeId)}/`);setData(result);setMessage(`${result.documents?.length??0} public documents loaded.`);void loadWorkspace()}catch(error){setMessage(error instanceof Error?error.message:"Opportunity detail could not be loaded")}},[noticeId,loadWorkspace]);
+ useEffect(()=>{const timer=window.setTimeout(()=>void load(),0);return()=>window.clearTimeout(timer)},[load]);
+ async function addToPipeline(){setAdding(true);try{await apiPost("/workflow/opportunity-to-pipeline/",{source_id:noticeId,stage:"reviewing"});setMessage("Opportunity added to the capture pipeline.");await loadWorkspace()}catch(error){setMessage(error instanceof Error?error.message:"Opportunity could not be added")}finally{setAdding(false)}}
+ async function ask(event?:FormEvent,preset?:string){event?.preventDefault();const prompt=preset??question;if(!prompt.trim()||!data)return;setQuestion(prompt);setAsking(true);setAnswer("");const o=data.opportunity;const context=`Opportunity: ${value(o,"title")}\nSolicitation: ${value(o,"solicitationNumber")}\nAgency: ${value(o,"fullParentPathName")}\nNAICS: ${value(o,"naicsCode")}\nDeadline: ${value(o,"responseDeadLine")}\nDescription: ${data.description.slice(0,14000)}\nDocuments: ${data.documents.map(d=>d.name).join(", ")}`;try{const result=await apiPost<{answer:string}>("/ai/chat/",{message:`Use this opportunity context to answer the user's question. Separate confirmed facts from assumptions. Do not invent missing facts.\n\n${context}\n\nQuestion: ${prompt}`,history:[]});setAnswer(result.answer)}catch(error){setAnswer(error instanceof Error?error.message:"ForgeGov AI could not answer") }finally{setAsking(false)}}
+ async function saveWorkspace(next:Partial<Workspace>={}){if(!workspace)return;setSaving(true);setWorkspaceMessage("");try{const result=await apiPatch<Workspace>(`/workflow/opportunity-workspaces/${encodeURIComponent(noticeId)}/`,{notes:next.notes??workspace.notes,capture_summary:next.capture_summary??workspace.capture_summary,risks:next.risks??workspace.risks,compliance_items:next.compliance_items??workspace.compliance_items,decision:next.decision??workspace.decision});setWorkspace(result);setWorkspaceMessage("Workspace saved.")}catch(error){setWorkspaceMessage(error instanceof Error?error.message:"Workspace could not be saved")}finally{setSaving(false)}}
+ function initializeChecklist(){if(!data||!workspace)return;const next={...workspace,compliance_items:defaultChecklist(data)};setWorkspace(next);void saveWorkspace(next)}
+ const opportunity=useMemo(()=>data?.opportunity??{},[data]);
+ const timeline=useMemo(()=>data?[{label:"Posted",date:value(opportunity,"postedDate")},{label:"Updated",date:value(opportunity,"modifiedDate")},{label:"Response deadline",date:value(opportunity,"responseDeadLine")},{label:"Archive date",date:value(opportunity,"archiveDate")}].filter(row=>row.date!=="—"):[],[data,opportunity]);
+ const completed=workspace?.compliance_items?.filter(item=>item.complete).length??0;const total=workspace?.compliance_items?.length??0;
+ return <><header className="feature-hero opportunity-detail-hero"><div><Link className="detail-back" href="/opportunities/federal-contracts"><ArrowLeft size={16}/> Back to search</Link><span className="eyebrow">SAM.gov opportunity workspace</span><h1>{value(opportunity,"title")}</h1><p>{value(opportunity,"fullParentPathName")}</p></div><div className="detail-actions">{data?.source_url?<a className="secondary-button" href={data.source_url} target="_blank" rel="noreferrer">Original source <ExternalLink size={16}/></a>:null}<button className="primary-button" onClick={()=>void addToPipeline()} disabled={adding}><Target size={16}/>{adding?"Adding…":"Add to pipeline"}</button></div></header><p className="inline-message">{message}</p>
+ {!data?<div className="table-state"><LoaderCircle className="spin"/><strong>Loading opportunity</strong></div>:<><section className="insight-strip detail-facts"><div><span>Solicitation</span><strong>{value(opportunity,"solicitationNumber")}</strong></div><div><span>Notice type</span><strong>{value(opportunity,"type")}</strong></div><div><span>NAICS</span><strong>{value(opportunity,"naicsCode")}</strong></div><div><span>Deadline</span><strong>{value(opportunity,"responseDeadLine")}</strong></div></section>
+ <nav className="workspace-tabs"><button className={activeTab==="overview"?"active":""} onClick={()=>setActiveTab("overview")}><FileText size={16}/> Overview</button><button className={activeTab==="compliance"?"active":""} onClick={()=>setActiveTab("compliance")}><ListChecks size={16}/> Compliance {total?`${completed}/${total}`:""}</button><button className={activeTab==="notes"?"active":""} onClick={()=>setActiveTab("notes")}><NotebookPen size={16}/> Capture notes</button><button className={activeTab==="timeline"?"active":""} onClick={()=>setActiveTab("timeline")}><History size={16}/> Timeline</button></nav>
+ {workspaceMessage&&<p className="inline-message">{workspaceMessage}</p>}
+ {activeTab==="overview"&&<><div className="split-intelligence"><section className="data-panel opportunity-description"><div className="panel-title-row"><div><span className="eyebrow">REQUIREMENT</span><h2>Description</h2></div></div><div className="rich-description">{data.description||"SAM.gov did not return a public description through the API."}</div></section><section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">FILES</span><h2>Government documents</h2></div><small>{data.documents.length} files</small></div><div className="document-list">{data.documents.length?data.documents.map((document,index)=><button key={`${document.url}-${index}`} onClick={()=>setViewer(document)}><FileText/><span><strong>{document.name}</strong><small>{previewable(document)?"Open inside ForgeGov":"View file options"}</small></span><ExternalLink size={16}/></button>):<div className="table-state"><FileText/><strong>No public attachments returned</strong></div>}</div></section></div>
+ <section className="data-panel context-ai"><div className="panel-title-row"><div><span className="eyebrow">CONTEXTUAL AI</span><h2>Analyze this opportunity</h2></div><Sparkles/></div><div className="ai-preset-row"><button onClick={()=>void ask(undefined,"Create a concise executive summary with scope, buyer, deadlines, set-aside, and major unknowns.")}>Executive summary</button><button onClick={()=>void ask(undefined,"Extract every explicit requirement and organize them into a compliance checklist. Cite the source section or document name when known.")}>Extract requirements</button><button onClick={()=>void ask(undefined,"Identify capture, technical, schedule, compliance, staffing, and pricing risks. Separate confirmed risks from assumptions.")}>Find risks</button><button onClick={()=>void ask(undefined,"Prepare a bid/no-bid brief with strengths, gaps, questions, and a recommendation based only on available information.")}>Bid/no-bid brief</button></div><form onSubmit={ask}><textarea value={question} onChange={e=>setQuestion(e.target.value)} placeholder="Ask about requirements, risks, evaluation criteria, or a capture plan…"/><button className="primary-button" disabled={asking||!question.trim()}>{asking?<LoaderCircle className="spin" size={16}/>:<Sparkles size={16}/>} {asking?"Analyzing…":"Ask AI"}</button></form>{answer&&<div className="context-ai-answer">{answer}</div>}</section></>}
+ {activeTab==="compliance"&&<section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">COMPLIANCE</span><h2>Response readiness checklist</h2></div><div className="row-actions"><span>{completed} of {total} complete</span>{!total&&workspace?<button className="secondary-button" onClick={initializeChecklist}>Build starter checklist</button>:null}<button className="primary-button" disabled={!workspace||saving} onClick={()=>void saveWorkspace()}><Save size={16}/>{saving?"Saving…":"Save"}</button></div></div>{!workspace?<div className="table-state"><TriangleAlert/><strong>Add or persist this opportunity to activate its workspace.</strong><p>Use Add to pipeline, then reload this page.</p></div>:<div className="compliance-list">{workspace.compliance_items.map((item,index)=><article key={item.id||index}><button className="icon-button" onClick={()=>{const items=workspace.compliance_items.map((row,i)=>i===index?{...row,complete:!row.complete}:row);setWorkspace({...workspace,compliance_items:items})}}>{item.complete?<CheckCircle2/>:<Circle/>}</button><div><strong>{item.label}</strong><small>{item.source||"Workspace item"}</small></div><button className="icon-button danger-button" onClick={()=>setWorkspace({...workspace,compliance_items:workspace.compliance_items.filter((_,i)=>i!==index)})}><X size={16}/></button></article>)}<button className="secondary-button" onClick={()=>{const label=window.prompt("Checklist item");if(label)setWorkspace({...workspace,compliance_items:[...workspace.compliance_items,{id:crypto.randomUUID(),label,complete:false}]})}}>Add checklist item</button></div>}</section>}
+ {activeTab==="notes"&&<section className="data-panel capture-notes-grid">{workspace?<><label><span>Bid decision</span><select value={workspace.decision} onChange={e=>setWorkspace({...workspace,decision:e.target.value})}><option value="undecided">Undecided</option><option value="bid">Bid</option><option value="no_bid">No-bid</option><option value="hold">Hold</option></select></label><label><span>Capture summary</span><textarea value={workspace.capture_summary} onChange={e=>setWorkspace({...workspace,capture_summary:e.target.value})} placeholder="Win strategy, customer need, differentiators, and pursuit posture…"/></label><label><span>Working notes</span><textarea value={workspace.notes} onChange={e=>setWorkspace({...workspace,notes:e.target.value})} placeholder="Questions, assumptions, partner needs, pricing notes…"/></label><label><span>Risks — one per line</span><textarea value={workspace.risks.join("\n")} onChange={e=>setWorkspace({...workspace,risks:e.target.value.split("\n").filter(Boolean)})} placeholder="Missing clearance\nAggressive response schedule"/></label><button className="primary-button" disabled={saving} onClick={()=>void saveWorkspace()}><Save size={16}/>{saving?"Saving…":"Save workspace"}</button></>:<div className="table-state"><NotebookPen/><strong>Workspace is not active yet.</strong><p>Add this opportunity to the pipeline to persist capture notes.</p></div>}</section>}
+ {activeTab==="timeline"&&<section className="data-panel"><div className="timeline-list">{timeline.map((row,index)=><article key={`${row.label}-${index}`}><span/><div><strong>{row.label}</strong><p>{row.date}</p></div></article>)}{workspace?<article><span/><div><strong>Workspace last updated</strong><p>{new Date(workspace.updated_at).toLocaleString()}</p></div></article>:null}</div></section>}
+ <section className="data-panel incumbent-panel"><div className="panel-title-row"><div><span className="eyebrow">MARKET EVIDENCE</span><h2>Incumbent signals</h2></div><small>{data.incumbent_signals?.length??0} candidates</small></div><p className="panel-note">{data.incumbent_signal_note}</p><div className="intelligence-list">{data.incumbent_signals?.length?data.incumbent_signals.map((signal,index)=><article key={`${signal.recipient_name}-${index}`}><Building2/><div><span>Potential incumbent / competitor signal</span><Link className="entity-link" href={`/participants/vendors/profile?name=${encodeURIComponent(signal.recipient_name)}`}><h3>{signal.recipient_name}</h3></Link><p>{signal.award_count.toLocaleString()} matching stored awards · {new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",maximumFractionDigits:0}).format(Number(signal.obligated??0))} obligated</p><small>{signal.recipient_uei?`UEI ${signal.recipient_uei}`:"UEI unavailable"}{signal.latest_end?` · Latest end ${signal.latest_end}`:""}</small></div></article>):<div className="table-state"><Building2/><strong>Load USAspending award data to generate incumbent signals</strong></div>}</div></section></>}
+ {viewer&&<div className="document-viewer-backdrop" role="dialog" aria-modal="true"><div className="document-viewer"><header><strong>{viewer.name}</strong><div><a className="secondary-button" href={viewer.url} target="_blank" rel="noreferrer">Open original <ExternalLink size={15}/></a><button className="icon-button" onClick={()=>setViewer(null)}><X/></button></div></header>{previewable(viewer)?<iframe title={viewer.name} src={viewer.url}/>:<div className="document-viewer-empty"><div><FileText size={42}/><h2>Browser preview is unavailable for this file type.</h2><p>The original filename is preserved. Open the source only when required.</p><a className="primary-button" href={viewer.url} target="_blank" rel="noreferrer">Open original file</a></div></div>}</div></div>}
+ </>;
 }

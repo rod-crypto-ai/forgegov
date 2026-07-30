@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, Building2, Database, Download, RefreshCw, Search, ShieldCheck, Users } from "lucide-react";
+import { ArrowUpRight, Building2, Database, Download, Eye, RefreshCw, Search, ShieldCheck, Users, X } from "lucide-react";
+import Link from "next/link";
 import { API_BASE_URL, apiGet } from "@/lib/api";
 
 type UsaAward = {
@@ -35,6 +36,7 @@ export function AwardIntelligence() {
   const [persist, setPersist] = useState(true);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
+  const [selected, setSelected] = useState<UsaAward | null>(null);
 
   const search = useCallback(async (requestedPage: number) => {
     setLoading(true);
@@ -119,18 +121,19 @@ export function AwardIntelligence() {
           <div className="award-table-wrap"><table className="award-table"><thead><tr><th>Award / Description</th><th>Recipient</th><th>Agency</th><th>Period</th><th className="amount">Obligated</th></tr></thead><tbody>
             {(data?.results ?? []).map((award, index) => {
               const uid = award.generated_unique_award_id;
-              return <tr key={`${uid ?? award["Award ID"]}-${index}`}>
+              return <tr key={`${uid ?? award["Award ID"]}-${index}`} onClick={() => setSelected(award)} tabIndex={0}>
                 <td><strong>{award["Award ID"] || "Award"}</strong><span>{award["Description"] || "No description provided"}</span></td>
-                <td><strong>{award["Recipient Name"] || "Unknown recipient"}</strong></td>
+                <td>{award["Recipient Name"] ? <Link className="entity-link" href={`/participants/vendors/profile?name=${encodeURIComponent(award["Recipient Name"] as string)}`}><strong>{award["Recipient Name"]}</strong><ArrowUpRight size={13}/></Link> : <strong>Unknown recipient</strong>}</td>
                 <td><strong>{award["Awarding Agency"] || "Unknown agency"}</strong><span>{award["Funding Agency"] && award["Funding Agency"] !== award["Awarding Agency"] ? `Funded by ${award["Funding Agency"]}` : ""}</span></td>
                 <td><strong>{award["Start Date"] || "—"}</strong><span>to {award["End Date"] || "—"}</span></td>
-                <td className="amount"><strong>{money.format(Number(award["Award Amount"] ?? 0))}</strong>{uid && <a href={`https://www.usaspending.gov/award/${uid}/`} target="_blank" rel="noreferrer">View source <ArrowUpRight size={13}/></a>}</td>
+                <td className="amount"><strong>{money.format(Number(award["Award Amount"] ?? 0))}</strong><button className="entity-link" onClick={(event)=>{event.stopPropagation();setSelected(award)}}>Intelligence <Eye size={13}/></button></td>
               </tr>;
             })}
           </tbody></table></div>}
       </section>
       {data && <div className="pagination-bar"><button className="secondary-button" disabled={loading || page <= 1} onClick={() => search(page - 1)}>Previous</button><span>Page <strong>{page}</strong>{data.page_metadata?.total ? ` · ${Number(data.page_metadata.total).toLocaleString()} total awards` : ""}</span><button className="secondary-button" disabled={loading || !data.page_metadata?.hasNext} onClick={() => search(page + 1)}>Next</button></div>}
       <p className="source-note">Live endpoint: <code>{API_BASE_URL}/live/usaspending/awards/</code></p>
+      {selected && <div className="document-viewer-backdrop"><div className="document-viewer"><header><div><Database/><strong>{selected["Award ID"] || "Federal award"}</strong></div><button className="icon-button" onClick={()=>setSelected(null)}><X size={19}/></button></header><div className="document-viewer-empty"><div><Database size={44}/><h2>{selected["Description"] || "Federal contract award"}</h2><div className="intelligence-drawer-grid"><div><span>Recipient</span><strong>{selected["Recipient Name"] || "Unknown"}</strong></div><div><span>Awarding agency</span><strong>{selected["Awarding Agency"] || "Unknown"}</strong></div><div><span>Obligated</span><strong>{money.format(Number(selected["Award Amount"] ?? 0))}</strong></div><div><span>Period</span><strong>{selected["Start Date"] || "—"} to {selected["End Date"] || "—"}</strong></div></div><div className="vehicle-card-actions">{selected["Recipient Name"]&&<Link className="primary-button" href={`/participants/vendors/profile?name=${encodeURIComponent(selected["Recipient Name"])}`}>Company profile</Link>}{selected.generated_unique_award_id&&<a className="secondary-button" href={`https://www.usaspending.gov/award/${selected.generated_unique_award_id}/`} target="_blank" rel="noreferrer">Official award <ArrowUpRight size={14}/></a>}</div></div></div></div></div>}
     </div>
   );
 }

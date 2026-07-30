@@ -1,0 +1,25 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { ArrowLeft, ArrowUpRight, Building2, Globe2, Landmark, MapPin } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { apiGet } from "@/lib/api";
+
+type Award = { id:number; award_number?:string; description?:string; awarding_agency?:string; obligated_amount?:string|number; start_date?:string; end_date?:string };
+type VendorProfile = { id:number; name:string; uei?:string; cage_code?:string; city?:string; state?:string; website?:string; socioeconomic_statuses?:string[]; award_count?:number; obligated_amount?:number; top_agencies?:Array<{awarding_agency:string;obligated:number;awards:number}>; top_naics?:Array<{naics_code:string;obligated:number;awards:number}>; recent_awards?:Award[] };
+const money=new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",maximumFractionDigits:0});
+
+export default function VendorProfilePage(){
+ const params=useSearchParams(); const name=params.get("name")??""; const id=params.get("id")??"";
+ const [profile,setProfile]=useState<VendorProfile|null>(null); const [message,setMessage]=useState("Loading company intelligence…");
+ const load=useCallback(async()=>{try{if(id){const vendor=await apiGet<VendorProfile>(`/vendors/${id}/`);const intel=await apiGet<{results:VendorProfile[]}>(`/intelligence/vendors/?name=${encodeURIComponent(vendor.name)}`);setProfile(intel.results?.[0]??vendor);}else{const intel=await apiGet<{results:VendorProfile[]}>(`/intelligence/vendors/?name=${encodeURIComponent(name)}`);setProfile(intel.results?.[0]??null);}setMessage("")}catch(e){setMessage(e instanceof Error?e.message:"Company profile could not be loaded")}},[id,name]);
+ useEffect(()=>{const timer=window.setTimeout(()=>void load(),0);return()=>window.clearTimeout(timer)},[load]);
+ return <><header className="feature-hero"><div><Link className="detail-back" href="/participants/vendors"><ArrowLeft size={16}/> Back to vendors</Link><span className="eyebrow">Unified company profile</span><h1>{profile?.name||name||"Company profile"}</h1><p>Federal award history, identifiers, market position, and teaming context in one ForgeGov view.</p></div>{profile?.website?<a className="secondary-button" href={profile.website} target="_blank" rel="noreferrer">Company website <ArrowUpRight size={15}/></a>:null}</header>
+ {message&&<p className="inline-message">{message}</p>}
+ {profile&&<><section className="insight-strip"><div><span>Total awards</span><strong>{Number(profile.award_count??0).toLocaleString()}</strong></div><div><span>Obligated</span><strong>{money.format(Number(profile.obligated_amount??0))}</strong></div><div><span>UEI</span><strong>{profile.uei||"—"}</strong></div><div><span>CAGE</span><strong>{profile.cage_code||"—"}</strong></div></section>
+ <div className="split-intelligence"><section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">PROFILE</span><h2>Company information</h2></div></div><div className="profile-facts"><p><MapPin size={17}/><span>{[profile.city,profile.state].filter(Boolean).join(", ")||"Location unavailable"}</span></p><p><Building2 size={17}/><span>{profile.socioeconomic_statuses?.join(" · ")||"Socioeconomic status unavailable"}</span></p><p><Globe2 size={17}/><span>{profile.website||"Website unavailable"}</span></p></div></section>
+ <section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">MARKET POSITION</span><h2>Top agencies</h2></div></div><div className="intelligence-list">{profile.top_agencies?.map((a)=><article key={a.awarding_agency}><Landmark/><div><h3>{a.awarding_agency}</h3><p>{a.awards} awards · {money.format(Number(a.obligated??0))}</p></div></article>)}</div></section></div>
+ <section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">AWARD HISTORY</span><h2>Recent federal awards</h2></div><small>{profile.recent_awards?.length??0} records</small></div><div className="intelligence-list">{profile.recent_awards?.map((a)=><article key={a.id}><Building2/><div><span>{a.award_number||"Federal award"}</span><h3>{a.description||"No description provided"}</h3><p>{a.awarding_agency||"Agency unavailable"} · {money.format(Number(a.obligated_amount??0))}</p><small>{a.start_date||"—"} to {a.end_date||"—"}</small></div></article>)}</div></section></>}
+ </>;
+}

@@ -34,6 +34,7 @@ from .models import (
     FileRecord,
     IntelligenceAlert,
     Opportunity,
+    OpportunityWorkspace,
     Organization,
     Participant,
     PipelineItem,
@@ -41,6 +42,7 @@ from .models import (
     SavedSearch,
     Task,
     TeamingRequest,
+    TeamingActivity,
     Vendor,
 )
 from .serializers import (
@@ -53,6 +55,7 @@ from .serializers import (
     FileRecordSerializer,
     IntelligenceAlertSerializer,
     OpportunitySerializer,
+    OpportunityWorkspaceSerializer,
     OrganizationSerializer,
     ParticipantSerializer,
     PipelineItemSerializer,
@@ -60,6 +63,7 @@ from .serializers import (
     SavedSearchSerializer,
     TaskSerializer,
     TeamingRequestSerializer,
+    TeamingActivitySerializer,
     VendorSerializer,
 )
 from .throttles import OpenAIChatThrottle, SamLiveSearchThrottle
@@ -72,7 +76,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "1.2.2"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.0.0-m3"})
 
 
 @api_view(["GET"])
@@ -309,6 +313,56 @@ def pipeline_to_pursuit(request, pipeline_id: int):
         item.stage = PipelineItem.Stage.CAPTURE
         item.save(update_fields=["stage", "updated_at"])
     return Response(PursuitSerializer(pursuit).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([ReadOnlyOrContributor])
+def opportunity_workspace(request, source_id: str):
+    organization = _request_organization(request)
+    opportunity = Opportunity.objects.filter(source_id=source_id).first()
+    if not opportunity:
+        return Response({"detail": "Open the live opportunity once with Store results enabled before using its workspace."}, status=status.HTTP_404_NOT_FOUND)
+    workspace, _ = OpportunityWorkspace.objects.get_or_create(organization=organization, opportunity=opportunity)
+    if request.method == "PATCH":
+        serializer = OpportunityWorkspaceSerializer(workspace, data=request.data, partial=True, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+    return Response(OpportunityWorkspaceSerializer(workspace, context={"request": request}).data)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([ReadOnlyOrContributor])
+def teaming_activity_collection(request, teaming_id: int):
+    organization = _request_organization(request)
+    teaming = TeamingRequest.objects.filter(pk=teaming_id, organization=organization).first()
+    if not teaming:
+        return Response({"detail": "Teaming lead not found."}, status=status.HTTP_404_NOT_FOUND)
+    if request.method == "GET":
+        rows = TeamingActivity.objects.filter(organization=organization, teaming_request=teaming)
+        return Response(TeamingActivitySerializer(rows, many=True, context={"request": request}).data)
+    payload = request.data.copy()
+    payload["teaming_request"] = teaming.id
+    serializer = TeamingActivitySerializer(data=payload, context={"request": request})
+    serializer.is_valid(raise_exception=True)
+    serializer.save(organization=organization)
+    return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([ReadOnlyOrContributor])
+def teaming_activity_detail(request, activity_id: int):
+    organization = _request_organization(request)
+    activity = TeamingActivity.objects.filter(pk=activity_id, organization=organization).first()
+    if not activity:
+        return Response({"detail": "Teaming activity not found."}, status=status.HTTP_404_NOT_FOUND)
+    if request.method == "DELETE":
+        activity.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    serializer = TeamingActivitySerializer(activity, data=request.data, partial=True, context={"request": request})
+    serializer.is_valid(raise_exception=True)
+    serializer.save()
+    return Response(serializer.data)
 
 
 @api_view(["POST"])
@@ -641,9 +695,37 @@ def live_sba_subnet_search(request):
         return Response(search_sba_subnet_opportunities(
             query=request.query_params.get("q", ""),
             state=request.query_params.get("state", ""),
+            page=int(request.query_params.get("page", 0)),
         ))
     except IntegrationError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+
+
+@api_view(["GET"])
+def global_search(request):
+    """Search the core ForgeGov intelligence objects without leaving the workspace."""
+    query = str(request.query_params.get("q") or "").strip()
+    if len(query) < 2:
+        return Response({"query": query, "results": []})
+    limit = min(max(int(request.query_params.get("limit", 8)), 1), 25)
+    results = []
+    for item in Opportunity.objects.filter(
+        Q(title__icontains=query) | Q(solicitation_number__icontains=query) | Q(agency__icontains=query)
+    ).order_by("-posted_date")[:limit]:
+        results.append({"type":"opportunity","id":item.source_id or item.id,"title":item.title,"subtitle":item.solicitation_number or item.agency,"href":f"/opportunities/federal-contracts/{item.source_id}" if item.source_id else "/opportunities/federal-contracts"})
+    for item in Vendor.objects.filter(
+        Q(name__icontains=query) | Q(uei__icontains=query) | Q(cage_code__icontains=query)
+    ).order_by("name")[:limit]:
+        results.append({"type":"vendor","id":item.id,"title":item.name,"subtitle":" · ".join(filter(None,[item.uei,item.cage_code,item.state])),"href":f"/participants/vendors/profile?id={item.id}"})
+    for item in Agency.objects.filter(Q(name__icontains=query) | Q(agency_code__icontains=query)).order_by("name")[:limit]:
+        results.append({"type":"agency","id":item.id,"title":item.name,"subtitle":item.agency_code,"href":f"/participants/federal-agencies?q={item.name}"})
+    for item in Award.objects.filter(
+        Q(recipient_name__icontains=query) | Q(award_number__icontains=query) | Q(description__icontains=query) | Q(awarding_agency__icontains=query)
+    ).order_by("-start_date", "-updated_at")[:limit]:
+        results.append({"type":"award","id":item.id,"title":item.description or item.award_number or "Federal award","subtitle":f"{item.recipient_name} · {item.awarding_agency}".strip(" ·"),"href":f"/participants/vendors/profile?name={item.recipient_name}" if item.recipient_name else "/awards/federal-contracts"})
+    return Response({"query": query, "results": results[:limit * 3]})
 
 
 @api_view(["GET"])
@@ -714,12 +796,24 @@ def vendor_intelligence(request):
             "cage_code": vendor.cage_code,
             "city": vendor.city,
             "state": vendor.state,
+            "website": vendor.website,
             "socioeconomic_statuses": vendor.socioeconomic_statuses,
+            "naics_codes": vendor.naics_codes,
             "award_count": awards.count(),
             "obligated_amount": awards.aggregate(total=Sum("obligated_amount"))["total"] or 0,
             "top_agencies": top_agencies,
             "top_naics": top_naics,
             "recent_awards": AwardSerializer(awards.order_by("-start_date", "-updated_at")[:10], many=True).data,
+            "related_opportunities": OpportunitySerializer(
+                Opportunity.objects.filter(
+                    Q(naics_code__in=[str(code) for code in (vendor.naics_codes or [])])
+                    | Q(description__icontains=vendor.name)
+                ).order_by("-posted_date")[:8], many=True
+            ).data,
+            "contract_vehicles": AwardSerializer(
+                awards.filter(award_type__icontains="idv").order_by("-potential_amount")[:8], many=True
+            ).data,
+            "contacts": list(Contact.objects.filter(vendor_name__iexact=vendor.name).values("id","full_name","title","email","phone")[:10]),
         })
     return Response({"total_records": len(results), "results": results})
 

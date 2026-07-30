@@ -10,11 +10,8 @@ import {
   CalendarSearch,
   ChartNoAxesCombined,
   ContactRound,
-  FileArchive,
-  FileStack,
   FileText,
   FolderKanban,
-  FolderOpen,
   Handshake,
   Landmark,
   LayoutDashboard,
@@ -72,7 +69,6 @@ export const navigationGroups: NavGroup[] = [
     icon: ContactRound,
     items: [
       { href: "/beacon/contacts", label: "Contacts", icon: ContactRound, apiPath: "/contacts/", recordLabel: "contact" },
-      { href: "/beacon/contact-groups", label: "Contact Groups", icon: Users, apiPath: "/contact-groups/", recordLabel: "contact group" },
     ],
   },
   {
@@ -102,10 +98,6 @@ export const navigationGroups: NavGroup[] = [
       { href: "/awards/federal-contracts", label: "Federal Contract Awards", icon: BriefcaseBusiness, apiPath: "/live/sam/contract-awards/?record_type=contracts&limit=100", recordLabel: "award" },
       { href: "/awards/federal-idv", label: "Federal Contract IDV Awards", icon: Network, apiPath: "/live/sam/contract-awards/?record_type=idv&limit=100", recordLabel: "IDV award" },
       { href: "/awards/federal-vehicles", label: "Federal Contract Vehicles", icon: Network, apiPath: "/live/sam/contract-awards/?record_type=vehicles&limit=100", recordLabel: "contract vehicle" },
-      { href: "/awards/federal-grants", label: "Federal Grant Awards", icon: Landmark, apiPath: "/awards/?award_type=grant", recordLabel: "grant award" },
-      { href: "/awards/state-local", label: "State and Local Contract Awards", icon: Map, apiPath: "/awards/?award_type=state_local", recordLabel: "state or local award" },
-      { href: "/awards/state-local-idv", label: "State and Local Contract IDV Awards", icon: Network, apiPath: "/awards/?award_type=state_local_idv", recordLabel: "state or local IDV" },
-      { href: "/awards/state-local-vehicles", label: "State and Local Contract Vehicles", icon: Network, apiPath: "/awards/?award_type=state_local_vehicle", recordLabel: "state or local vehicle" },
     ],
   },
   {
@@ -113,17 +105,7 @@ export const navigationGroups: NavGroup[] = [
     icon: Users,
     items: [
       { href: "/participants/federal-agencies", label: "Federal Agencies", icon: Building2, description: "Agency spend, vendors, categories and active opportunities." },
-      { href: "/participants/states", label: "States", icon: Map, apiPath: "/participants/?participant_type=state", recordLabel: "state" },
-      { href: "/participants/jurisdictions", label: "Jurisdictions", icon: Landmark, apiPath: "/participants/?participant_type=jurisdiction", recordLabel: "jurisdiction" },
       { href: "/participants/vendors", label: "Vendors", icon: BriefcaseBusiness, description: "Competitor award history, agency relationships and category strengths." },
-    ],
-  },
-  {
-    label: "Files",
-    icon: FolderOpen,
-    items: [
-      { href: "/files/government", label: "Government Files", icon: FileArchive, apiPath: "/files/?source=government", recordLabel: "government file" },
-      { href: "/files/user", label: "User Files", icon: FileStack, apiPath: "/files/?source=user", recordLabel: "user file" },
     ],
   },
   {
@@ -132,8 +114,6 @@ export const navigationGroups: NavGroup[] = [
     items: [
       { href: "/categories/naics", label: "NAICS Categories", icon: Tags, description: "Market analytics from stored opportunities and awards." },
       { href: "/categories/psc", label: "PSC Categories", icon: Tags, description: "Market analytics from stored opportunities and awards." },
-      { href: "/categories/nigp", label: "NIGP Categories", icon: Tags, apiPath: "/categories/?category_type=nigp", recordLabel: "NIGP category" },
-      { href: "/categories/unspsc", label: "UNSPSC Categories", icon: Tags, apiPath: "/categories/?category_type=unspsc", recordLabel: "UNSPSC category" },
     ],
   },
 ];

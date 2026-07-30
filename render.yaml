@@ -47,7 +47,7 @@ services:
   - key: CSRF_TRUSTED_ORIGINS
     sync: false
   - key: PUBLIC_REGISTRATION_ENABLED
-    value: 'true'
+    value: 'false'
   - key: SECURE_SSL_REDIRECT
     value: 'true'
   - key: SECURE_HSTS_SECONDS

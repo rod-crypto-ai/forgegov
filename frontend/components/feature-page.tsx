@@ -137,7 +137,7 @@ export function FeaturePage({ feature }: { feature: NavItem }) {
         {status === "loading" && <div className="table-state"><RefreshCw className="spin" /><strong>Loading live workspace data</strong><p>ForgeGov is requesting the latest records from the backend.</p></div>}
         {status === "error" && <div className="table-state error-state"><strong>Backend data is unavailable</strong><p>{error}</p><button className="secondary-button" onClick={() => void load()}>Try again</button></div>}
         {status === "ready" && !filteredRows.length && (
-          <div className="table-state"><strong>No matching records yet</strong><p>This module is connected, but the database does not contain records matching the current view. Records can be created through the Django admin or REST API until the module-specific form is added.</p></div>
+          <div className="table-state"><strong>No matching records yet</strong><p>No records match this view yet. Adjust the filters, refresh the data source, or return later after new records are ingested.</p></div>
         )}
         {status === "ready" && filteredRows.length > 0 && (
           <div className="table-wrap">
