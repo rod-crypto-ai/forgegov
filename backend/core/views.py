@@ -6,7 +6,7 @@ from rest_framework.decorators import api_view, throttle_classes, permission_cla
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from .permissions import ReadOnlyOrContributor, active_membership
-from .ai import OpenAIIntegrationError, ask_ai
+from .ai import OpenAIIntegrationError, ask_ai, live_web_status
 
 from .integrations import (
     IntegrationError,
@@ -76,7 +76,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.0.0-m3"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.0.3"})
 
 
 @api_view(["GET"])
@@ -84,6 +84,7 @@ def integration_status(request):
     probe = _truthy(request.query_params.get("probe"))
     latest_sync = DataSyncRun.objects.filter(source="sam.gov").first()
     latest_usa_sync = DataSyncRun.objects.filter(source="usaspending.gov").first()
+    web_status = live_web_status(probe=probe)
     return Response({
         "sam_gov": {
             "configured": bool(settings.SAM_GOV_API_KEY),
@@ -100,7 +101,10 @@ def integration_status(request):
             "provider": settings.AI_PROVIDER,
             "model": settings.OLLAMA_MODEL if settings.AI_PROVIDER == "ollama" else settings.OPENAI_MODEL,
             "configured": bool(settings.OLLAMA_BASE_URL) if settings.AI_PROVIDER == "ollama" else bool(settings.OPENAI_API_KEY),
-            "web_search": bool(settings.SEARXNG_URL and settings.AI_WEB_SEARCH_ENABLED),
+            "web_search": bool(web_status.get("reachable")) if probe else bool(web_status.get("configured")),
+            "web_search_configured": bool(web_status.get("configured")),
+            "web_search_reachable": web_status.get("reachable"),
+            "web_search_status": web_status.get("status"),
         },
         "expansion": {
             "forecast_directory": "https://www.acquisition.gov/procurement-forecasts",
@@ -718,7 +722,14 @@ def global_search(request):
     for item in Opportunity.objects.filter(
         Q(title__icontains=query) | Q(solicitation_number__icontains=query) | Q(agency__icontains=query)
     ).order_by("-posted_date")[:limit]:
-        results.append({"type":"opportunity","id":item.source_id or item.id,"title":item.title,"subtitle":item.solicitation_number or item.agency,"href":f"/opportunities/federal-contracts/{item.source_id}" if item.source_id else "/opportunities/federal-contracts"})
+        if item.source == "grants.gov" or str(item.source_id).startswith("grants.gov:"):
+            grant_id = str(item.source_id).replace("grants.gov:", "", 1)
+            href = f"/opportunities/federal-grants/{grant_id}" if grant_id else "/opportunities/federal-grants"
+            result_type = "grant"
+        else:
+            href = f"/opportunities/federal-contracts/{item.source_id}" if item.source_id else "/opportunities/federal-contracts"
+            result_type = "opportunity"
+        results.append({"type":result_type,"id":item.source_id or item.id,"title":item.title,"subtitle":item.solicitation_number or item.agency,"href":href})
     for item in Vendor.objects.filter(
         Q(name__icontains=query) | Q(uei__icontains=query) | Q(cage_code__icontains=query)
     ).order_by("name")[:limit]:

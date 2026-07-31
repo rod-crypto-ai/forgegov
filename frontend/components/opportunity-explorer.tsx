@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDownToLine, ChevronLeft, ChevronRight, ExternalLink, FileSearch, LoaderCircle, Save, Search, Target } from "lucide-react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { apiGet, apiPost } from "@/lib/api";
 
@@ -60,6 +61,18 @@ function recentTimestamp(row: LiveOpportunity) {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
+function agencyName(row: LiveOpportunity) {
+  return row.fullParentPathName ?? row.agencyName ?? row.agencyCode ?? "Agency not provided";
+}
+function grantOpportunityId(row: LiveOpportunity) {
+  return String(row.id ?? row.source_id ?? "").replace(/^grants\.gov:/, "");
+}
+function detailHref(row: LiveOpportunity, isGrants: boolean) {
+  if (isGrants) { const id = grantOpportunityId(row); return id ? `/opportunities/federal-grants/${encodeURIComponent(id)}` : ""; }
+  const id = row.source_id ?? row.noticeId ?? "";
+  return id ? `/opportunities/federal-contracts/${encodeURIComponent(String(id))}` : "";
+}
+
 export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
   const sp = useSearchParams();
   const queryFromUrl = sp.get("q") ?? "";
@@ -114,38 +127,28 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
     }
   }, [filters, isGrants, live, pageSize]);
 
-  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (initialLoadMode.current === mode) return;
     initialLoadMode.current = mode;
-    const selectedFilters = defaultFilters(queryFromUrl);
-    setFilters(selectedFilters);
-    setResult(null);
-    setShowingRecent(true);
-    if (!live) {
-      setLoading(false);
-      setMessage("This connector is not configured yet. ForgeGov will not display mock live records.");
-      return;
-    }
-    if (autoSearch && queryFromUrl) lastAutoSearch.current = queryFromUrl;
-    void search(0, selectedFilters);
-    // Route changes are the external synchronization performed by this effect.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, live]);
+    const timer = window.setTimeout(() => {
+      const selectedFilters = defaultFilters(queryFromUrl);
+      setFilters(selectedFilters); setResult(null); setShowingRecent(true);
+      if (!live) { setLoading(false); setMessage("This connector is not configured yet. ForgeGov will not display mock live records."); return; }
+      if (autoSearch && queryFromUrl) lastAutoSearch.current = queryFromUrl;
+      void search(0, selectedFilters);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [autoSearch, live, mode, queryFromUrl, search]);
 
   useEffect(() => {
     if (!queryFromUrl) return;
-    const selectedFilters = { ...filters, q: queryFromUrl };
-    if (lastUrlQuery.current !== queryFromUrl) {
-      lastUrlQuery.current = queryFromUrl;
-      setFilters(selectedFilters);
-    }
-    if (autoSearch && live && lastAutoSearch.current !== queryFromUrl) {
-      lastAutoSearch.current = queryFromUrl;
-      void search(0, selectedFilters);
-    }
+    const timer = window.setTimeout(() => {
+      const selectedFilters = { ...filters, q: queryFromUrl };
+      if (lastUrlQuery.current !== queryFromUrl) { lastUrlQuery.current = queryFromUrl; setFilters(selectedFilters); }
+      if (autoSearch && live && lastAutoSearch.current !== queryFromUrl) { lastAutoSearch.current = queryFromUrl; void search(0, selectedFilters); }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [autoSearch, filters, live, queryFromUrl, search]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   async function submit(event: FormEvent) { event.preventDefault(); await search(0, filters); }
 
@@ -223,17 +226,17 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
       {loading && !result ? <div className="table-state"><LoaderCircle className="spin" size={28} /><strong>Loading recent live data</strong><p>ForgeGov is requesting the newest available records from the source.</p></div> :
         !displayRows.length ? <div className="table-state"><Search size={28} /><strong>{live ? "No results found" : "Connector not configured"}</strong><p>{live ? "Try changing the filters or refreshing the page." : "ForgeGov will show live records here when this source connector is added."}</p></div> :
         <div className="opportunity-results">{displayRows.map((row, index) => {
-          const id = sourceId(row); const url = row.source_url ?? row.uiLink;
-          return <article className="opportunity-result-card" key={id || String(index)}>
+          const id = sourceId(row); const url = row.source_url ?? row.uiLink; const href = detailHref(row, isGrants); const agency = agencyName(row);
+          return <article className={`opportunity-result-card interactive-opportunity-card ${isGrants ? "grant-result-card" : "contract-result-card"}`} key={id || String(index)}>
             <div className="opportunity-result-main">
-              <div className="result-meta"><span>{row.type ?? row.oppStatus ?? (isGrants ? "Federal grant" : "Opportunity")}</span><span>{row.solicitationNumber ?? row.number ?? "No number"}</span></div>
-              <h3>{row.title ?? "Untitled opportunity"}</h3>
-              <p>{row.fullParentPathName ?? row.agencyName ?? row.agencyCode ?? "Agency not provided"}</p>
+              <div className="result-source-row"><span className={`source-chip ${isGrants ? "grant-source-chip" : "contract-source-chip"}`}>{isGrants ? "LIVE GRANTS.GOV" : "LIVE SAM.GOV"}</span><span>{row.type ?? row.oppStatus ?? (isGrants ? "Federal grant" : "Contract opportunity")}</span><span>{row.solicitationNumber ?? row.number ?? "No number"}</span></div>
+              {href ? <Link className="opportunity-title-link" href={href}><h3>{row.title ?? "Untitled opportunity"}</h3></Link> : <h3>{row.title ?? "Untitled opportunity"}</h3>}
+              <Link className="opportunity-agency-link" href={`/intelligence/agency/${encodeURIComponent(agency)}`}>{agency} <ExternalLink size={13}/></Link>
               <div className="result-facts"><span>Posted: {row.postedDate ?? row.openDate ?? "—"}</span><span>Deadline: {row.responseDeadLine ?? row.closeDate ?? "—"}</span><span>{isGrants ? `ALN: ${row.alnist?.join(", ") || "—"}` : `NAICS: ${row.naicsCode ?? "—"}`}</span></div>
             </div>
             <div className="opportunity-result-actions">
-              {isSam && id && <a className="secondary-button" href={`/opportunities/federal-contracts/${encodeURIComponent(id)}`}><FileSearch size={16} /> Details & files</a>}
-              {url && <a className="secondary-button" href={url} target="_blank" rel="noreferrer"><ExternalLink size={16} /> Source</a>}
+              {href && <Link className="secondary-button" href={href}><FileSearch size={16} /> {isGrants ? "Grant workspace" : "Details & files"}</Link>}
+              {url && <a className="secondary-button" href={url} target="_blank" rel="noreferrer"><ExternalLink size={16} /> Official source</a>}
               <button className="primary-button" onClick={() => void addToPipeline(row)} disabled={!id || busyId === id}><Target size={16} />{busyId === id ? "Adding…" : "Add to pipeline"}</button>
             </div>
           </article>;

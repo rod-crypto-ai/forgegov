@@ -619,17 +619,19 @@ def search_grants_opportunities(
 
 
 def fetch_grants_opportunity(opportunity_id: str, *, persist: bool = True) -> dict[str, Any]:
+    """Fetch and normalize a Grants.gov opportunity into a ForgeGov detail workspace."""
     try:
-        numeric_id = int(opportunity_id)
-        response = requests.post(f"{settings.GRANTS_GOV_BASE_URL.rstrip('/')}/fetchOpportunity", json={"opportunityId": numeric_id}, timeout=30)
+        numeric_id = int(str(opportunity_id).replace("grants.gov:", ""))
+        response = requests.post(
+            f"{settings.GRANTS_GOV_BASE_URL.rstrip('/')}/fetchOpportunity",
+            json={"opportunityId": numeric_id}, timeout=30,
+        )
     except ValueError as exc:
         raise IntegrationError("A valid Grants.gov opportunity ID is required.") from exc
     except requests.RequestException as exc:
         raise IntegrationError("Grants.gov could not be reached.") from exc
-
     if not response.ok:
         raise IntegrationError(f"Grants.gov returned HTTP {response.status_code}: {_safe_text(response.text, max_length=300)}")
-
     try:
         body = response.json()
     except ValueError as exc:
@@ -639,22 +641,81 @@ def fetch_grants_opportunity(opportunity_id: str, *, persist: bool = True) -> di
 
     data = body.get("data") or {}
     synopsis = data.get("synopsis") or {}
+    agency_details = data.get("agencyDetails") or synopsis.get("agencyDetails") or {}
+    top_agency_details = data.get("topAgencyDetails") or synopsis.get("topAgencyDetails") or {}
+    source_url = f"https://www.grants.gov/search-results-detail/{numeric_id}"
     merged = {
-        **data,
-        **synopsis,
+        **data, **synopsis,
         "id": data.get("id") or numeric_id,
-        "title": data.get("opportunityTitle"),
-        "number": data.get("opportunityNumber"),
-        "agencyName": (data.get("agencyDetails") or {}).get("agencyName") or synopsis.get("agencyName"),
-        "openDate": synopsis.get("postingDate"),
-        "closeDate": synopsis.get("responseDateDesc"),
-        "oppStatus": "posted",
+        "opportunityId": data.get("id") or numeric_id,
+        "title": data.get("opportunityTitle") or synopsis.get("opportunityTitle"),
+        "number": data.get("opportunityNumber") or synopsis.get("opportunityNumber"),
+        "opportunityNumber": data.get("opportunityNumber") or synopsis.get("opportunityNumber"),
+        "agencyName": agency_details.get("agencyName") or synopsis.get("agencyName") or top_agency_details.get("agencyName"),
+        "agencyCode": agency_details.get("agencyCode") or synopsis.get("agencyCode") or data.get("owningAgencyCode"),
+        "openDate": synopsis.get("postingDate") or synopsis.get("postingDateStr"),
+        "closeDate": synopsis.get("responseDateDesc") or data.get("originalDueDateDesc"),
+        "oppStatus": data.get("oppStatus") or ("forecasted" if data.get("forecast") else "posted"),
+        "source_url": source_url,
     }
+    source_id = _grant_source_id(numeric_id)
     if persist:
         opportunity, _ = upsert_grants_opportunity(merged)
         merged["forgegov_opportunity_id"] = opportunity.id
-        merged["source_id"] = opportunity.source_id
-    return merged
+        source_id = opportunity.source_id
+    merged["source_id"] = source_id
+
+    documents: list[dict[str, Any]] = []
+    seen_documents: set[tuple[str, str]] = set()
+    def add_document(name: Any, url: Any = "", description: Any = "") -> None:
+        document_name = _safe_text(name or description or "Grants.gov document", max_length=500)
+        document_url = _safe_text(url, max_length=1500) or source_url
+        key = (document_name.lower(), document_url)
+        if key in seen_documents: return
+        seen_documents.add(key)
+        documents.append({
+            "name": document_name, "url": document_url,
+            "description": _safe_text(description, max_length=1000),
+            "preview_available": bool(document_url != source_url and document_url.lower().split("?")[0].endswith((".pdf", ".txt", ".html", ".htm"))),
+        })
+    for folder in data.get("synopsisAttachmentFolders") or []:
+        if not isinstance(folder, dict): continue
+        for attachment in folder.get("synopsisAttachments") or []:
+            if not isinstance(attachment, dict): continue
+            add_document(attachment.get("fileName") or attachment.get("fileDescription") or folder.get("folderName"), attachment.get("downloadUrl") or attachment.get("fileUrl") or attachment.get("url") or attachment.get("attachmentUrl"), attachment.get("fileDescription") or folder.get("folderType") or folder.get("folderName"))
+    for document_url in data.get("synopsisDocumentURLs") or []:
+        if isinstance(document_url, dict):
+            add_document(document_url.get("description") or document_url.get("name") or document_url.get("url"), document_url.get("url") or document_url.get("link") or document_url.get("documentUrl"), document_url.get("description"))
+        elif document_url: add_document(document_url, document_url)
+
+    contacts = [{
+        "name": _safe_text(synopsis.get("agencyContactName"), max_length=255),
+        "email": _safe_text(synopsis.get("agencyContactEmail"), max_length=255),
+        "phone": _safe_text(synopsis.get("agencyContactPhone"), max_length=100),
+        "description": _safe_text(synopsis.get("agencyContactDesc") or synopsis.get("agencyContactEmailDesc"), max_length=1000),
+    }]
+    contacts = [contact for contact in contacts if any(contact.values())]
+    def normalize_options(values: Any, *, number_key: str = "id") -> list[dict[str, str]]:
+        normalized: list[dict[str, str]] = []
+        for item in values or []:
+            if isinstance(item, dict):
+                code = item.get(number_key) or item.get("alnNumber") or item.get("code") or item.get("value") or ""
+                label = item.get("description") or item.get("programTitle") or item.get("label") or ""
+                normalized.append({"code": _safe_text(code, max_length=120), "label": _safe_text(label, max_length=500)})
+            elif item: normalized.append({"code": _safe_text(item, max_length=120), "label": ""})
+        return normalized
+    return {
+        "opportunity": merged,
+        "description": _safe_text(synopsis.get("synopsisDesc") or data.get("description"), max_length=50000),
+        "documents": documents, "source_url": source_url, "contacts": contacts,
+        "eligibilities": normalize_options(synopsis.get("applicantTypes")),
+        "funding_instruments": normalize_options(synopsis.get("fundingInstruments")),
+        "funding_categories": normalize_options(synopsis.get("fundingActivityCategories")),
+        "alns": normalize_options(data.get("alns"), number_key="alnNumber"),
+        "award_ceiling": synopsis.get("awardCeilingFormatted") or synopsis.get("awardCeiling"),
+        "award_floor": synopsis.get("awardFloorFormatted") or synopsis.get("awardFloor"),
+        "cost_sharing": synopsis.get("costSharing"),
+    }
 
 
 SAM_CONTRACT_AWARD_TYPES = {
@@ -1070,63 +1131,119 @@ def search_sam_subawards(
 
 
 def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: int = 0) -> dict[str, Any]:
-    """Read SBA SUBNet with retries, resilient parsing, and a last-good cache."""
+    """Read current SBA SUBNet listings with direct, indexed, cached, and persisted fallbacks."""
     from bs4 import BeautifulSoup
     from django.core.cache import cache
+    from hashlib import sha1
+    from urllib.parse import urljoin
     import time
 
-    url = settings.SBA_SUBNET_URL
-    page = max(0, page)
-    params = {"keyword": query, "state": state or "All", "page": page}
-    cache_key = f"sba-subnet:v2:{query.strip().lower()}:{state.strip().lower()}:{page}"
-    response = None
-    last_error = None
-    for attempt in range(3):
+    page=max(0,page); normalized_query=query.strip().lower(); normalized_state=state.strip().lower()
+    params={"combine":query,"field_state_value":state or "All","keyword":query,"state":state or "All","page":page}
+    cache_key=f"sba-subnet:v3:{normalized_query}:{normalized_state}:{page}"; snapshot_key=f"sba-subnet:v3:last-good:{page}"
+    # SBA's current public listings remain available on its official legacy host.
+    # Keep that URL first even when an existing .env still contains the prior www.sba.gov URL.
+    official_listing_url = "https://legacy.sba.gov/federal-contracting/contracting-guide/prime-subcontracting/subcontracting-opportunities"
+    official_landing_url = "https://subnet.sba.gov/client/dsp_Landing.cfm"
+    source_urls=[]
+    for candidate in (
+        official_listing_url,
+        getattr(settings,"SBA_SUBNET_URL",""),
+        getattr(settings,"SBA_SUBNET_FALLBACK_URL",""),
+        official_landing_url,
+    ):
+        candidate=str(candidate or "").strip()
+        if candidate and candidate not in source_urls: source_urls.append(candidate)
+    headers={"User-Agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ForgeGov/2.0.3","Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language":"en-US,en;q=0.9","Cache-Control":"no-cache"}
+
+    def parse_page(html:str,response_url:str)->tuple[list[dict[str,Any]],bool]:
+        soup=BeautifulSoup(html,"html.parser"); results=[]
+        for row in soup.select("table tbody tr"):
+            cells=row.find_all("td")
+            if len(cells)<5: continue
+            title_cell=cells[0]; link=title_cell.find("a"); title=link.get_text(" ",strip=True) if link else ""
+            if not title: continue
+            pieces=[piece.strip() for piece in title_cell.stripped_strings if piece.strip()]
+            if pieces and pieces[0]==title: pieces=pieces[1:]
+            prime=pieces[0] if len(pieces)>1 else ""
+            description=" ".join(pieces[1:]) if len(pieces)>1 else (pieces[0] if pieces else "")
+            values=[cell.get_text(" ",strip=True) for cell in cells]; href=urljoin(response_url,link.get("href", "")) if link else response_url
+            identity=sha1(f"{href}|{title}".encode()).hexdigest()[:20]
+            results.append({"source_id":f"sba-subnet:{identity}","title":title,"prime_contractor":prime,"description":description,"closing_date":values[1] if len(values)>1 else "","performance_start":values[2] if len(values)>2 else "","place_of_performance":values[3] if len(values)>3 else "","naics":values[4] if len(values)>4 else "","point_of_contact":values[5] if len(values)>5 else "","source_url":href})
+        if not results:
+            labels={"closing date":"closing_date","performance start date":"performance_start","performance start":"performance_start","place of performance":"place_of_performance","naics code":"naics","point of contact":"point_of_contact"}
+            for row in soup.select(".views-row"):
+                link=row.select_one("h2 a, h3 a, .views-field-title a")
+                if not link: continue
+                title=link.get_text(" ",strip=True); href=urljoin(response_url,link.get("href", "")); strings=[x.strip() for x in row.stripped_strings if x.strip()]
+                if title in strings: strings.remove(title)
+                positions=[]
+                for i,piece in enumerate(strings):
+                    key=piece.rstrip(":").strip().lower()
+                    if key in labels: positions.append((i,key))
+                first=positions[0][0] if positions else len(strings); intro=strings[:first]; prime=intro[0] if intro else ""; description=" ".join(intro[1:]) if len(intro)>1 else ""; values={}
+                for pos,(i,key) in enumerate(positions):
+                    nxt=positions[pos+1][0] if pos+1<len(positions) else len(strings); values[labels[key]]=" ".join(strings[i+1:nxt]).strip()
+                identity=sha1(f"{href}|{title}".encode()).hexdigest()[:20]
+                results.append({"source_id":f"sba-subnet:{identity}","title":title,"prime_contractor":prime,"description":description[:4000],"closing_date":values.get("closing_date",""),"performance_start":values.get("performance_start",""),"place_of_performance":values.get("place_of_performance",""),"naics":values.get("naics",""),"point_of_contact":values.get("point_of_contact",""),"source_url":href or response_url})
+        pager=soup.select("nav.pager a, ul.pagination a, .pager a"); has_next=any("next" in (a.get_text(" ",strip=True)+" "+" ".join(a.get("rel",[]))).lower() for a in pager)
+        return results,has_next
+
+    def matches(row):
+        searchable=" ".join(str(row.get(k) or "") for k in ("title","prime_contractor","description","naics")).lower(); place=str(row.get("place_of_performance") or "").lower()
+        return (not normalized_query or normalized_query in searchable) and (not normalized_state or normalized_state=="all" or normalized_state in place)
+
+    def persist(rows):
+        for row in rows:
+            source_id=_safe_text(row.get("source_id"),max_length=255)
+            if not source_id: continue
+            naics="".join(c for c in _safe_text(row.get("naics"),max_length=120) if c.isdigit())[:6]; closing=_grant_date(row.get("closing_date"))
+            Opportunity.objects.update_or_create(source_id=source_id,defaults={"source":"sba-subnet","title":_safe_text(row.get("title"),max_length=500) or "Untitled SBA SUBNet opportunity","description":_safe_text(row.get("description"),max_length=50000),"agency":_safe_text(row.get("prime_contractor"),max_length=255),"office":"SBA SUBNet","notice_type":Opportunity.NoticeType.OTHER,"notice_type_raw":"Subcontracting Opportunity","naics_code":naics,"response_deadline":closing,"place_of_performance":_safe_text(row.get("place_of_performance"),max_length=500),"active":not closing or closing>=timezone.now(),"source_url":_safe_text(row.get("source_url"),max_length=1500),"raw_data":row})
+
+    def database_snapshot():
+        rows=[]
+        for op in Opportunity.objects.filter(source="sba-subnet",active=True).order_by("response_deadline","-updated_at")[:250]:
+            raw=op.raw_data if isinstance(op.raw_data,dict) else {}; row={"source_id":op.source_id,"title":op.title,"prime_contractor":raw.get("prime_contractor") or op.agency,"description":op.description,"closing_date":raw.get("closing_date") or (op.response_deadline.date().isoformat() if op.response_deadline else ""),"performance_start":raw.get("performance_start") or "","place_of_performance":op.place_of_performance,"naics":raw.get("naics") or op.naics_code,"point_of_contact":raw.get("point_of_contact") or "","source_url":op.source_url}
+            if matches(row): rows.append(row)
+        start=page*10; sliced=rows[start:start+11]; return sliced[:10],len(sliced)>10
+
+    for source_index,source_url in enumerate(source_urls):
+        for attempt in range(2):
+            try:
+                response=requests.get(source_url,params=params,timeout=18,headers=headers,allow_redirects=True); response.raise_for_status(); parsed,has_next=parse_page(response.text,response.url)
+                if parsed: persist(parsed)
+                results=[row for row in parsed if matches(row)]
+                if not parsed and "Subcontracting Opportunity" not in response.text: raise IntegrationError("SBA returned a page without SUBNet listings.")
+                payload={"total_records":len(results),"results":results,"source_url":response.url,"source_name":"SBA SUBNet live directory" if source_index==0 else "Official SBA fallback","page":page,"has_next":has_next,"status":"live","reachable":True,"warning":""}
+                cache.set(cache_key,payload,43200)
+                if not normalized_query and normalized_state in {"","all"}: cache.set(snapshot_key,payload,172800)
+                return payload
+            except (requests.RequestException,IntegrationError):
+                if attempt<1: time.sleep(.6)
+
+    searx=str(getattr(settings,"SEARXNG_URL","") or "").strip()
+    if searx and bool(getattr(settings,"AI_WEB_SEARCH_ENABLED",True)):
+        terms=['site:sba.gov/opportunity "subcontracting opportunity"']
+        if query.strip(): terms.append(query.strip())
+        if state.strip() and state.strip().lower()!="all": terms.append(state.strip())
         try:
-            response = requests.get(url, params=params, timeout=40, headers={
-                "User-Agent": "Mozilla/5.0 (compatible; ForgeGov/2.0; +https://forge-gov.com)",
-                "Accept": "text/html,application/xhtml+xml",
-                "Accept-Language": "en-US,en;q=0.9",
-            })
-            response.raise_for_status()
-            break
-        except requests.RequestException as exc:
-            last_error = exc
-            if attempt < 2:
-                time.sleep(.5 * (2 ** attempt))
-    if response is None or last_error is not None and not getattr(response, "ok", True):
-        cached = cache.get(cache_key)
-        if cached:
-            return {**cached, "status": "cached", "reachable": False, "warning": "SBA SUBNet is temporarily unavailable. Showing the most recent cached results."}
-        return {"total_records": 0, "results": [], "source_url": url, "page": page, "has_next": False, "status": "unavailable", "reachable": False, "warning": "SBA SUBNet is temporarily unavailable. ForgeGov will retry automatically."}
+            wr=requests.get(searx.rstrip("/")+"/search",params={"q":" ".join(terms),"format":"json","language":"en-US","safesearch":1},timeout=18,headers={"User-Agent":"ForgeGov/2.0.3"}); wr.raise_for_status(); rows=wr.json().get("results"); indexed=[]
+            if isinstance(rows,list):
+                for row in rows:
+                    if not isinstance(row,dict): continue
+                    href=_safe_text(row.get("url"),max_length=1500); title=_safe_text(row.get("title"),max_length=500)
+                    if "sba.gov/opportunity/" not in href.lower() or not title: continue
+                    identity=sha1(f"{href}|{title}".encode()).hexdigest()[:20]
+                    indexed.append({"source_id":f"sba-subnet:{identity}","title":title,"prime_contractor":"","description":_safe_text(row.get("content"),max_length=4000),"closing_date":"","performance_start":"","place_of_performance":state.strip(),"naics":"","point_of_contact":"","source_url":href})
+                    if len(indexed)>=10: break
+            if indexed:
+                persist(indexed); return {"total_records":len(indexed),"results":indexed,"source_url":str(getattr(settings,"SBA_SUBNET_URL","") or ""),"source_name":"SBA opportunity web index","page":0,"has_next":False,"status":"indexed","reachable":False,"warning":"Direct SBA directory access is reconnecting. Showing official SBA opportunity pages discovered through live web search."}
+        except (requests.RequestException,ValueError,AttributeError): pass
 
-    soup = BeautifulSoup(response.text, "html.parser")
-    results: list[dict[str, Any]] = []
-    rows = soup.select("table tbody tr, .views-row")
-    for row in rows:
-        cells = row.find_all("td")
-        if len(cells) >= 5:
-            title_cell = cells[0]
-            link = title_cell.find("a")
-            title = link.get_text(" ", strip=True) if link else title_cell.get_text(" ", strip=True)
-            full_title_text = title_cell.get_text(" ", strip=True)
-            description = full_title_text[len(title):].strip(" -–—:") if full_title_text.startswith(title) else ""
-            values = [c.get_text(" ", strip=True) for c in cells]
-            href = link.get("href", "") if link else ""
-            if href.startswith("/"): href = f"https://www.sba.gov{href}"
-            results.append({"title": title, "description": description, "closing_date": values[1], "performance_start": values[2], "place_of_performance": values[3], "naics": values[4], "point_of_contact": values[5] if len(values)>5 else "", "source_url": href or response.url})
-            continue
-        # Drupal's responsive rendering may expose each opportunity as a views-row rather than a table row.
-        link = row.select_one("h2 a, h3 a, .views-field-title a, a[href*='subcontracting-opportunities']")
-        if not link: continue
-        labels = {node.get_text(" ", strip=True).lower(): node.find_next().get_text(" ", strip=True) for node in row.select(".field__label") if node.find_next()}
-        title = link.get_text(" ", strip=True)
-        href = link.get("href", "")
-        if href.startswith("/"): href=f"https://www.sba.gov{href}"
-        results.append({"title": title, "description": row.get_text(" ", strip=True).replace(title, "", 1).strip()[:1200], "closing_date": labels.get("closing date", ""), "performance_start": labels.get("performance start", ""), "place_of_performance": labels.get("place of performance", ""), "naics": labels.get("naics code", ""), "point_of_contact": labels.get("point of contact", ""), "source_url": href or response.url})
-
-    pager_links = soup.select("nav.pager a, ul.pagination a, .pager a")
-    has_next = any("next" in (link.get_text(" ", strip=True) + " " + str(link.get("rel", ""))).lower() for link in pager_links)
-    payload = {"total_records": len(results), "results": results, "source_url": response.url, "page": page, "has_next": has_next, "status": "live", "reachable": True, "warning": ""}
-    cache.set(cache_key, payload, 60 * 60 * 12)
-    return payload
+    cached=cache.get(cache_key) or cache.get(snapshot_key)
+    if cached:
+        results=[row for row in list(cached.get("results") or []) if matches(row)]; return {**cached,"total_records":len(results),"results":results,"status":"cached","reachable":False,"warning":"Live SBA access is reconnecting. Showing the latest verified SUBNet snapshot."}
+    stored,has_next=database_snapshot()
+    if stored:
+        return {"total_records":len(stored),"results":stored,"source_url":str(getattr(settings,"SBA_SUBNET_URL","") or ""),"source_name":"ForgeGov verified SBA history","page":page,"has_next":has_next,"status":"cached","reachable":False,"warning":"Live SBA access is reconnecting. Showing verified SUBNet opportunities previously retrieved by ForgeGov."}
+    return {"total_records":0,"results":[],"source_url":str(getattr(settings,"SBA_SUBNET_URL","") or ""),"source_name":"SBA SUBNet","page":page,"has_next":False,"status":"unavailable","reachable":False,"warning":"Live SBA access is reconnecting. ForgeGov will retry automatically."}

@@ -1,4 +1,4 @@
-.PHONY: up down logs test test-backend lint build verify migrate makemigrations
+.PHONY: up down logs test test-backend typecheck lint build verify migrate makemigrations live-web open-source-ai
 
 up:
 	docker compose up -d --build
@@ -18,14 +18,22 @@ makemigrations:
 test-backend:
 	docker compose exec backend python manage.py test core
 
-test: test-backend
-	docker compose run --rm frontend npm run lint
+typecheck:
+	docker compose exec frontend npm run typecheck
 
 lint:
-	docker compose exec backend ruff check .
+	docker compose exec frontend npm run lint
+
+test: test-backend typecheck lint
 
 build:
-	docker build --target runner -t forgegov-frontend-production ./frontend
+	docker compose exec frontend npm run build
+
+live-web:
+	./scripts/enable_live_web.sh
+
+open-source-ai:
+	./scripts/enable_open_source_ai.sh
 
 verify:
-	./VERIFY.command
+	./scripts/validate_release.sh

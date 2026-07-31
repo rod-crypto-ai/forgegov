@@ -11,7 +11,7 @@ import { apiGet } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
 
 type Summary = { opportunities?: { total?: number; active?: number }; awards?: { total?: number; obligated_total?: number }; pipeline?: { total?: number; by_stage?: Record<string, number>; weighted_value?: number }; pursuits?: { total?: number }; tasks?: { open?: number; overdue?: number }; contacts?: number; vendors?: number; agencies?: number; saved_searches?: number; };
-type Integrations = { sam_gov?: { configured?: boolean }; usaspending?: { reachable?: boolean; stored_awards?: number } };
+type Integrations = { sam_gov?: { configured?: boolean }; usaspending?: { reachable?: boolean; stored_awards?: number }; ai?: { web_search_configured?: boolean; web_search_reachable?: boolean | null } };
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 });
 
 export default function DashboardPage() {
@@ -41,6 +41,8 @@ export default function DashboardPage() {
     <section className="data-status-strip">
       <div><i className={integrations.sam_gov?.configured ? "ok" : "warn"}/><span><b>SAM.gov</b><small>{integrations.sam_gov?.configured ? "Live search ready" : "API key required"}</small></span></div>
       <div><i className={integrations.usaspending?.reachable ? "ok" : "warn"}/><span><b>USAspending</b><small>{integrations.usaspending?.reachable ? "Live award data" : "Connection unavailable"}</small></span></div>
+      <div><i className="ok"/><span><b>Grants.gov</b><small>Public grant search active</small></span></div>
+      <div><i className={integrations.ai?.web_search_reachable ? "ok" : integrations.ai?.web_search_configured ? "warn" : "warn"}/><span><b>Live web</b><small>{integrations.ai?.web_search_reachable ? "SearXNG connected" : integrations.ai?.web_search_configured ? "Reconnecting" : "Setup available"}</small></span></div>
       <div><Database size={17}/><span><b>{integrations.usaspending?.stored_awards ?? summary.awards?.total ?? 0} awards indexed</b><small>Stored in ForgeGov</small></span></div>
       <Link href="/settings">Manage data sources <ChevronRight size={15}/></Link>
     </section>
@@ -57,7 +59,11 @@ export default function DashboardPage() {
         <section className="pro-panel market-radar">
           <header><div><span className="panel-kicker">MARKET RADAR</span><h2>Intelligence workspaces</h2><p>Live public data and capture workflows organized by the decisions you need to make.</p></div><Link href="/opportunities/federal-contracts">Explore all <ArrowRight size={15}/></Link></header>
           <div className="workspace-launch-grid">
-            <Link href="/opportunities/federal-contracts"><span className="launch-icon blue"><Search/></span><div><b>Federal opportunities</b><small>Search active SAM.gov notices and save qualified work.</small><em>Open intelligence console <ArrowRight size={13}/></em></div></Link>
+            <Link className="workspace-launch-contract" href="/opportunities/federal-contracts"><span className="launch-icon blue"><Search/></span><div><b>Federal contract opportunities</b><small>Search active SAM.gov notices and open full opportunity workspaces.</small><em>Search live contracts <ArrowRight size={13}/></em></div></Link>
+            <Link className="workspace-launch-grant" href="/opportunities/federal-grants"><span className="launch-icon teal"><FileSearch/></span><div><b>Federal grant opportunities</b><small>Search Grants.gov, review application details, and use contextual AI.</small><em>Search live grants <ArrowRight size={13}/></em></div></Link>
+            <Link className="workspace-launch-subnet" href="/opportunities/subcontracting"><span className="launch-icon violet"><Handshake/></span><div><b>Subcontracting opportunities</b><small>Review current SBA SUBNet listings and reported SAM subawards.</small><em>Open subcontracting <ArrowRight size={13}/></em></div></Link>
+            <Link href="/opportunities/federal-forecasts"><span className="launch-icon amber"><Radar/></span><div><b>Procurement forecasts</b><small>Review forward-looking agency acquisition sources and activity.</small><em>Open forecast feed <ArrowRight size={13}/></em></div></Link>
+            <Link href="/opportunities/federal-vehicles"><span className="launch-icon blue"><Database/></span><div><b>Contract vehicles</b><small>Explore IDIQ, BPA, and vehicle-holder intelligence.</small><em>Search vehicles <ArrowRight size={13}/></em></div></Link>
             <Link href="/awards/federal-contracts"><span className="launch-icon teal"><Award/></span><div><b>Award intelligence</b><small>Analyze recipients, agencies, obligations, and incumbents.</small><em>Explore USAspending <ArrowRight size={13}/></em></div></Link>
             <Link href="/participants/vendors"><span className="launch-icon violet"><Users/></span><div><b>Vendor intelligence</b><small>Research competitors, partners, UEIs, and award history.</small><em>Open vendor profiles <ArrowRight size={13}/></em></div></Link>
             <Link href="/participants/federal-agencies"><span className="launch-icon amber"><Building2/></span><div><b>Agency intelligence</b><small>Understand buying offices, spending, categories, and contacts.</small><em>View federal agencies <ArrowRight size={13}/></em></div></Link>

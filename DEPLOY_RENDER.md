@@ -1,61 +1,44 @@
-# Deploy ForgeGov v1.2.0 on Render
+# Deploy ForgeGov v2.0.3 on Render
 
-ForgeGov includes a root-level `render.yaml` Blueprint for the Next.js frontend, Django API, PostgreSQL, Render Key Value, Celery worker, and Celery beat scheduler.
+ForgeGov's `render.yaml` provisions PostgreSQL, Redis, the Django API, Celery worker, Celery scheduler, and Next.js frontend. SearXNG is intentionally not auto-provisioned because it should be deployed as a private service with controlled access.
 
-## Before deployment
+## Required API environment values
 
-1. Install and verify v1.2.0 locally with `./ROLLOUT_V1.2.0.command`.
-2. Commit the verified files to the GitHub repository.
-3. Push the `main` branch.
-4. Confirm `.env`, API keys, Celery schedule files, `.next`, and `node_modules` are not committed.
-
-## Create or sync the Blueprint
-
-1. Open Render and choose **New → Blueprint**.
-2. Select the ForgeGov GitHub repository and `main` branch.
-3. Render detects `render.yaml` at the repository root.
-4. Supply the two secret values when prompted:
-   - `SAM_GOV_API_KEY`
-   - `OPENAI_API_KEY`
-5. Apply the Blueprint.
-
-The Blueprint provisions:
-
-- `forgegov` — Next.js frontend
-- `forgegov-api` — Django API
-- `forgegov-worker` — Celery worker
-- `forgegov-beat` — scheduled saved-search alert evaluation
-- `forgegov-db` — PostgreSQL
-- `forgegov-redis` — Render Key Value / Redis-compatible queue and cache
-
-## Deployment acceptance checks
-
-After all services are live:
-
-1. Open `https://forgegov.onrender.com`.
-2. Open `https://forgegov-api.onrender.com/api/health/` and confirm version `1.2.0`.
-3. Register or sign in.
-4. Search Federal Contract Opportunities and open **Details & files**.
-5. Test Federal Forecasts, Contract Vehicles, Subcontracting, Teaming, Agency Profiles, Vendor Profiles, NAICS/PSC Analytics, and Alerts.
-6. Check the API, worker, and beat logs for migration, CORS, CSRF, authentication, or external-source errors.
-
-## Custom domain variables
-
-When moving from Render subdomains to custom domains, update:
-
-Backend:
+Set these secrets and URLs on `forgegov-api`:
 
 ```env
-DJANGO_ALLOWED_HOSTS=api.yourdomain.com
-FRONTEND_URL=https://yourdomain.com
-CORS_ALLOWED_ORIGINS=https://yourdomain.com
-CSRF_TRUSTED_ORIGINS=https://yourdomain.com
+DJANGO_ALLOWED_HOSTS=<api host>
+FRONTEND_URL=https://<frontend host>
+CORS_ALLOWED_ORIGINS=https://<frontend host>
+CSRF_TRUSTED_ORIGINS=https://<frontend host>
+API_PUBLIC_URL=https://<api host>
+SAM_GOV_API_KEY=<secret>
+AI_PROVIDER=ollama
+OLLAMA_BASE_URL=https://<private ollama endpoint>
+OLLAMA_MODEL=<installed model>
+SEARXNG_URL=https://<private searxng endpoint>
+AI_WEB_SEARCH_ENABLED=true
 ```
 
-Frontend:
+OpenAI can be used instead by setting `AI_PROVIDER=openai` and `OPENAI_API_KEY`.
+
+## Frontend environment
+
+Set:
 
 ```env
-NEXT_PUBLIC_API_BASE_URL=https://api.yourdomain.com/api
+NEXT_PUBLIC_API_BASE_URL=https://<api host>/api
 ```
 
-Redeploy the frontend after changing `NEXT_PUBLIC_API_BASE_URL`, because Next.js embeds public environment variables during its production build.
+## SearXNG
+
+Deploy SearXNG privately and enable JSON search responses. Do not point production at `http://searxng:8080` unless SearXNG is in the same private network and that hostname resolves from the API service.
+
+## Release procedure
+
+1. Deploy a staging environment from the exact release tag.
+2. Apply migrations through the API service startup.
+3. Verify `/api/health/`.
+4. Sign in and test contracts, grants, subcontracting, pipeline, alerts, and ForgeGov AI.
+5. Confirm `/api/integrations/status/?probe=true` reports the intended AI provider and SearXNG state.
+6. Promote the same commit only after `./scripts/validate_release.sh` has passed locally.

@@ -2,6 +2,7 @@ from unittest.mock import Mock, patch
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -9,6 +10,7 @@ from rest_framework.test import APIClient
 
 from .integrations import (
     _build_sam_params,
+    fetch_grants_opportunity,
     fetch_sam_opportunity_documents,
     fetch_sam_opportunity_detail,
     search_sam_contract_awards,
@@ -17,8 +19,10 @@ from .integrations import (
     search_federal_forecast_sources,
     search_usaspending_contract_vehicles,
     search_sam_opportunities,
+    search_grants_opportunities,
     upsert_sam_opportunity,
 )
+from .ai import live_web_status
 from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Vendor
 
 User = get_user_model()
@@ -70,13 +74,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "1.2.2")
+        self.assertEqual(response.json()["version"], "2.0.3")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "1.2.2")
+        self.assertEqual(response.json()["version"], "2.0.3")
 
 
 class RouterRegressionTests(TestCase):
@@ -481,11 +485,11 @@ class ExpansionIntegrationTests(AuthenticatedApiTestCase):
         self.assertEqual(record["sub_entity_uei"], "SUBUEI456")
         self.assertEqual(mock_get.call_args.kwargs["params"]["referencedIDVPIID"], "W52P1J18DA075")
 
-    @override_settings(SBA_SUBNET_URL="https://www.sba.gov/subnet")
+    @override_settings(SBA_SUBNET_URL="https://legacy.sba.gov/federal-contracting/contracting-guide/prime-subcontracting/subcontracting-opportunities", SBA_SUBNET_FALLBACK_URL="")
     @patch("core.integrations.requests.get")
     def test_sba_subnet_parser_separates_title_and_description(self, mock_get):
         response = Mock()
-        response.url = "https://www.sba.gov/subnet"
+        response.url = "https://legacy.sba.gov/federal-contracting/contracting-guide/prime-subcontracting/subcontracting-opportunities"
         response.text = """
             <table><tbody><tr>
               <td><a href='/subnet/opportunity/123'>JLTV Maintenance Support</a> Regional field maintenance subcontract</td>
@@ -501,7 +505,7 @@ class ExpansionIntegrationTests(AuthenticatedApiTestCase):
         record = result["results"][0]
         self.assertEqual(record["title"], "JLTV Maintenance Support")
         self.assertEqual(record["description"], "Regional field maintenance subcontract")
-        self.assertEqual(record["source_url"], "https://www.sba.gov/subnet/opportunity/123")
+        self.assertEqual(record["source_url"], "https://legacy.sba.gov/subnet/opportunity/123")
 
     @override_settings(SAM_GOV_API_KEY="test-key")
     @patch("core.integrations.requests.get")
@@ -629,3 +633,241 @@ class PartnerDiscoveryTests(AuthenticatedApiTestCase):
         self.assertEqual(response.json()["total_records"], 1)
         self.assertEqual(response.json()["results"][0]["name"], "HOWARD PARTNER LLC")
         self.assertEqual(response.json()["results"][0]["award_count"], 1)
+
+
+class GrantsIntegrationTests(AuthenticatedApiTestCase):
+    @override_settings(GRANTS_GOV_BASE_URL="https://api.grants.gov/v1/api")
+    @patch("core.integrations.requests.post")
+    def test_grants_search_normalizes_and_persists_internal_route(self, mock_post):
+        response = Mock()
+        response.ok = True
+        response.status_code = 200
+        response.json.return_value = {
+            "errorcode": 0,
+            "data": {
+                "hitCount": 1,
+                "startRecord": 0,
+                "searchParams": {"rows": 25},
+                "oppHits": [{
+                    "id": 98765,
+                    "number": "FG-2026-001",
+                    "title": "Resilient Infrastructure Grant",
+                    "agencyName": "Department of Testing",
+                    "oppStatus": "posted",
+                    "openDate": "07/01/2026",
+                    "closeDate": "08/31/2026",
+                    "alnist": [{"alnNumber": "20.999"}],
+                }],
+            },
+        }
+        mock_post.return_value = response
+
+        result = search_grants_opportunities(keyword="infrastructure", persist=True)
+
+        self.assertEqual(result["total_records"], 1)
+        self.assertEqual(result["opportunities"][0]["source_id"], "grants.gov:98765")
+        self.assertEqual(result["opportunities"][0]["source_url"], "https://www.grants.gov/search-results-detail/98765")
+        self.assertTrue(Opportunity.objects.filter(source_id="grants.gov:98765", source="grants.gov").exists())
+
+    @override_settings(GRANTS_GOV_BASE_URL="https://api.grants.gov/v1/api")
+    @patch("core.integrations.requests.post")
+    def test_grant_detail_returns_workspace_fields_and_documents(self, mock_post):
+        response = Mock()
+        response.ok = True
+        response.status_code = 200
+        response.json.return_value = {
+            "errorcode": 0,
+            "data": {
+                "id": 98765,
+                "opportunityTitle": "Resilient Infrastructure Grant",
+                "opportunityNumber": "FG-2026-001",
+                "owningAgencyCode": "DOT",
+                "oppStatus": "posted",
+                "agencyDetails": {"agencyName": "Department of Transportation", "agencyCode": "DOT"},
+                "synopsis": {
+                    "postingDate": "07/01/2026",
+                    "responseDateDesc": "08/31/2026",
+                    "synopsisDesc": "Funds resilient public infrastructure projects.",
+                    "awardCeiling": 5000000,
+                    "awardFloor": 250000,
+                    "costSharing": "Yes",
+                    "applicantTypes": [{"id": "01", "description": "State governments"}],
+                    "fundingInstruments": [{"id": "G", "description": "Grant"}],
+                    "agencyContactName": "Program Office",
+                    "agencyContactEmail": "program@example.gov",
+                },
+                "alns": [{"alnNumber": "20.999", "programTitle": "Infrastructure Program"}],
+                "synopsisAttachmentFolders": [{
+                    "folderName": "Application package",
+                    "synopsisAttachments": [{
+                        "fileName": "NOFO.pdf",
+                        "downloadUrl": "https://example.gov/NOFO.pdf",
+                        "fileDescription": "Notice of funding opportunity",
+                    }],
+                }],
+            },
+        }
+        mock_post.return_value = response
+
+        result = fetch_grants_opportunity("grants.gov:98765", persist=True)
+
+        self.assertEqual(result["opportunity"]["source_id"], "grants.gov:98765")
+        self.assertEqual(result["documents"][0]["name"], "NOFO.pdf")
+        self.assertEqual(result["eligibilities"][0]["label"], "State governments")
+        self.assertEqual(result["contacts"][0]["email"], "program@example.gov")
+        self.assertEqual(result["award_ceiling"], 5000000)
+
+    def test_global_search_routes_grants_to_grant_workspace(self):
+        Opportunity.objects.create(
+            source_id="grants.gov:12345",
+            source="grants.gov",
+            title="Community resilience grant",
+            agency="FEMA",
+        )
+        response = self.client.get("/api/intelligence/search/?q=resilience")
+        self.assertEqual(response.status_code, 200)
+        result = response.json()["results"][0]
+        self.assertEqual(result["type"], "grant")
+        self.assertEqual(result["href"], "/opportunities/federal-grants/12345")
+
+
+class LiveWebIntegrationTests(TestCase):
+    def tearDown(self):
+        cache.clear()
+
+    @override_settings(SEARXNG_URL="http://searxng:8080", AI_WEB_SEARCH_ENABLED=True)
+    @patch("core.ai.requests.get")
+    def test_live_web_status_probes_json_search(self, mock_get):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"results": [{"title": "Official source", "url": "https://example.gov", "content": "Current information"}]}
+        mock_get.return_value = response
+
+        result = live_web_status(probe=True)
+
+        self.assertTrue(result["configured"])
+        self.assertTrue(result["reachable"])
+        self.assertEqual(result["status"], "live")
+        self.assertEqual(mock_get.call_args.kwargs["params"]["format"], "json")
+
+    @override_settings(SEARXNG_URL="http://searxng:8080", AI_WEB_SEARCH_ENABLED=True)
+    @patch("core.ai.requests.get", side_effect=__import__("requests").RequestException("offline"))
+    def test_live_web_status_reports_reconnecting_without_false_live_claim(self, _mock_get):
+        result = live_web_status(probe=True)
+        self.assertTrue(result["configured"])
+        self.assertFalse(result["reachable"])
+        self.assertEqual(result["status"], "unavailable")
+
+
+class SubnetFallbackTests(TestCase):
+    def tearDown(self):
+        cache.clear()
+
+    @override_settings(
+        SBA_SUBNET_URL="https://www.sba.gov/federal-contracting/contracting-guide/prime-subcontracting/subcontracting-opportunities",
+        SBA_SUBNET_FALLBACK_URL="",
+        SEARXNG_URL="",
+    )
+    @patch("core.integrations.requests.get")
+    def test_subnet_prioritizes_current_official_listing_when_env_has_prior_url(self, mock_get):
+        response = Mock()
+        response.url = "https://legacy.sba.gov/federal-contracting/contracting-guide/prime-subcontracting/subcontracting-opportunities"
+        response.text = """
+            <table><tbody><tr>
+              <td><a href='/opportunity/current-1'>Current SBA opportunity</a> Prime Contractor Current requirement</td>
+              <td>09/03/2026</td><td>10/12/2026</td><td>California</td><td>237310</td><td>Jane Doe</td>
+            </tr></tbody></table>
+        """
+        response.raise_for_status.return_value = None
+        mock_get.return_value = response
+
+        result = search_sba_subnet_opportunities()
+
+        self.assertEqual(result["status"], "live")
+        self.assertEqual(result["results"][0]["title"], "Current SBA opportunity")
+        self.assertEqual(
+            mock_get.call_args_list[0].args[0],
+            "https://legacy.sba.gov/federal-contracting/contracting-guide/prime-subcontracting/subcontracting-opportunities",
+        )
+
+    @override_settings(
+        SBA_SUBNET_URL="https://www.sba.gov/subnet",
+        SBA_SUBNET_FALLBACK_URL="",
+        SEARXNG_URL="http://searxng:8080",
+        AI_WEB_SEARCH_ENABLED=True,
+    )
+    @patch("core.integrations.requests.get")
+    def test_subnet_uses_official_sba_index_when_direct_directory_reconnects(self, mock_get):
+        def side_effect(url, **kwargs):
+            if "searxng" in url:
+                response = Mock()
+                response.raise_for_status.return_value = None
+                response.json.return_value = {"results": [{
+                    "title": "Aerial Structures Rehab",
+                    "url": "https://www.sba.gov/opportunity/aerial-structures-rehab",
+                    "content": "Subcontracting opportunity in Washington, DC",
+                }]}
+                return response
+            raise __import__("requests").RequestException("SBA connection reset")
+        mock_get.side_effect = side_effect
+
+        result = search_sba_subnet_opportunities(query="structures", state="DC")
+
+        self.assertEqual(result["status"], "indexed")
+        self.assertEqual(result["results"][0]["title"], "Aerial Structures Rehab")
+        self.assertIn("sba.gov/opportunity/", result["results"][0]["source_url"])
+        self.assertTrue(Opportunity.objects.filter(source="sba-subnet").exists())
+
+    @override_settings(SBA_SUBNET_URL="https://www.sba.gov/subnet", SBA_SUBNET_FALLBACK_URL="", SEARXNG_URL="", AI_WEB_SEARCH_ENABLED=True)
+    @patch("core.integrations.requests.get", side_effect=__import__("requests").RequestException("offline"))
+    def test_subnet_returns_persisted_history_instead_of_dead_end(self, _mock_get):
+        Opportunity.objects.create(
+            source_id="sba-subnet:stored",
+            source="sba-subnet",
+            title="Stored subcontract opportunity",
+            agency="Prime Contractor LLC",
+            active=True,
+            place_of_performance="Texas",
+            raw_data={"closing_date": "08/31/2026", "naics": "811310"},
+        )
+        result = search_sba_subnet_opportunities(query="stored", state="Texas")
+        self.assertEqual(result["status"], "cached")
+        self.assertEqual(result["results"][0]["title"], "Stored subcontract opportunity")
+        self.assertIn("verified", result["warning"].lower())
+
+
+class GrantAlertEvaluationTests(AuthenticatedApiTestCase):
+    @patch("core.tasks.search_grants_opportunities")
+    def test_grants_saved_search_creates_internal_workspace_alert(self, mock_search):
+        from .tasks import evaluate_saved_search_alerts
+
+        saved = SavedSearch.objects.create(
+            organization=self.organization,
+            owner=self.user,
+            name="Resilience grants",
+            filters={"source": "grants.gov", "q": "resilience", "statuses": "posted"},
+        )
+        mock_search.return_value = {
+            "opportunities": [{
+                "source_id": "grants.gov:445566",
+                "id": 445566,
+                "title": "Community Resilience Grant",
+                "agencyName": "FEMA",
+                "source_url": "https://www.grants.gov/search-results-detail/445566",
+            }],
+        }
+        opportunity = Opportunity.objects.create(
+            source_id="grants.gov:445566",
+            source="grants.gov",
+            title="Community Resilience Grant",
+            agency="FEMA",
+        )
+
+        result = evaluate_saved_search_alerts.run(organization_id=self.organization.id)
+
+        self.assertEqual(result["alerts_created"], 1)
+        alert = IntelligenceAlert.objects.get(saved_search=saved)
+        self.assertEqual(alert.opportunity, opportunity)
+        self.assertEqual(alert.source_id, "grants.gov:445566")
+        self.assertEqual(alert.source_url, "https://www.grants.gov/search-results-detail/445566")
+        mock_search.assert_called_once()

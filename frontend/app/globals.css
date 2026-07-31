@@ -448,3 +448,46 @@ body{background:var(--fg-surface)}
 .entity-workspace-hero .detail-back{margin-bottom:12px}.entity-workspace-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:18px}.entity-record-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;padding:18px;border:1px solid var(--border);border-radius:14px;background:#fff;box-shadow:var(--shadow)}.entity-record-card>svg{color:var(--accent)}.entity-record-card h3{margin:4px 0 7px}.entity-record-card p{margin:0;color:var(--muted);line-height:1.5}.entity-record-meta{display:flex;gap:10px;margin-top:10px;color:var(--accent);font-size:11px;font-weight:800}.hero-entity-link{color:inherit;text-decoration:underline;text-decoration-color:rgba(255,255,255,.5);text-underline-offset:3px}
 @media(max-width:1100px){.row-actions{justify-content:flex-start}.intelligence-list article{align-items:start}.entity-workspace-grid{grid-template-columns:1fr}.ai-mode-badges{width:100%;margin:8px 0 0}.assistant-heading{flex-wrap:wrap}}
 @media(max-width:800px){.capture-card-grid{grid-template-columns:1fr;padding:12px}.primary-editor{grid-column:auto}.workspace-section-header,.capture-command-bar{flex-direction:column;padding:18px}.decision-control{width:100%;min-width:0}.workspace-toolbar,.workspace-save-bar{align-items:stretch;flex-direction:column}.workspace-toolbar .primary-button,.workspace-save-bar .primary-button{width:100%}.context-ai form{flex-direction:column;align-items:stretch}.context-ai form .primary-button{width:100%}.row-actions .primary-button,.row-actions .secondary-button{min-width:0}.intelligence-list article{grid-template-columns:auto minmax(0,1fr)}.intelligence-list article>.row-actions,.intelligence-list article>a:last-child{grid-column:2}.workspace-tabs{top:64px}}
+
+/* ForgeGov v2.0.3 live opportunity intelligence */
+.primary-button,.secondary-button,.toolbar-button,.button{
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;box-sizing:border-box;
+  width:auto;min-width:0;max-width:100%;min-height:40px;height:auto;padding:10px 14px;
+  white-space:normal;overflow-wrap:anywhere;word-break:normal;text-align:center;line-height:1.25;
+}
+.row-actions{min-width:0}.row-actions>*{max-width:100%;min-width:0}.row-actions .primary-button,.row-actions .secondary-button{white-space:normal;min-width:0}
+.pipeline-title-link,.opportunity-title-link,.opportunity-agency-link{color:inherit;text-decoration:none}.pipeline-title-link:hover,.opportunity-title-link:hover,.opportunity-agency-link:hover{color:var(--accent)}
+.opportunity-title-link h3,.pipeline-title-link h3{overflow-wrap:anywhere}
+
+.interactive-opportunity-card{position:relative;overflow:hidden;border:1px solid var(--border);transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}
+.interactive-opportunity-card:before{content:"";position:absolute;inset:0 auto 0 0;width:5px;background:#216fe5}
+.interactive-opportunity-card:hover{transform:translateY(-2px);border-color:#9abce9;box-shadow:0 16px 34px rgba(22,69,124,.11)}
+.interactive-opportunity-card.grant-result-card:before{background:#0f9f78}.grant-result-card{background:linear-gradient(115deg,#fff 0,#fff 72%,#f0fbf7 100%)}
+.contract-result-card{background:linear-gradient(115deg,#fff 0,#fff 72%,#f1f6ff 100%)}
+.result-source-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;color:var(--muted);font-size:11px;font-weight:700}
+.source-chip{display:inline-flex;align-items:center;gap:5px;padding:6px 9px;border-radius:999px;background:#edf4ff;color:#155fb9;font-size:10px;font-weight:900;letter-spacing:.05em}
+.contract-source-chip{background:#e9f2ff;color:#155fb9}.grant-source-chip{background:#e6f8f1;color:#087353}
+.opportunity-agency-link{display:inline-flex;align-items:center;gap:5px;margin-top:6px;color:#315d8c;font-weight:750}
+.opportunity-result-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;min-width:0}
+
+.source-health-pill.loading span{background:#6c87a8;box-shadow:0 0 0 4px #eaf0f7}.source-health-pill.indexed span{background:#3a7de0;box-shadow:0 0 0 4px #e5efff}
+.subnet-opportunity-list .interactive-intelligence-row{transition:background .16s ease,border-color .16s ease}.subnet-opportunity-list .interactive-intelligence-row:hover{background:#f7faff}
+.entity-button{border:0;background:transparent;padding:0;text-align:left;cursor:pointer;justify-self:start!important}.entity-button h3{margin:0}
+.record-modal{width:min(850px,95vw);max-height:90vh;overflow:auto;background:#fff;border-radius:18px;box-shadow:0 30px 90px rgba(0,0,0,.35)}
+.record-modal>header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:20px 22px;border-bottom:1px solid var(--border)}
+.record-modal>footer{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:16px 22px;border-top:1px solid var(--border);background:#f8fafc}
+.subnet-detail-body{display:grid;gap:18px;padding:22px}.subnet-description{margin:0;padding:16px;border-radius:12px;background:#f7f9fc;white-space:pre-wrap;line-height:1.65}
+
+.grant-detail-hero{background:linear-gradient(135deg,#083f3c,#0b755b 55%,#19a979)}
+.grant-intelligence-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:16px 0}
+.grant-intelligence-grid>article{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;padding:17px;border:1px solid var(--border);border-radius:14px;background:#fff;box-shadow:var(--shadow)}
+.grant-intelligence-grid>article>svg{width:38px;height:38px;padding:9px;border-radius:11px;background:#e7f8f1;color:#087353}.grant-intelligence-grid span{display:block;color:var(--muted);font-size:10px;font-weight:850;text-transform:uppercase;letter-spacing:.06em}.grant-intelligence-grid strong{display:block;margin-top:5px;overflow-wrap:anywhere}.grant-intelligence-grid p{margin:7px 0 0;color:var(--muted);font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.document-list>button{width:100%;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;padding:16px 18px;border:0;border-top:1px solid var(--border);background:#fff;text-align:left;cursor:pointer}.document-list>button:hover{background:#f6f9fd}.document-list>button>svg:first-child{color:var(--accent)}
+
+.global-search-hit{position:relative}.global-search-hit.hit-grant{background:linear-gradient(90deg,#edfaf5,transparent)}.global-search-hit.hit-grant span{color:#087353}.global-search-hit.hit-opportunity{background:linear-gradient(90deg,#eef5ff,transparent)}.global-search-hit.hit-opportunity span{color:#155fb9}.global-search-hit.hit-award{background:linear-gradient(90deg,#fff7e8,transparent)}.global-search-hit.hit-vendor{background:linear-gradient(90deg,#f6f1ff,transparent)}
+.global-live-search-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px;border-top:1px solid var(--border)}.global-live-search-actions button{display:flex!important;flex-direction:column;align-items:flex-start!important;grid-template-columns:none!important;border:1px solid var(--border)!important;background:#fff!important}.global-live-search-actions button:first-child span{color:#155fb9}.global-live-search-actions button:last-child span{color:#087353}
+.ai-mode-badges span.reconnecting{color:#925f08;background:#fff2d7}.status-dot.reconnecting{background:#d18a15;box-shadow:0 0 0 4px #fff1d6}
+
+@media(max-width:1100px){.grant-intelligence-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.opportunity-result-actions{justify-content:flex-start}}
+@media(max-width:720px){.grant-intelligence-grid{grid-template-columns:1fr}.global-live-search-actions{grid-template-columns:1fr}.opportunity-result-actions,.detail-actions,.row-actions{align-items:stretch;flex-direction:column}.opportunity-result-actions>*,.detail-actions>*,.row-actions>.primary-button,.row-actions>.secondary-button{width:100%}.row-actions>.icon-button{align-self:flex-start}.record-modal>footer{align-items:stretch;flex-direction:column}.record-modal>footer .primary-button{width:100%}}
+.workspace-launch-grid>a{position:relative;overflow:hidden;transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}.workspace-launch-grid>a:hover{transform:translateY(-2px)}.workspace-launch-grid>a.workspace-launch-contract{border-color:#b6d1f4;background:linear-gradient(135deg,#fff,#f1f6ff)}.workspace-launch-grid>a.workspace-launch-grant{border-color:#a9dfcd;background:linear-gradient(135deg,#fff,#edfaf5)}.workspace-launch-grid>a.workspace-launch-subnet{border-color:#d1c3f1;background:linear-gradient(135deg,#fff,#f6f1ff)}

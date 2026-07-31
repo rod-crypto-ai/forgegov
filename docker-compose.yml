@@ -6,64 +6,70 @@ services:
       POSTGRES_USER: forgegov
       POSTGRES_PASSWORD: forgegov
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+    - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U forgegov -d forgegov"]
+      test:
+      - CMD-SHELL
+      - pg_isready -U forgegov -d forgegov
       interval: 5s
       timeout: 5s
       retries: 10
-
   redis:
     image: redis:8-alpine
     command: redis-server --appendonly yes
     volumes:
-      - redis_data:/data
+    - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+      - CMD
+      - redis-cli
+      - ping
       interval: 5s
       timeout: 5s
       retries: 10
-
   backend:
     build: ./backend
     env_file: .env
     environment:
-      RUN_MIGRATIONS: "true"
-    command: gunicorn forgegov.wsgi:application --bind 0.0.0.0:8000 --workers 1 --timeout 120 --access-logfile - --error-logfile -
+      RUN_MIGRATIONS: 'true'
+      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
+      AI_WEB_SEARCH_ENABLED: ${AI_WEB_SEARCH_ENABLED:-true}
+    command: gunicorn forgegov.wsgi:application --bind 0.0.0.0:8000 --workers 1 --timeout
+      120 --access-logfile - --error-logfile -
     volumes:
-      - ./backend:/app
+    - ./backend:/app
     ports:
-      - "8000:8000"
+    - 8000:8000
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-
+      searxng:
+        condition: service_healthy
   worker:
     build: ./backend
     env_file: .env
     command: celery -A forgegov worker --loglevel=INFO --concurrency=1 --max-tasks-per-child=50
     volumes:
-      - ./backend:/app
+    - ./backend:/app
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-
   beat:
     build: ./backend
     env_file: .env
-    command: celery -A forgegov beat --loglevel=INFO --pidfile=/tmp/celerybeat.pid --schedule=/tmp/celerybeat-schedule
+    command: celery -A forgegov beat --loglevel=INFO --pidfile=/tmp/celerybeat.pid
+      --schedule=/tmp/celerybeat-schedule
     volumes:
-      - ./backend:/app
+    - ./backend:/app
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-
   frontend:
     build:
       context: ./frontend
@@ -72,14 +78,35 @@ services:
     environment:
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api}
     volumes:
-      - ./frontend:/app
-      - /app/node_modules
-      - /app/.next
+    - ./frontend:/app
+    - /app/node_modules
+    - /app/.next
     ports:
-      - "3000:3000"
+    - 3000:3000
     depends_on:
-      - backend
-
+    - backend
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-forgegov-local-development-secret-change-me}
+      SEARXNG_BASE_URL: http://localhost:8080/
+      SEARXNG_LIMITER: 'false'
+      SEARXNG_PUBLIC_INSTANCE: 'false'
+    volumes:
+    - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    - searxng_data:/var/cache/searxng
+    ports:
+    - 127.0.0.1:8080:8080
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/search?q=forgegov&format=json', timeout=5).read(1)"
+      interval: 10s
+      timeout: 8s
+      retries: 12
+      start_period: 15s
 volumes:
-  postgres_data:
-  redis_data:
+  postgres_data: null
+  redis_data: null
+  searxng_data: null
