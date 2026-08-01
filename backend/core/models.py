@@ -530,7 +530,7 @@ class ProjectRoom(TimeStampedModel):
 
     class Meta:
         ordering = ["-updated_at"]
-        indexes = [models.Index(fields=["owner_organization", "status", "-updated_at"])]
+        indexes = [models.Index(fields=["owner_organization", "status", "-updated_at"], name="core_projec_owner_o_0a7332_idx")]
 
     def __str__(self):
         return self.name
@@ -555,7 +555,7 @@ class ProjectRoomPartner(TimeStampedModel):
         constraints = [
             models.UniqueConstraint(fields=("project_room", "organization"), name="unique_project_room_partner"),
         ]
-        indexes = [models.Index(fields=["organization", "project_room"])]
+        indexes = [models.Index(fields=["organization", "project_room"], name="core_projec_organiz_5d07a0_idx")]
 
 
 class AIConversation(TimeStampedModel):
@@ -572,7 +572,7 @@ class AIConversation(TimeStampedModel):
 
     class Meta:
         ordering = ["-updated_at"]
-        indexes = [models.Index(fields=["organization", "-updated_at"]), models.Index(fields=["project_room", "visibility"])]
+        indexes = [models.Index(fields=["organization", "-updated_at"], name="core_aicon_organiz_50f0c8_idx"), models.Index(fields=["project_room", "visibility"], name="core_aicon_project_26cf8b_idx")]
 
 
 class AIMessage(TimeStampedModel):
