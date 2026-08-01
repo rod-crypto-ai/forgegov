@@ -46,6 +46,9 @@ from .models import (
     ProjectRoomPartner,
     AIConversation,
     AIMessage,
+    OpportunityDocument,
+    OpportunityDocumentChunk,
+    OpportunityAnalysis,
     TeamingActivity,
     Vendor,
 )
@@ -70,10 +73,13 @@ from .serializers import (
     ProjectRoomSerializer,
     ProjectRoomPartnerSerializer,
     AIConversationSerializer,
+    OpportunityDocumentSerializer,
+    OpportunityAnalysisSerializer,
     TeamingActivitySerializer,
     VendorSerializer,
 )
 from .throttles import OpenAIChatThrottle, SamLiveSearchThrottle
+from .document_intelligence import DocumentIngestionError, chunk_sections, download_document, extract_document, sha256
 
 
 def _truthy(value: str | None) -> bool:
@@ -83,7 +89,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.0.3"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.2.0"})
 
 
 @api_view(["GET"])
@@ -1021,3 +1027,129 @@ class AIConversationViewSet(viewsets.ReadOnlyModelViewSet):
         organization = _request_organization(self.request)
         shared_rooms = ProjectRoom.objects.filter(partners__organization=organization)
         return AIConversation.objects.filter(Q(organization=organization) | Q(project_room__in=shared_rooms, visibility=AIConversation.Visibility.SHARED)).select_related("project_room", "opportunity", "created_by").prefetch_related("messages").distinct()
+
+ANALYSIS_PROMPTS = {
+    "executive_summary": "Create an executive opportunity briefing. Cover buyer, scope, key dates, place of performance, contract vehicle/type if stated, set-aside, evaluation approach, mandatory deliverables, major unknowns, and immediate next actions.",
+    "requirements": "Extract explicit requirements into categorized bullets. Separate submission instructions, technical requirements, staffing, past performance, certifications, security, insurance, deliverables, and deadlines. Do not infer unstated requirements.",
+    "risks": "Identify capture, compliance, technical, staffing, schedule, pricing, security, and teaming risks. Separate confirmed risks from assumptions and recommend mitigations.",
+    "bid_no_bid": "Prepare a transparent bid/no-bid brief. State verified facts, unknowns, strengths, gaps, likely teaming needs, resource burden, disqualifiers, and a recommendation. Do not invent a win probability.",
+    "compliance_matrix": "Create a compliance matrix in markdown with columns Requirement, Source, Response Owner, Status, and Notes. Include only requirements supported by the provided documents.",
+    "amendment_comparison": "Compare the ingested documents as potential versions or amendments. Identify changed dates, scope, clauses, attachments, instructions, and evaluation language. If versions cannot be reliably matched, say so clearly.",
+}
+
+def _opportunity_for_source(source_id: str):
+    return Opportunity.objects.filter(Q(source_id=source_id) | Q(solicitation_number=source_id)).order_by("-updated_at").first()
+
+def _document_context(organization, opportunity, *, query: str = "", limit: int = 18):
+    chunks = list(OpportunityDocumentChunk.objects.filter(document__organization=organization, document__opportunity=opportunity, document__status=OpportunityDocument.Status.READY).select_related("document").order_by("document__file_name", "ordinal"))
+    terms = [term.lower() for term in query.split() if len(term) > 3][:12]
+    if terms:
+        chunks.sort(key=lambda chunk: sum(chunk.text.lower().count(term) for term in terms), reverse=True)
+    selected = chunks[:limit]
+    lines, sources = [], []
+    for index, chunk in enumerate(selected, 1):
+        label = f"[DOC-{index}]"
+        location = f"page {chunk.page_number}" if chunk.page_number else (chunk.section or "extracted text")
+        lines.append(f"{label} {chunk.document.file_name} — {location}\n{chunk.text}")
+        sources.append({"label": label, "type": "document", "title": f"{chunk.document.file_name} — {location}", "url": chunk.document.source_url})
+    return "\n\n".join(lines), sources
+
+@api_view(["GET", "POST"])
+def opportunity_documents(request, source_id: str):
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(source_id)
+    if request.method == "GET" and not opportunity:
+        return Response([])
+    if not opportunity:
+        opportunity_data = request.data.get("opportunity") or {}
+        opportunity = Opportunity.objects.create(
+            source="sam.gov", source_id=source_id,
+            solicitation_number=str(opportunity_data.get("solicitationNumber") or source_id)[:120],
+            title=str(opportunity_data.get("title") or f"SAM.gov opportunity {source_id}")[:500],
+            agency=str(opportunity_data.get("fullParentPathName") or "")[:255],
+            naics_code=str(opportunity_data.get("naicsCode") or "")[:12],
+            source_url=str(opportunity_data.get("uiLink") or ""),
+            raw_data=opportunity_data if isinstance(opportunity_data, dict) else {},
+        )
+    if request.method == "GET":
+        records = OpportunityDocument.objects.filter(organization=organization, opportunity=opportunity).prefetch_related("chunks")
+        return Response(OpportunityDocumentSerializer(records, many=True).data)
+    documents = request.data.get("documents") or []
+    if not isinstance(documents, list) or not documents:
+        return Response({"detail": "documents must be a non-empty list of {name, url} records."}, status=status.HTTP_400_BAD_REQUEST)
+    results = []
+    for row in documents[:40]:
+        name = str((row or {}).get("name") or "Government document")[:500]
+        url = str((row or {}).get("url") or "").strip()
+        if not url:
+            continue
+        record, _ = OpportunityDocument.objects.update_or_create(organization=organization, opportunity=opportunity, source_url=url, defaults={"file_name": name, "status": OpportunityDocument.Status.PENDING, "error_message": ""})
+        try:
+            data, content_type = download_document(url)
+            digest = sha256(data)
+            if record.checksum != digest or record.status != OpportunityDocument.Status.READY:
+                sections = extract_document(data, name, content_type)
+                if not sections:
+                    raise DocumentIngestionError("No readable text could be extracted from this document.")
+                OpportunityDocumentChunk.objects.filter(document=record).delete()
+                chunk_rows = [OpportunityDocumentChunk(document=record, ordinal=ordinal, page_number=page, section=section or "", text=text) for page, section, ordinal, text in chunk_sections(sections)]
+                OpportunityDocumentChunk.objects.bulk_create(chunk_rows, batch_size=250)
+                record.content_type = content_type
+                record.checksum = digest
+                record.status = OpportunityDocument.Status.READY
+                record.page_count = len({page for page, _, _ in sections if page})
+                record.character_count = sum(len(text) for _, _, text in sections)
+                record.error_message = ""
+                record.save()
+        except (DocumentIngestionError, ValueError, OSError) as exc:
+            record.status = OpportunityDocument.Status.FAILED
+            record.error_message = str(exc)[:1000]
+            record.save(update_fields=["status", "error_message", "updated_at"])
+        results.append(record)
+    return Response(OpportunityDocumentSerializer(results, many=True).data, status=status.HTTP_201_CREATED)
+
+@api_view(["GET", "POST"])
+@throttle_classes([OpenAIChatThrottle])
+def opportunity_briefing(request, source_id: str):
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(source_id)
+    if request.method == "GET" and not opportunity:
+        return Response({"documents": [], "analyses": []})
+    if not opportunity:
+        return Response({"detail": "Ingest the opportunity documents before generating a briefing."}, status=status.HTTP_409_CONFLICT)
+    if request.method == "GET":
+        analyses = OpportunityAnalysis.objects.filter(organization=organization, opportunity=opportunity)
+        documents = OpportunityDocument.objects.filter(organization=organization, opportunity=opportunity).prefetch_related("chunks")
+        return Response({"documents": OpportunityDocumentSerializer(documents, many=True).data, "analyses": OpportunityAnalysisSerializer(analyses, many=True).data})
+    analysis_type = str(request.data.get("analysis_type") or "executive_summary")
+    if analysis_type not in ANALYSIS_PROMPTS:
+        return Response({"detail": "Unsupported analysis type."}, status=status.HTTP_400_BAD_REQUEST)
+    context, sources = _document_context(organization, opportunity, query=ANALYSIS_PROMPTS[analysis_type], limit=24)
+    if not context:
+        return Response({"detail": "No successfully ingested document text is available. Ingest the government attachments first."}, status=status.HTTP_409_CONFLICT)
+    fingerprint_source = analysis_type + "|" + "|".join(sorted(doc.checksum for doc in OpportunityDocument.objects.filter(organization=organization, opportunity=opportunity, status=OpportunityDocument.Status.READY)))
+    fingerprint = sha256(fingerprint_source.encode())
+    cached = OpportunityAnalysis.objects.filter(organization=organization, opportunity=opportunity, project_room=None, analysis_type=analysis_type, input_fingerprint=fingerprint).first()
+    if cached and not request.data.get("refresh"):
+        return Response(OpportunityAnalysisSerializer(cached).data)
+    prompt = f"Opportunity: {opportunity.title}\nSolicitation: {opportunity.solicitation_number}\nAgency: {opportunity.agency}\n\nTASK\n{ANALYSIS_PROMPTS[analysis_type]}\n\nAUTHORIZED SOURCE EXCERPTS\n{context}\n\nCite every document-supported claim using the exact [DOC-*] labels. Clearly label unknowns and inferences."
+    result = ask_ai(message=prompt, history=[], organization=organization)
+    analysis, _ = OpportunityAnalysis.objects.update_or_create(organization=organization, opportunity=opportunity, project_room=None, analysis_type=analysis_type, input_fingerprint=fingerprint, defaults={"content": result.get("answer", ""), "sources": sources, "model": result.get("model", ""), "created_by": request.user})
+    return Response(OpportunityAnalysisSerializer(analysis).data)
+
+@api_view(["POST"])
+@throttle_classes([OpenAIChatThrottle])
+def opportunity_document_question(request, source_id: str):
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(source_id)
+    question = str(request.data.get("message") or "").strip()
+    if not opportunity:
+        return Response({"detail": "Opportunity not found."}, status=status.HTTP_404_NOT_FOUND)
+    if not question:
+        return Response({"detail": "A question is required."}, status=status.HTTP_400_BAD_REQUEST)
+    context, sources = _document_context(organization, opportunity, query=question, limit=18)
+    if not context:
+        return Response({"detail": "No ingested document text is available."}, status=status.HTTP_409_CONFLICT)
+    result = ask_ai(message=f"Answer this question only from the authorized document excerpts. Cite exact [DOC-*] labels. If unsupported, say so.\n\nQUESTION\n{question}\n\nDOCUMENT EXCERPTS\n{context}", history=[], organization=organization)
+    result["sources"] = sources
+    return Response(result)

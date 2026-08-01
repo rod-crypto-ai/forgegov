@@ -590,3 +590,63 @@ class AIMessage(TimeStampedModel):
 
     class Meta:
         ordering = ["created_at"]
+
+class OpportunityDocument(TimeStampedModel):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        READY = "ready", "Ready"
+        FAILED = "failed", "Failed"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="opportunity_documents")
+    opportunity = models.ForeignKey(Opportunity, on_delete=models.CASCADE, related_name="ingested_documents")
+    project_room = models.ForeignKey(ProjectRoom, null=True, blank=True, on_delete=models.CASCADE, related_name="documents")
+    file_name = models.CharField(max_length=500)
+    source_url = models.URLField(max_length=2000)
+    content_type = models.CharField(max_length=150, blank=True)
+    checksum = models.CharField(max_length=64, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    page_count = models.PositiveIntegerField(default=0)
+    character_count = models.PositiveIntegerField(default=0)
+    error_message = models.CharField(max_length=1000, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["file_name"]
+        constraints = [models.UniqueConstraint(fields=("organization", "opportunity", "source_url"), name="unique_ingested_opportunity_document")]
+        indexes = [models.Index(fields=["organization", "opportunity", "status"], name="core_oppdoc_org_opp_status_idx")]
+
+class OpportunityDocumentChunk(TimeStampedModel):
+    document = models.ForeignKey(OpportunityDocument, on_delete=models.CASCADE, related_name="chunks")
+    ordinal = models.PositiveIntegerField()
+    page_number = models.PositiveIntegerField(null=True, blank=True)
+    section = models.CharField(max_length=255, blank=True)
+    text = models.TextField()
+
+    class Meta:
+        ordering = ["document_id", "ordinal"]
+        constraints = [models.UniqueConstraint(fields=("document", "ordinal"), name="unique_opportunity_document_chunk")]
+        indexes = [models.Index(fields=["document", "page_number", "ordinal"], name="core_oppchunk_doc_page_idx")]
+
+class OpportunityAnalysis(TimeStampedModel):
+    class AnalysisType(models.TextChoices):
+        EXECUTIVE = "executive_summary", "Executive Summary"
+        REQUIREMENTS = "requirements", "Requirements"
+        RISKS = "risks", "Risk Assessment"
+        BID_NO_BID = "bid_no_bid", "Bid / No-Bid"
+        COMPLIANCE = "compliance_matrix", "Compliance Matrix"
+        AMENDMENTS = "amendment_comparison", "Amendment Comparison"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="opportunity_analyses")
+    opportunity = models.ForeignKey(Opportunity, on_delete=models.CASCADE, related_name="analyses")
+    project_room = models.ForeignKey(ProjectRoom, null=True, blank=True, on_delete=models.CASCADE, related_name="analyses")
+    analysis_type = models.CharField(max_length=40, choices=AnalysisType.choices)
+    content = models.TextField()
+    sources = models.JSONField(default=list, blank=True)
+    model = models.CharField(max_length=120, blank=True)
+    input_fingerprint = models.CharField(max_length=64)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_opportunity_analyses")
+
+    class Meta:
+        ordering = ["-updated_at"]
+        constraints = [models.UniqueConstraint(fields=("organization", "opportunity", "project_room", "analysis_type", "input_fingerprint"), name="unique_cached_opportunity_analysis")]
+        indexes = [models.Index(fields=["organization", "opportunity", "analysis_type"], name="core_oppanalysis_org_type_idx")]

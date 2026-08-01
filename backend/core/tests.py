@@ -3,7 +3,7 @@ from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -871,3 +871,16 @@ class GrantAlertEvaluationTests(AuthenticatedApiTestCase):
         self.assertEqual(alert.source_id, "grants.gov:445566")
         self.assertEqual(alert.source_url, "https://www.grants.gov/search-results-detail/445566")
         mock_search.assert_called_once()
+
+class DocumentIntelligenceUnitTests(SimpleTestCase):
+    def test_text_extraction_and_chunking(self):
+        from .document_intelligence import chunk_sections, extract_document
+        sections = extract_document(b"Section L\nSubmit the technical volume by Friday.", "instructions.txt", "text/plain")
+        chunks = list(chunk_sections(sections))
+        self.assertEqual(len(chunks), 1)
+        self.assertIn("technical volume", chunks[0][3])
+
+    def test_private_document_urls_are_blocked(self):
+        from .document_intelligence import DocumentIngestionError, _validate_public_url
+        with self.assertRaises(DocumentIngestionError):
+            _validate_public_url("http://127.0.0.1:8000/private")

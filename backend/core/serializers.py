@@ -28,6 +28,9 @@ from .models import (
     ProjectRoomPartner,
     AIConversation,
     AIMessage,
+    OpportunityDocument,
+    OpportunityDocumentChunk,
+    OpportunityAnalysis,
 )
 from .permissions import active_membership
 
@@ -304,3 +307,26 @@ class AIConversationSerializer(serializers.ModelSerializer):
         model = AIConversation
         fields = ("id", "organization", "project_room", "opportunity", "title", "visibility", "created_by", "messages", "created_at", "updated_at")
         read_only_fields = ("id", "organization", "created_by", "messages", "created_at", "updated_at")
+
+
+class OpportunityDocumentChunkSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OpportunityDocumentChunk
+        fields = ("id", "ordinal", "page_number", "section", "text")
+        read_only_fields = fields
+
+
+class OpportunityDocumentSerializer(serializers.ModelSerializer):
+    chunk_count = serializers.IntegerField(source="chunks.count", read_only=True)
+
+    class Meta:
+        model = OpportunityDocument
+        fields = ("id", "opportunity", "project_room", "file_name", "source_url", "content_type", "checksum", "status", "page_count", "character_count", "error_message", "metadata", "chunk_count", "created_at", "updated_at")
+        read_only_fields = fields
+
+
+class OpportunityAnalysisSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OpportunityAnalysis
+        fields = ("id", "opportunity", "project_room", "analysis_type", "content", "sources", "model", "input_fingerprint", "created_at", "updated_at")
+        read_only_fields = fields
