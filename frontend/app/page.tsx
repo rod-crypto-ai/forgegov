@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowRight, Award, BellRing, Building2, CalendarClock, ChevronRight,
   CircleDollarSign, Database, FileSearch, Handshake, Radar, Search,
-  ShieldCheck, Sparkles, Target, TrendingUp, Users,
+  ShieldCheck, Sparkles, Target, TrendingUp, Users, FolderKanban, BrainCircuit,
 } from "lucide-react";
 import { apiGet } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
@@ -47,6 +47,18 @@ export default function DashboardPage() {
       <Link href="/settings">Manage data sources <ChevronRight size={15}/></Link>
     </section>
 
+    <section className="release-spotlight" aria-label="ForgeGov v2.3 capabilities">
+      <div className="release-spotlight-copy">
+        <span className="page-kicker">NEW IN FORGEGOV v2.3</span>
+        <h2>ForgeAI document intelligence and secure Project Rooms are live.</h2>
+        <p>Analyze solicitation attachments with citations, generate opportunity briefings, and coordinate internal teams and invited partner companies without exposing private workspace data.</p>
+      </div>
+      <div className="release-spotlight-actions">
+        <Link href="/project-rooms" className="button solid"><FolderKanban size={17}/> Open Project Rooms</Link>
+        <Link href="/opportunities/federal-contracts" className="button ghost"><BrainCircuit size={17}/> Analyze an opportunity</Link>
+      </div>
+    </section>
+
     <section className="metric-grid">
       <Link href="/opportunities/federal-contracts" className="metric-card blue"><span><FileSearch/>Active opportunities</span><strong>{summary.opportunities?.active ?? 0}</strong><small>{summary.opportunities?.total ?? 0} notices indexed</small><i><TrendingUp size={14}/> Live market</i></Link>
       <Link href="/awards/federal-contracts" className="metric-card teal"><span><CircleDollarSign/>Award obligations</span><strong>{money.format(summary.awards?.obligated_total ?? 0)}</strong><small>{summary.awards?.total ?? 0} award records</small><i><Radar size={14}/> USAspending</i></Link>
@@ -59,6 +71,7 @@ export default function DashboardPage() {
         <section className="pro-panel market-radar">
           <header><div><span className="panel-kicker">MARKET RADAR</span><h2>Intelligence workspaces</h2><p>Live public data and capture workflows organized by the decisions you need to make.</p></div><Link href="/opportunities/federal-contracts">Explore all <ArrowRight size={15}/></Link></header>
           <div className="workspace-launch-grid">
+            <Link className="workspace-launch-project" href="/project-rooms"><span className="launch-icon violet"><FolderKanban/></span><div><b>Project Rooms</b><small>Manage tasks, discussions, internal notes, controlled files, and approved partner-company access.</small><em>Open secure collaboration <ArrowRight size={13}/></em></div></Link>
             <Link className="workspace-launch-contract" href="/opportunities/federal-contracts"><span className="launch-icon blue"><Search/></span><div><b>Federal contract opportunities</b><small>Search active SAM.gov notices and open full opportunity workspaces.</small><em>Search live contracts <ArrowRight size={13}/></em></div></Link>
             <Link className="workspace-launch-grant" href="/opportunities/federal-grants"><span className="launch-icon teal"><FileSearch/></span><div><b>Federal grant opportunities</b><small>Search Grants.gov, review application details, and use contextual AI.</small><em>Search live grants <ArrowRight size={13}/></em></div></Link>
             <Link className="workspace-launch-subnet" href="/opportunities/subcontracting"><span className="launch-icon violet"><Handshake/></span><div><b>Subcontracting opportunities</b><small>Review current SBA SUBNet listings and reported SAM subawards.</small><em>Open subcontracting <ArrowRight size={13}/></em></div></Link>
