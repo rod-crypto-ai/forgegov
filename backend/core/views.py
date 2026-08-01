@@ -42,6 +42,10 @@ from .models import (
     SavedSearch,
     Task,
     TeamingRequest,
+    ProjectRoom,
+    ProjectRoomPartner,
+    AIConversation,
+    AIMessage,
     TeamingActivity,
     Vendor,
 )
@@ -63,6 +67,9 @@ from .serializers import (
     SavedSearchSerializer,
     TaskSerializer,
     TeamingRequestSerializer,
+    ProjectRoomSerializer,
+    ProjectRoomPartnerSerializer,
+    AIConversationSerializer,
     TeamingActivitySerializer,
     VendorSerializer,
 )
@@ -185,7 +192,27 @@ def ai_chat(request):
         return Response({"detail": "history must be a list."}, status=status.HTTP_400_BAD_REQUEST)
     try:
         organization = _request_organization(request)
-        return Response(ask_ai(message=message, history=history, organization=organization))
+        conversation_id = request.data.get("conversation_id")
+        conversation = None
+        if conversation_id:
+            conversation = AIConversation.objects.filter(pk=conversation_id, organization=organization).first()
+            if not conversation:
+                return Response({"detail": "Conversation not found in this workspace."}, status=status.HTTP_404_NOT_FOUND)
+        elif request.data.get("persist"):
+            project_room = None
+            project_room_id = request.data.get("project_room_id")
+            if project_room_id:
+                project_room = ProjectRoom.objects.filter(Q(owner_organization=organization) | Q(partners__organization=organization), pk=project_room_id).distinct().first()
+                if not project_room:
+                    return Response({"detail": "Project Room not found or not accessible."}, status=status.HTTP_404_NOT_FOUND)
+            conversation = AIConversation.objects.create(organization=organization, project_room=project_room, title=message[:120], created_by=request.user)
+        if conversation:
+            AIMessage.objects.create(conversation=conversation, role=AIMessage.Role.USER, content=message)
+        result = ask_ai(message=message, history=history, organization=organization)
+        if conversation:
+            AIMessage.objects.create(conversation=conversation, role=AIMessage.Role.ASSISTANT, content=result.get("answer", ""), sources=result.get("sources") or [], model=result.get("model", ""), provider=result.get("provider", ""))
+            result["conversation_id"] = conversation.id
+        return Response(result)
     except Organization.DoesNotExist:
         return Response({"detail": "An active workspace membership is required."}, status=status.HTTP_403_FORBIDDEN)
     except OpenAIIntegrationError as exc:
@@ -706,6 +733,7 @@ def live_sba_subnet_search(request):
             query=request.query_params.get("q", ""),
             state=request.query_params.get("state", ""),
             page=int(request.query_params.get("page", 0)),
+            page_size=int(request.query_params.get("page_size", 20)),
         ))
     except IntegrationError as exc:
         return Response({"results": [], "status": "unavailable", "reachable": False, "warning": str(exc), "page": 0, "has_next": False})
@@ -930,3 +958,66 @@ class IntelligenceAlertViewSet(OrganizationScopedViewSetMixin, viewsets.ModelVie
         if dismissed is not None:
             queryset = queryset.filter(dismissed=_truthy(dismissed))
         return queryset
+
+
+class ProjectRoomViewSet(viewsets.ModelViewSet):
+    serializer_class = ProjectRoomSerializer
+    permission_classes = [ReadOnlyOrContributor]
+
+    def get_queryset(self):
+        organization = _request_organization(self.request)
+        return ProjectRoom.objects.filter(Q(owner_organization=organization) | Q(partners__organization=organization)).select_related("owner_organization", "opportunity", "created_by").prefetch_related("partners__organization").distinct()
+
+    def perform_create(self, serializer):
+        serializer.save(owner_organization=_request_organization(self.request), created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        room = self.get_object()
+        if room.owner_organization_id != _request_organization(self.request).id:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Only the owning company can modify this Project Room.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if instance.owner_organization_id != _request_organization(self.request).id:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Only the owning company can delete this Project Room.")
+        instance.delete()
+
+
+@api_view(["POST", "DELETE"])
+def project_room_partner(request, room_id: int):
+    organization = _request_organization(request)
+    room = ProjectRoom.objects.filter(pk=room_id, owner_organization=organization).first()
+    if not room:
+        return Response({"detail": "Only the owning company can manage Project Room partners."}, status=status.HTTP_403_FORBIDDEN)
+    partner_org_id = request.data.get("organization")
+    if not partner_org_id:
+        return Response({"detail": "Partner organization is required."}, status=status.HTTP_400_BAD_REQUEST)
+    partner_org = Organization.objects.filter(pk=partner_org_id).exclude(pk=organization.pk).first()
+    if not partner_org:
+        return Response({"detail": "Partner organization not found."}, status=status.HTTP_404_NOT_FOUND)
+    if request.method == "DELETE":
+        ProjectRoomPartner.objects.filter(project_room=room, organization=partner_org).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    partner, _ = ProjectRoomPartner.objects.update_or_create(
+        project_room=room, organization=partner_org,
+        defaults={
+            "access_level": request.data.get("access_level", ProjectRoomPartner.AccessLevel.PARTNER),
+            "can_upload": bool(request.data.get("can_upload", True)),
+            "can_comment": bool(request.data.get("can_comment", True)),
+            "can_view_pricing": bool(request.data.get("can_view_pricing", False)),
+            "invited_by": request.user,
+        },
+    )
+    return Response(ProjectRoomPartnerSerializer(partner).data, status=status.HTTP_201_CREATED)
+
+
+class AIConversationViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = AIConversationSerializer
+    permission_classes = [ReadOnlyOrContributor]
+
+    def get_queryset(self):
+        organization = _request_organization(self.request)
+        shared_rooms = ProjectRoom.objects.filter(partners__organization=organization)
+        return AIConversation.objects.filter(Q(organization=organization) | Q(project_room__in=shared_rooms, visibility=AIConversation.Visibility.SHARED)).select_related("project_room", "opportunity", "created_by").prefetch_related("messages").distinct()

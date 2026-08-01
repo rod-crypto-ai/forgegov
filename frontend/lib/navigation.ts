@@ -57,6 +57,7 @@ export const navigationGroups: NavGroup[] = [
     items: [
       { href: "/", label: "Dashboard", icon: LayoutDashboard },
       { href: "/capture/teaming", label: "Teaming", icon: Handshake, description: "Discover partners and manage teaming leads from vendor and award intelligence." },
+      { href: "/project-rooms", label: "Project Rooms", icon: Users, description: "Secure opportunity rooms for internal teams and invited partner companies." },
       { href: "/capture/pipelines", label: "Pipelines", icon: FolderKanban, apiPath: "/pipeline/", recordLabel: "pipeline item" },
       { href: "/capture/pursuits", label: "Pursuits", icon: Target, apiPath: "/pursuits/", recordLabel: "pursuit" },
       { href: "/capture/tasks", label: "Tasks", icon: ListChecks, apiPath: "/tasks/", recordLabel: "task" },

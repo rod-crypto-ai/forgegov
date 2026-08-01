@@ -34,6 +34,7 @@ class Membership(TimeStampedModel):
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="memberships")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="organization_memberships")
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.VIEWER)
+    job_title = models.CharField(max_length=120, blank=True)
 
     class Meta:
         constraints = [
@@ -512,3 +513,80 @@ class IntelligenceAlert(TimeStampedModel):
 
     def __str__(self):
         return self.title
+
+class ProjectRoom(TimeStampedModel):
+    class Status(models.TextChoices):
+        PLANNING = "planning", "Planning"
+        ACTIVE = "active", "Active"
+        SUBMITTED = "submitted", "Submitted"
+        CLOSED = "closed", "Closed"
+
+    owner_organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="owned_project_rooms")
+    opportunity = models.ForeignKey(Opportunity, null=True, blank=True, on_delete=models.SET_NULL, related_name="project_rooms")
+    name = models.CharField(max_length=500)
+    description = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PLANNING)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_project_rooms")
+
+    class Meta:
+        ordering = ["-updated_at"]
+        indexes = [models.Index(fields=["owner_organization", "status", "-updated_at"])]
+
+    def __str__(self):
+        return self.name
+
+
+class ProjectRoomPartner(TimeStampedModel):
+    class AccessLevel(models.TextChoices):
+        PARTNER = "partner", "Teaming Partner"
+        SUBCONTRACTOR = "subcontractor", "Subcontractor"
+        CONSULTANT = "consultant", "Consultant"
+        VIEWER = "viewer", "Viewer"
+
+    project_room = models.ForeignKey(ProjectRoom, on_delete=models.CASCADE, related_name="partners")
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="shared_project_rooms")
+    access_level = models.CharField(max_length=20, choices=AccessLevel.choices, default=AccessLevel.PARTNER)
+    can_upload = models.BooleanField(default=True)
+    can_comment = models.BooleanField(default=True)
+    can_view_pricing = models.BooleanField(default=False)
+    invited_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="project_room_partner_invites")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=("project_room", "organization"), name="unique_project_room_partner"),
+        ]
+        indexes = [models.Index(fields=["organization", "project_room"])]
+
+
+class AIConversation(TimeStampedModel):
+    class Visibility(models.TextChoices):
+        INTERNAL = "internal", "Owner Company Only"
+        SHARED = "shared", "Project Room Participants"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="ai_conversations")
+    project_room = models.ForeignKey(ProjectRoom, null=True, blank=True, on_delete=models.CASCADE, related_name="ai_conversations")
+    opportunity = models.ForeignKey(Opportunity, null=True, blank=True, on_delete=models.SET_NULL, related_name="ai_conversations")
+    title = models.CharField(max_length=255, default="New conversation")
+    visibility = models.CharField(max_length=20, choices=Visibility.choices, default=Visibility.INTERNAL)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="forgegov_ai_conversations")
+
+    class Meta:
+        ordering = ["-updated_at"]
+        indexes = [models.Index(fields=["organization", "-updated_at"]), models.Index(fields=["project_room", "visibility"])]
+
+
+class AIMessage(TimeStampedModel):
+    class Role(models.TextChoices):
+        USER = "user", "User"
+        ASSISTANT = "assistant", "Assistant"
+        SYSTEM = "system", "System"
+
+    conversation = models.ForeignKey(AIConversation, on_delete=models.CASCADE, related_name="messages")
+    role = models.CharField(max_length=20, choices=Role.choices)
+    content = models.TextField()
+    sources = models.JSONField(default=list, blank=True)
+    model = models.CharField(max_length=120, blank=True)
+    provider = models.CharField(max_length=80, blank=True)
+
+    class Meta:
+        ordering = ["created_at"]

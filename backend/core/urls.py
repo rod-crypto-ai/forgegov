@@ -31,6 +31,8 @@ from .views import (
     TaskViewSet,
     TeamingRequestViewSet,
     VendorViewSet,
+    ProjectRoomViewSet,
+    AIConversationViewSet,
     dashboard_summary,
     health,
     integration_status,
@@ -60,6 +62,7 @@ from .views import (
     opportunity_workspace,
     teaming_activity_collection,
     teaming_activity_detail,
+    project_room_partner,
 )
 
 router = DefaultRouter()
@@ -80,6 +83,8 @@ router.register("files", FileRecordViewSet, basename="file")
 router.register("participants", ParticipantViewSet, basename="participant")
 router.register("categories", CategoryViewSet, basename="category")
 router.register("alerts", IntelligenceAlertViewSet, basename="intelligence-alert")
+router.register("project-rooms", ProjectRoomViewSet, basename="project-room")
+router.register("ai/conversations", AIConversationViewSet, basename="ai-conversation")
 
 urlpatterns = [
     path("auth/csrf/", csrf_token),
@@ -121,5 +126,6 @@ urlpatterns = [
     path("workflow/opportunity-workspaces/<str:source_id>/", opportunity_workspace),
     path("workflow/teaming/<int:teaming_id>/activities/", teaming_activity_collection),
     path("workflow/teaming-activities/<int:activity_id>/", teaming_activity_detail),
+    path("workflow/project-rooms/<int:room_id>/partners/", project_room_partner),
     path("", include(router.urls)),
 ]

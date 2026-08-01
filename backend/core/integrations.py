@@ -1130,7 +1130,7 @@ def search_sam_subawards(
     }
 
 
-def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: int = 0) -> dict[str, Any]:
+def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: int = 0, page_size: int = 20) -> dict[str, Any]:
     """Read current SBA SUBNet listings with direct, indexed, cached, and persisted fallbacks."""
     from bs4 import BeautifulSoup
     from django.core.cache import cache
@@ -1138,9 +1138,9 @@ def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: i
     from urllib.parse import urljoin
     import time
 
-    page=max(0,page); normalized_query=query.strip().lower(); normalized_state=state.strip().lower()
-    params={"combine":query,"field_state_value":state or "All","keyword":query,"state":state or "All","page":page}
-    cache_key=f"sba-subnet:v3:{normalized_query}:{normalized_state}:{page}"; snapshot_key=f"sba-subnet:v3:last-good:{page}"
+    page=max(0,page); page_size=min(max(int(page_size or 20), 1), 100); normalized_query=query.strip().lower(); normalized_state=state.strip().lower()
+    params={"combine":query,"field_state_value":state or "All","keyword":query,"state":state or "All","page":page,"page_size":page_size,"items_per_page":page_size,"limit":page_size}
+    cache_key=f"sba-subnet:v4:{normalized_query}:{normalized_state}:{page}:{page_size}"; snapshot_key=f"sba-subnet:v4:last-good:{page}:{page_size}"
     # SBA's current public listings remain available on its official legacy host.
     # Keep that URL first even when an existing .env still contains the prior www.sba.gov URL.
     official_listing_url = "https://legacy.sba.gov/federal-contracting/contracting-guide/prime-subcontracting/subcontracting-opportunities"
@@ -1205,7 +1205,7 @@ def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: i
         for op in Opportunity.objects.filter(source="sba-subnet",active=True).order_by("response_deadline","-updated_at")[:250]:
             raw=op.raw_data if isinstance(op.raw_data,dict) else {}; row={"source_id":op.source_id,"title":op.title,"prime_contractor":raw.get("prime_contractor") or op.agency,"description":op.description,"closing_date":raw.get("closing_date") or (op.response_deadline.date().isoformat() if op.response_deadline else ""),"performance_start":raw.get("performance_start") or "","place_of_performance":op.place_of_performance,"naics":raw.get("naics") or op.naics_code,"point_of_contact":raw.get("point_of_contact") or "","source_url":op.source_url}
             if matches(row): rows.append(row)
-        start=page*10; sliced=rows[start:start+11]; return sliced[:10],len(sliced)>10
+        start=page*page_size; sliced=rows[start:start+page_size+1]; return sliced[:page_size],len(sliced)>page_size
 
     for source_index,source_url in enumerate(source_urls):
         for attempt in range(2):
@@ -1214,7 +1214,7 @@ def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: i
                 if parsed: persist(parsed)
                 results=[row for row in parsed if matches(row)]
                 if not parsed and "Subcontracting Opportunity" not in response.text: raise IntegrationError("SBA returned a page without SUBNet listings.")
-                payload={"total_records":len(results),"results":results,"source_url":response.url,"source_name":"SBA SUBNet live directory" if source_index==0 else "Official SBA fallback","page":page,"has_next":has_next,"status":"live","reachable":True,"warning":""}
+                payload={"total_records":len(results),"page_size":page_size,"results":results[:page_size],"source_url":response.url,"source_name":"SBA SUBNet live directory" if source_index==0 else "Official SBA fallback","page":page,"has_next":has_next,"status":"live","reachable":True,"warning":""}
                 cache.set(cache_key,payload,43200)
                 if not normalized_query and normalized_state in {"","all"}: cache.set(snapshot_key,payload,172800)
                 return payload

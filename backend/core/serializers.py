@@ -24,6 +24,10 @@ from .models import (
     TeamingRequest,
     TeamingActivity,
     Vendor,
+    ProjectRoom,
+    ProjectRoomPartner,
+    AIConversation,
+    AIMessage,
 )
 from .permissions import active_membership
 
@@ -234,7 +238,7 @@ class MembershipSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Membership
-        fields = ("id", "organization", "organization_name", "user", "role", "created_at")
+        fields = ("id", "organization", "organization_name", "user", "role", "job_title", "created_at")
         read_only_fields = ("id", "organization", "user", "created_at")
 
 
@@ -264,3 +268,39 @@ class AuditLogSerializer(serializers.ModelSerializer):
         if not obj.actor:
             return "System"
         return obj.actor.get_full_name() or obj.actor.email or obj.actor.username
+
+
+class ProjectRoomPartnerSerializer(serializers.ModelSerializer):
+    organization_name = serializers.CharField(source="organization.name", read_only=True)
+
+    class Meta:
+        model = ProjectRoomPartner
+        fields = ("id", "project_room", "organization", "organization_name", "access_level", "can_upload", "can_comment", "can_view_pricing", "created_at", "updated_at")
+        read_only_fields = ("id", "project_room", "organization_name", "created_at", "updated_at")
+
+
+class ProjectRoomSerializer(serializers.ModelSerializer):
+    owner_organization_name = serializers.CharField(source="owner_organization.name", read_only=True)
+    opportunity_detail = OpportunitySerializer(source="opportunity", read_only=True)
+    partners = ProjectRoomPartnerSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = ProjectRoom
+        fields = ("id", "owner_organization", "owner_organization_name", "opportunity", "opportunity_detail", "name", "description", "status", "created_by", "partners", "created_at", "updated_at")
+        read_only_fields = ("id", "owner_organization", "created_by", "created_at", "updated_at")
+
+
+class AIMessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AIMessage
+        fields = ("id", "role", "content", "sources", "model", "provider", "created_at")
+        read_only_fields = fields
+
+
+class AIConversationSerializer(serializers.ModelSerializer):
+    messages = AIMessageSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = AIConversation
+        fields = ("id", "organization", "project_room", "opportunity", "title", "visibility", "created_by", "messages", "created_at", "updated_at")
+        read_only_fields = ("id", "organization", "created_by", "messages", "created_at", "updated_at")
