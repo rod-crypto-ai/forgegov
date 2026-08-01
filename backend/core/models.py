@@ -558,6 +558,116 @@ class ProjectRoomPartner(TimeStampedModel):
         indexes = [models.Index(fields=["organization", "project_room"], name="core_projec_organiz_5d07a0_idx")]
 
 
+class ProjectRoomTask(TimeStampedModel):
+    class Status(models.TextChoices):
+        TODO = "todo", "To Do"
+        IN_PROGRESS = "in_progress", "In Progress"
+        REVIEW = "review", "Review"
+        DONE = "done", "Done"
+
+    class Visibility(models.TextChoices):
+        INTERNAL = "internal", "Owner Company Only"
+        SHARED = "shared", "All Project Room Participants"
+
+    project_room = models.ForeignKey(ProjectRoom, on_delete=models.CASCADE, related_name="collaboration_tasks")
+    title = models.CharField(max_length=500)
+    description = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.TODO)
+    priority = models.CharField(max_length=20, default="medium")
+    visibility = models.CharField(max_length=20, choices=Visibility.choices, default=Visibility.SHARED)
+    assigned_to = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="project_room_tasks")
+    due_date = models.DateField(null=True, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_project_room_tasks")
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["status", "sort_order", "due_date", "id"]
+        indexes = [models.Index(fields=["project_room", "status", "visibility"], name="core_prtask_room_stat_vis_idx")]
+
+
+class ProjectRoomComment(TimeStampedModel):
+    class Visibility(models.TextChoices):
+        INTERNAL = "internal", "Owner Company Only"
+        SHARED = "shared", "All Project Room Participants"
+
+    project_room = models.ForeignKey(ProjectRoom, on_delete=models.CASCADE, related_name="comments")
+    task = models.ForeignKey(ProjectRoomTask, null=True, blank=True, on_delete=models.CASCADE, related_name="comments")
+    body = models.TextField()
+    visibility = models.CharField(max_length=20, choices=Visibility.choices, default=Visibility.SHARED)
+    mentions = models.JSONField(default=list, blank=True)
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="project_room_comments")
+
+    class Meta:
+        ordering = ["created_at"]
+        indexes = [models.Index(fields=["project_room", "visibility", "created_at"], name="core_prcomment_room_vis_idx")]
+
+
+class ProjectRoomNote(TimeStampedModel):
+    class Visibility(models.TextChoices):
+        INTERNAL = "internal", "Owner Company Only"
+        SHARED = "shared", "All Project Room Participants"
+
+    project_room = models.ForeignKey(ProjectRoom, on_delete=models.CASCADE, related_name="notes")
+    title = models.CharField(max_length=255)
+    body = models.TextField(blank=True)
+    visibility = models.CharField(max_length=20, choices=Visibility.choices, default=Visibility.INTERNAL)
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="project_room_notes")
+
+    class Meta:
+        ordering = ["-updated_at"]
+        indexes = [models.Index(fields=["project_room", "visibility", "-updated_at"], name="core_prnote_room_vis_idx")]
+
+
+class ProjectRoomFile(TimeStampedModel):
+    class Visibility(models.TextChoices):
+        INTERNAL = "internal", "Owner Company Only"
+        SHARED = "shared", "All Project Room Participants"
+        PRICING = "pricing", "Pricing Authorized Participants"
+
+    project_room = models.ForeignKey(ProjectRoom, on_delete=models.CASCADE, related_name="collaboration_files")
+    name = models.CharField(max_length=500)
+    url = models.URLField(max_length=2000)
+    description = models.TextField(blank=True)
+    visibility = models.CharField(max_length=20, choices=Visibility.choices, default=Visibility.SHARED)
+    version = models.PositiveIntegerField(default=1)
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="project_room_files")
+
+    class Meta:
+        ordering = ["-updated_at"]
+        constraints = [models.UniqueConstraint(fields=("project_room", "name", "version"), name="unique_project_room_file_version")]
+        indexes = [models.Index(fields=["project_room", "visibility", "-updated_at"], name="core_prfile_room_vis_idx")]
+
+
+class ProjectRoomActivity(TimeStampedModel):
+    project_room = models.ForeignKey(ProjectRoom, on_delete=models.CASCADE, related_name="activity")
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="project_room_activity")
+    action = models.CharField(max_length=120)
+    object_type = models.CharField(max_length=80, blank=True)
+    object_id = models.CharField(max_length=80, blank=True)
+    summary = models.CharField(max_length=500)
+    visibility = models.CharField(max_length=20, choices=ProjectRoomNote.Visibility.choices, default=ProjectRoomNote.Visibility.SHARED)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["project_room", "visibility", "-created_at"], name="core_practivity_room_vis_idx")]
+
+
+class CollaborationNotification(TimeStampedModel):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="collaboration_notifications")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE, related_name="forgegov_collaboration_notifications")
+    project_room = models.ForeignKey(ProjectRoom, null=True, blank=True, on_delete=models.CASCADE, related_name="notifications")
+    title = models.CharField(max_length=255)
+    message = models.TextField(blank=True)
+    kind = models.CharField(max_length=60, default="project_room")
+    read = models.BooleanField(default=False)
+    link = models.CharField(max_length=500, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["organization", "user", "read", "-created_at"], name="core_collabnotif_org_user_idx")]
+
+
 class AIConversation(TimeStampedModel):
     class Visibility(models.TextChoices):
         INTERNAL = "internal", "Owner Company Only"

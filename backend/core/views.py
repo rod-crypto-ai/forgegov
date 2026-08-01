@@ -44,6 +44,12 @@ from .models import (
     TeamingRequest,
     ProjectRoom,
     ProjectRoomPartner,
+    ProjectRoomTask,
+    ProjectRoomComment,
+    ProjectRoomNote,
+    ProjectRoomFile,
+    ProjectRoomActivity,
+    CollaborationNotification,
     AIConversation,
     AIMessage,
     OpportunityDocument,
@@ -72,6 +78,12 @@ from .serializers import (
     TeamingRequestSerializer,
     ProjectRoomSerializer,
     ProjectRoomPartnerSerializer,
+    ProjectRoomTaskSerializer,
+    ProjectRoomCommentSerializer,
+    ProjectRoomNoteSerializer,
+    ProjectRoomFileSerializer,
+    ProjectRoomActivitySerializer,
+    CollaborationNotificationSerializer,
     AIConversationSerializer,
     OpportunityDocumentSerializer,
     OpportunityAnalysisSerializer,
@@ -89,7 +101,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.2.0"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.3.0"})
 
 
 @api_view(["GET"])
@@ -1153,3 +1165,105 @@ def opportunity_document_question(request, source_id: str):
     result = ask_ai(message=f"Answer this question only from the authorized document excerpts. Cite exact [DOC-*] labels. If unsupported, say so.\n\nQUESTION\n{question}\n\nDOCUMENT EXCERPTS\n{context}", history=[], organization=organization)
     result["sources"] = sources
     return Response(result)
+
+
+def _room_access(request, room_id):
+    organization = _request_organization(request)
+    room = ProjectRoom.objects.filter(Q(owner_organization=organization) | Q(partners__organization=organization), pk=room_id).select_related("owner_organization").distinct().first()
+    if not room:
+        return None, None, False
+    owner = room.owner_organization_id == organization.id
+    partner = None if owner else ProjectRoomPartner.objects.filter(project_room=room, organization=organization).first()
+    return room, partner, owner
+
+def _visible_room_queryset(queryset, room, owner):
+    return queryset if owner else queryset.filter(visibility="shared")
+
+def _log_room_activity(room, actor, action, summary, *, visibility="shared", object_type="", object_id="", metadata=None):
+    return ProjectRoomActivity.objects.create(project_room=room, actor=actor, action=action, summary=summary, visibility=visibility, object_type=object_type, object_id=str(object_id or ""), metadata=metadata or {})
+
+@api_view(["GET", "POST"])
+def project_room_tasks(request, room_id):
+    room, partner, owner = _room_access(request, room_id)
+    if not room: return Response({"detail":"Project Room not found."}, status=404)
+    if request.method == "GET":
+        qs=_visible_room_queryset(ProjectRoomTask.objects.filter(project_room=room).select_related("assigned_to","created_by"), room, owner)
+        return Response(ProjectRoomTaskSerializer(qs, many=True).data)
+    visibility=request.data.get("visibility","shared")
+    if visibility=="internal" and not owner: return Response({"detail":"Partner companies cannot create internal tasks."}, status=403)
+    serializer=ProjectRoomTaskSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    task=serializer.save(project_room=room, created_by=request.user)
+    _log_room_activity(room,request.user,"task_created",f"Created task: {task.title}",visibility=visibility,object_type="task",object_id=task.id)
+    return Response(ProjectRoomTaskSerializer(task).data,status=201)
+
+@api_view(["PATCH", "DELETE"])
+def project_room_task_detail(request, room_id, task_id):
+    room, partner, owner=_room_access(request,room_id)
+    if not room: return Response({"detail":"Project Room not found."},status=404)
+    task=ProjectRoomTask.objects.filter(project_room=room,pk=task_id).first()
+    if not task or (not owner and task.visibility!="shared"): return Response({"detail":"Task not found."},status=404)
+    if request.method=="DELETE":
+        if not owner and task.created_by_id!=request.user.id: return Response({"detail":"Only the owner company or task creator can delete this task."},status=403)
+        task.delete(); return Response(status=204)
+    serializer=ProjectRoomTaskSerializer(task,data=request.data,partial=True); serializer.is_valid(raise_exception=True); task=serializer.save()
+    _log_room_activity(room,request.user,"task_updated",f"Updated task: {task.title}",visibility=task.visibility,object_type="task",object_id=task.id)
+    return Response(ProjectRoomTaskSerializer(task).data)
+
+@api_view(["GET", "POST"])
+def project_room_comments(request, room_id):
+    room, partner, owner=_room_access(request,room_id)
+    if not room: return Response({"detail":"Project Room not found."},status=404)
+    if request.method=="GET":
+        qs=_visible_room_queryset(ProjectRoomComment.objects.filter(project_room=room).select_related("author"),room,owner)
+        return Response(ProjectRoomCommentSerializer(qs,many=True).data)
+    if partner and not partner.can_comment: return Response({"detail":"This company cannot comment in this room."},status=403)
+    visibility=request.data.get("visibility","shared")
+    if visibility=="internal" and not owner: return Response({"detail":"Partner companies cannot create internal comments."},status=403)
+    serializer=ProjectRoomCommentSerializer(data=request.data); serializer.is_valid(raise_exception=True); comment=serializer.save(project_room=room,author=request.user)
+    _log_room_activity(room,request.user,"comment_added","Added a project comment",visibility=visibility,object_type="comment",object_id=comment.id)
+    return Response(ProjectRoomCommentSerializer(comment).data,status=201)
+
+@api_view(["GET", "POST"])
+def project_room_notes(request, room_id):
+    room, partner, owner=_room_access(request,room_id)
+    if not room: return Response({"detail":"Project Room not found."},status=404)
+    if request.method=="GET":
+        qs=_visible_room_queryset(ProjectRoomNote.objects.filter(project_room=room).select_related("author"),room,owner)
+        return Response(ProjectRoomNoteSerializer(qs,many=True).data)
+    visibility=request.data.get("visibility","internal")
+    if visibility=="internal" and not owner: return Response({"detail":"Partner companies cannot create internal notes."},status=403)
+    serializer=ProjectRoomNoteSerializer(data=request.data); serializer.is_valid(raise_exception=True); note=serializer.save(project_room=room,author=request.user)
+    _log_room_activity(room,request.user,"note_created",f"Created note: {note.title}",visibility=visibility,object_type="note",object_id=note.id)
+    return Response(ProjectRoomNoteSerializer(note).data,status=201)
+
+@api_view(["GET", "POST"])
+def project_room_files(request, room_id):
+    room, partner, owner=_room_access(request,room_id)
+    if not room: return Response({"detail":"Project Room not found."},status=404)
+    if request.method=="GET":
+        qs=ProjectRoomFile.objects.filter(project_room=room).select_related("uploaded_by")
+        if not owner:
+            allowed=["shared"] + (["pricing"] if partner and partner.can_view_pricing else [])
+            qs=qs.filter(visibility__in=allowed)
+        return Response(ProjectRoomFileSerializer(qs,many=True).data)
+    if partner and not partner.can_upload: return Response({"detail":"This company cannot add files to this room."},status=403)
+    visibility=request.data.get("visibility","shared")
+    if visibility in {"internal","pricing"} and not owner: return Response({"detail":"Only the owner company can create restricted files."},status=403)
+    serializer=ProjectRoomFileSerializer(data=request.data); serializer.is_valid(raise_exception=True); file=serializer.save(project_room=room,uploaded_by=request.user)
+    _log_room_activity(room,request.user,"file_added",f"Added file: {file.name}",visibility="internal" if visibility=="pricing" else visibility,object_type="file",object_id=file.id)
+    return Response(ProjectRoomFileSerializer(file).data,status=201)
+
+@api_view(["GET"])
+def project_room_activity(request, room_id):
+    room, partner, owner=_room_access(request,room_id)
+    if not room: return Response({"detail":"Project Room not found."},status=404)
+    qs=_visible_room_queryset(ProjectRoomActivity.objects.filter(project_room=room).select_related("actor"),room,owner)[:200]
+    return Response(ProjectRoomActivitySerializer(qs,many=True).data)
+
+class CollaborationNotificationViewSet(viewsets.ModelViewSet):
+    serializer_class=CollaborationNotificationSerializer
+    http_method_names=["get","patch","head","options"]
+    def get_queryset(self):
+        organization=_request_organization(self.request)
+        return CollaborationNotification.objects.filter(organization=organization).filter(Q(user=self.request.user)|Q(user__isnull=True))

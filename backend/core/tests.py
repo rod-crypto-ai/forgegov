@@ -23,7 +23,7 @@ from .integrations import (
     upsert_sam_opportunity,
 )
 from .ai import live_web_status
-from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Vendor
+from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile
 
 User = get_user_model()
 
@@ -74,13 +74,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.0.3")
+        self.assertEqual(response.json()["version"], "2.3.0")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.0.3")
+        self.assertEqual(response.json()["version"], "2.3.0")
 
 
 class RouterRegressionTests(TestCase):
@@ -884,3 +884,53 @@ class DocumentIntelligenceUnitTests(SimpleTestCase):
         from .document_intelligence import DocumentIngestionError, _validate_public_url
         with self.assertRaises(DocumentIngestionError):
             _validate_public_url("http://127.0.0.1:8000/private")
+
+
+class ProjectRoomCollaborationSecurityTests(TestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(username="room-owner@example.com", email="room-owner@example.com", password="StrongPass!234")
+        self.partner_user = User.objects.create_user(username="partner@example.com", email="partner@example.com", password="StrongPass!234")
+        self.outsider = User.objects.create_user(username="outsider@example.com", email="outsider@example.com", password="StrongPass!234")
+        self.owner_org = Organization.objects.create(name="Prime Company", slug="prime-company")
+        self.partner_org = Organization.objects.create(name="Partner Company", slug="partner-company")
+        self.outsider_org = Organization.objects.create(name="Outside Company", slug="outside-company")
+        Membership.objects.create(user=self.owner, organization=self.owner_org, role=Membership.Role.OWNER)
+        Membership.objects.create(user=self.partner_user, organization=self.partner_org, role=Membership.Role.OWNER)
+        Membership.objects.create(user=self.outsider, organization=self.outsider_org, role=Membership.Role.OWNER)
+        self.room = ProjectRoom.objects.create(owner_organization=self.owner_org, name="Secure Pursuit", created_by=self.owner)
+        ProjectRoomPartner.objects.create(project_room=self.room, organization=self.partner_org, can_upload=True, can_comment=True, can_view_pricing=False)
+        self.internal_task = ProjectRoomTask.objects.create(project_room=self.room, title="Prime-only pricing review", visibility="internal", created_by=self.owner)
+        self.shared_task = ProjectRoomTask.objects.create(project_room=self.room, title="Shared technical draft", visibility="shared", created_by=self.owner)
+        ProjectRoomNote.objects.create(project_room=self.room, title="Internal strategy", visibility="internal", author=self.owner)
+        ProjectRoomNote.objects.create(project_room=self.room, title="Shared minutes", visibility="shared", author=self.owner)
+        ProjectRoomFile.objects.create(project_room=self.room, name="technical.pdf", url="https://example.com/technical.pdf", visibility="shared", uploaded_by=self.owner)
+        ProjectRoomFile.objects.create(project_room=self.room, name="pricing.xlsx", url="https://example.com/pricing.xlsx", visibility="pricing", uploaded_by=self.owner)
+
+    def client_for(self, user):
+        client = APIClient(); client.force_authenticate(user); return client
+
+    def test_partner_only_sees_shared_tasks_and_notes(self):
+        client = self.client_for(self.partner_user)
+        tasks = client.get(f"/api/project-rooms/{self.room.id}/tasks/")
+        notes = client.get(f"/api/project-rooms/{self.room.id}/notes/")
+        self.assertEqual(tasks.status_code, 200)
+        self.assertEqual([row["title"] for row in tasks.json()], ["Shared technical draft"])
+        self.assertEqual([row["title"] for row in notes.json()], ["Shared minutes"])
+
+    def test_partner_without_pricing_permission_cannot_see_pricing_file(self):
+        response = self.client_for(self.partner_user).get(f"/api/project-rooms/{self.room.id}/files/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row["name"] for row in response.json()], ["technical.pdf"])
+
+    def test_outsider_cannot_access_room_collaboration(self):
+        response = self.client_for(self.outsider).get(f"/api/project-rooms/{self.room.id}/tasks/")
+        self.assertEqual(response.status_code, 404)
+
+    def test_partner_cannot_create_internal_task(self):
+        response = self.client_for(self.partner_user).post(f"/api/project-rooms/{self.room.id}/tasks/", {"title":"Hidden task","visibility":"internal"}, format="json")
+        self.assertEqual(response.status_code, 403)
+
+    def test_owner_sees_internal_and_shared_records(self):
+        response = self.client_for(self.owner).get(f"/api/project-rooms/{self.room.id}/tasks/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual({row["title"] for row in response.json()}, {"Prime-only pricing review", "Shared technical draft"})

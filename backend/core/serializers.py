@@ -26,6 +26,12 @@ from .models import (
     Vendor,
     ProjectRoom,
     ProjectRoomPartner,
+    ProjectRoomTask,
+    ProjectRoomComment,
+    ProjectRoomNote,
+    ProjectRoomFile,
+    ProjectRoomActivity,
+    CollaborationNotification,
     AIConversation,
     AIMessage,
     OpportunityDocument,
@@ -330,3 +336,57 @@ class OpportunityAnalysisSerializer(serializers.ModelSerializer):
         model = OpportunityAnalysis
         fields = ("id", "opportunity", "project_room", "analysis_type", "content", "sources", "model", "input_fingerprint", "created_at", "updated_at")
         read_only_fields = fields
+
+
+class ProjectRoomTaskSerializer(serializers.ModelSerializer):
+    assigned_to_name = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
+    class Meta:
+        model = ProjectRoomTask
+        fields = "__all__"
+        read_only_fields = ("id", "project_room", "created_by", "created_at", "updated_at")
+    def get_assigned_to_name(self, obj):
+        return obj.assigned_to.get_full_name() or obj.assigned_to.email if obj.assigned_to else ""
+    def get_created_by_name(self, obj):
+        return obj.created_by.get_full_name() or obj.created_by.email if obj.created_by else ""
+
+class ProjectRoomCommentSerializer(serializers.ModelSerializer):
+    author_name = serializers.SerializerMethodField()
+    class Meta:
+        model = ProjectRoomComment
+        fields = "__all__"
+        read_only_fields = ("id", "project_room", "author", "created_at", "updated_at")
+    def get_author_name(self, obj):
+        return obj.author.get_full_name() or obj.author.email if obj.author else "Former user"
+
+class ProjectRoomNoteSerializer(serializers.ModelSerializer):
+    author_name = serializers.SerializerMethodField()
+    class Meta:
+        model = ProjectRoomNote
+        fields = "__all__"
+        read_only_fields = ("id", "project_room", "author", "created_at", "updated_at")
+    def get_author_name(self, obj):
+        return obj.author.get_full_name() or obj.author.email if obj.author else "Former user"
+
+class ProjectRoomFileSerializer(serializers.ModelSerializer):
+    uploaded_by_name = serializers.SerializerMethodField()
+    class Meta:
+        model = ProjectRoomFile
+        fields = "__all__"
+        read_only_fields = ("id", "project_room", "uploaded_by", "created_at", "updated_at")
+    def get_uploaded_by_name(self, obj):
+        return obj.uploaded_by.get_full_name() or obj.uploaded_by.email if obj.uploaded_by else "Former user"
+
+class ProjectRoomActivitySerializer(serializers.ModelSerializer):
+    actor_name = serializers.SerializerMethodField()
+    class Meta:
+        model = ProjectRoomActivity
+        fields = "__all__"
+    def get_actor_name(self, obj):
+        return obj.actor.get_full_name() or obj.actor.email if obj.actor else "System"
+
+class CollaborationNotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CollaborationNotification
+        fields = "__all__"
+        read_only_fields = ("id", "organization", "user", "created_at", "updated_at")

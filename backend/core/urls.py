@@ -33,6 +33,7 @@ from .views import (
     VendorViewSet,
     ProjectRoomViewSet,
     AIConversationViewSet,
+    CollaborationNotificationViewSet,
     dashboard_summary,
     health,
     integration_status,
@@ -66,6 +67,12 @@ from .views import (
     opportunity_documents,
     opportunity_briefing,
     opportunity_document_question,
+    project_room_tasks,
+    project_room_task_detail,
+    project_room_comments,
+    project_room_notes,
+    project_room_files,
+    project_room_activity,
 )
 
 router = DefaultRouter()
@@ -88,6 +95,7 @@ router.register("categories", CategoryViewSet, basename="category")
 router.register("alerts", IntelligenceAlertViewSet, basename="intelligence-alert")
 router.register("project-rooms", ProjectRoomViewSet, basename="project-room")
 router.register("ai/conversations", AIConversationViewSet, basename="ai-conversation")
+router.register("collaboration/notifications", CollaborationNotificationViewSet, basename="collaboration-notification")
 
 urlpatterns = [
     path("auth/csrf/", csrf_token),
@@ -123,6 +131,12 @@ urlpatterns = [
     path("intelligence/partners/", partner_discovery),
     path("workflow/opportunity-to-pipeline/", add_opportunity_to_pipeline),
     path("workflow/pipeline/<int:pipeline_id>/create-pursuit/", pipeline_to_pursuit),
+    path("project-rooms/<int:room_id>/tasks/", project_room_tasks),
+    path("project-rooms/<int:room_id>/tasks/<int:task_id>/", project_room_task_detail),
+    path("project-rooms/<int:room_id>/comments/", project_room_comments),
+    path("project-rooms/<int:room_id>/notes/", project_room_notes),
+    path("project-rooms/<int:room_id>/files/", project_room_files),
+    path("project-rooms/<int:room_id>/activity/", project_room_activity),
     path("workflow/saved-searches/", create_saved_search),
     path("workflow/saved-searches/evaluate/", run_saved_search_alerts),
     path("workflow/tasks/", create_workspace_task),
