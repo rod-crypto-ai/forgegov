@@ -74,13 +74,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.4.1")
+        self.assertEqual(response.json()["version"], "2.4.2")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.4.1")
+        self.assertEqual(response.json()["version"], "2.4.2")
 
 
 class RouterRegressionTests(TestCase):
@@ -189,6 +189,7 @@ class SamIntegrationTests(TestCase):
 
         self.assertEqual(result["persisted"]["created"], 1)
         self.assertEqual(result["total_records"], 1)
+        self.assertEqual(len(result["opportunities"]), 1)
         self.assertEqual(result["limit"], 25)
         self.assertEqual(result["offset"], 0)
         self.assertEqual(result["opportunities"][0]["source_url"], "https://sam.gov/opp/abc-123/view")
@@ -241,6 +242,7 @@ class SamContractAwardsIntegrationTests(TestCase):
         result = search_sam_contract_awards(record_type="contracts", keyword="JLTV", limit=1)
 
         self.assertEqual(result["total_records"], 1)
+        self.assertEqual(len(result["results"]), 1)
         self.assertEqual(result["results"][0]["piid"], "W56HZV26C0001")
         self.assertEqual(result["results"][0]["recipient_name"], "HOWARD DYNAMICS LLC")
         params = mock_get.call_args.kwargs["params"]
@@ -485,11 +487,11 @@ class ExpansionIntegrationTests(AuthenticatedApiTestCase):
         self.assertEqual(record["sub_entity_uei"], "SUBUEI456")
         self.assertEqual(mock_get.call_args.kwargs["params"]["referencedIDVPIID"], "W52P1J18DA075")
 
-    @override_settings(SBA_SUBNET_URL="https://legacy.sba.gov/federal-contracting/contracting-guide/prime-subcontracting/subcontracting-opportunities", SBA_SUBNET_FALLBACK_URL="")
+    @override_settings(SBA_SUBNET_URL="https://www.sba.gov/federal-contracting/contracting-guide/prime-subcontracting/subcontracting-opportunities", SBA_SUBNET_FALLBACK_URL="")
     @patch("core.integrations.requests.get")
     def test_sba_subnet_parser_separates_title_and_description(self, mock_get):
         response = Mock()
-        response.url = "https://legacy.sba.gov/federal-contracting/contracting-guide/prime-subcontracting/subcontracting-opportunities"
+        response.url = "https://www.sba.gov/federal-contracting/contracting-guide/prime-subcontracting/subcontracting-opportunities"
         response.text = """
             <table><tbody><tr>
               <td><a href='/subnet/opportunity/123'>JLTV Maintenance Support</a> Regional field maintenance subcontract</td>
@@ -501,11 +503,11 @@ class ExpansionIntegrationTests(AuthenticatedApiTestCase):
 
         result = search_sba_subnet_opportunities(query="maintenance", state="TX")
 
-        self.assertEqual(result["total_records"], 1)
+        self.assertIsNone(result["total_records"])
         record = result["results"][0]
         self.assertEqual(record["title"], "JLTV Maintenance Support")
         self.assertEqual(record["description"], "Regional field maintenance subcontract")
-        self.assertEqual(record["source_url"], "https://legacy.sba.gov/subnet/opportunity/123")
+        self.assertEqual(record["source_url"], "https://www.sba.gov/subnet/opportunity/123")
 
     @override_settings(SAM_GOV_API_KEY="test-key")
     @patch("core.integrations.requests.get")
@@ -787,7 +789,7 @@ class SubnetFallbackTests(TestCase):
         self.assertEqual(result["results"][0]["title"], "Current SBA opportunity")
         self.assertEqual(
             mock_get.call_args_list[0].args[0],
-            "https://legacy.sba.gov/federal-contracting/contracting-guide/prime-subcontracting/subcontracting-opportunities",
+            "https://www.sba.gov/federal-contracting/contracting-guide/prime-subcontracting/subcontracting-opportunities",
         )
 
     @override_settings(

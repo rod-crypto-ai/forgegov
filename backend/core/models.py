@@ -119,6 +119,9 @@ class PipelineItem(TimeStampedModel):
         validators=[MinValueValidator(0), MaxValueValidator(100)],
     )
     next_action = models.CharField(max_length=500, blank=True)
+    follow_up_date = models.DateField(null=True, blank=True)
+    priority = models.CharField(max_length=20, default="medium")
+    assigned_team = models.CharField(max_length=120, blank=True)
     notes = models.TextField(blank=True)
 
     class Meta:
@@ -535,6 +538,23 @@ class ProjectRoom(TimeStampedModel):
     def __str__(self):
         return self.name
 
+
+
+
+class ProjectRoomMember(TimeStampedModel):
+    class Role(models.TextChoices):
+        MANAGER = "manager", "Manager"
+        CONTRIBUTOR = "contributor", "Contributor"
+        VIEWER = "viewer", "Viewer"
+
+    project_room = models.ForeignKey(ProjectRoom, on_delete=models.CASCADE, related_name="members")
+    membership = models.ForeignKey(Membership, on_delete=models.CASCADE, related_name="project_room_memberships")
+    role = models.CharField(max_length=20, choices=Role.choices, default=Role.CONTRIBUTOR)
+    added_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="added_project_room_members")
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("project_room", "membership"), name="unique_project_room_member")]
+        indexes = [models.Index(fields=["project_room", "role"], name="core_prmember_room_role_idx")]
 
 class ProjectRoomPartner(TimeStampedModel):
     class AccessLevel(models.TextChoices):

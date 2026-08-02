@@ -45,6 +45,8 @@ from .models import (
     TeamingRequest,
     ProjectRoom,
     ProjectRoomPartner,
+    ProjectRoomMember,
+    Membership,
     ProjectRoomTask,
     ProjectRoomComment,
     ProjectRoomNote,
@@ -82,6 +84,8 @@ from .serializers import (
     TeamingRequestSerializer,
     ProjectRoomSerializer,
     ProjectRoomPartnerSerializer,
+    ProjectRoomMemberSerializer,
+    MembershipSerializer,
     ProjectRoomTaskSerializer,
     ProjectRoomCommentSerializer,
     ProjectRoomNoteSerializer,
@@ -108,7 +112,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.4.1"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.4.2"})
 
 
 @api_view(["GET"])
@@ -1214,6 +1218,48 @@ def _visible_room_queryset(queryset, room, owner):
 
 def _log_room_activity(room, actor, action, summary, *, visibility="shared", object_type="", object_id="", metadata=None):
     return ProjectRoomActivity.objects.create(project_room=room, actor=actor, action=action, summary=summary, visibility=visibility, object_type=object_type, object_id=str(object_id or ""), metadata=metadata or {})
+
+
+@api_view(["GET", "POST", "PATCH", "DELETE"])
+def project_room_access_management(request, room_id):
+    room, partner, owner = _room_access(request, room_id)
+    if not room:
+        return Response({"detail": "Project Room not found."}, status=404)
+    organization = _request_organization(request)
+    if request.method == "GET":
+        internal_members = ProjectRoomMember.objects.filter(project_room=room).select_related("membership__user", "membership") if owner else ProjectRoomMember.objects.none()
+        partners = ProjectRoomPartner.objects.filter(project_room=room).select_related("organization")
+        available_members = Membership.objects.filter(organization=organization).select_related("user") if owner else Membership.objects.none()
+        return Response({
+            "owner": owner,
+            "owner_organization": room.owner_organization_id,
+            "members": ProjectRoomMemberSerializer(internal_members, many=True).data,
+            "available_members": MembershipSerializer(available_members, many=True).data,
+            "partners": ProjectRoomPartnerSerializer(partners, many=True).data,
+        })
+    if not owner:
+        return Response({"detail": "Only the owning company can manage room access."}, status=403)
+    kind = str(request.data.get("kind") or "member")
+    if kind == "member":
+        membership_id = request.query_params.get("membership") if request.method == "DELETE" else request.data.get("membership")
+        membership = Membership.objects.filter(pk=membership_id, organization=organization).first()
+        if not membership:
+            return Response({"detail": "Workspace member not found."}, status=404)
+        if request.method == "DELETE":
+            ProjectRoomMember.objects.filter(project_room=room, membership=membership).delete()
+            return Response(status=204)
+        row, _ = ProjectRoomMember.objects.update_or_create(project_room=room, membership=membership, defaults={"role": request.data.get("role", "contributor"), "added_by": request.user})
+        return Response(ProjectRoomMemberSerializer(row).data, status=201)
+    partner_org_id = request.query_params.get("organization") if request.method == "DELETE" else request.data.get("organization")
+    partner_row = ProjectRoomPartner.objects.filter(project_room=room, organization_id=partner_org_id).first()
+    if not partner_row:
+        return Response({"detail": "Partner company is not in this room."}, status=404)
+    if request.method == "DELETE":
+        partner_row.delete()
+        return Response(status=204)
+    serializer = ProjectRoomPartnerSerializer(partner_row, data=request.data, partial=True)
+    serializer.is_valid(raise_exception=True)
+    return Response(ProjectRoomPartnerSerializer(serializer.save()).data)
 
 @api_view(["GET", "POST"])
 def project_room_tasks(request, room_id):

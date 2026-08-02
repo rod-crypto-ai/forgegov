@@ -1160,7 +1160,7 @@ def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: i
     cache_key=f"sba-subnet:v4:{normalized_query}:{normalized_state}:{page}:{page_size}"; snapshot_key=f"sba-subnet:v4:last-good:{page}:{page_size}"
     # SBA's current public listings remain available on its official legacy host.
     # Keep that URL first even when an existing .env still contains the prior www.sba.gov URL.
-    official_listing_url = "https://legacy.sba.gov/federal-contracting/contracting-guide/prime-subcontracting/subcontracting-opportunities"
+    official_listing_url = "https://www.sba.gov/federal-contracting/contracting-guide/prime-subcontracting/subcontracting-opportunities"
     official_landing_url = "https://subnet.sba.gov/client/dsp_Landing.cfm"
     source_urls=[]
     for candidate in (
@@ -1171,7 +1171,7 @@ def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: i
     ):
         candidate=str(candidate or "").strip()
         if candidate and candidate not in source_urls: source_urls.append(candidate)
-    headers={"User-Agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ForgeGov/2.4.1","Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language":"en-US,en;q=0.9","Cache-Control":"no-cache"}
+    headers={"User-Agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ForgeGov/2.4.2","Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language":"en-US,en;q=0.9","Cache-Control":"no-cache"}
 
     def parse_page(html:str,response_url:str)->tuple[list[dict[str,Any]],bool]:
         soup=BeautifulSoup(html,"html.parser"); results=[]
@@ -1224,19 +1224,32 @@ def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: i
             if matches(row): rows.append(row)
         start=page*page_size; sliced=rows[start:start+page_size+1]; return sliced[:page_size],len(sliced)>page_size
 
+    # SBA controls its own page size (currently about 10). ForgeGov combines two official
+    # source pages into one 20-record application page and deduplicates results.
     for source_index,source_url in enumerate(source_urls):
-        for attempt in range(2):
-            try:
-                response=requests.get(source_url,params=params,timeout=18,headers=headers,allow_redirects=True); response.raise_for_status(); parsed,has_next=parse_page(response.text,response.url)
-                if parsed: persist(parsed)
-                results=[row for row in parsed if matches(row)]
-                if not parsed and "Subcontracting Opportunity" not in response.text: raise IntegrationError("SBA returned a page without SUBNet listings.")
-                payload={"total_records":len(results),"page_size":page_size,"results":results[:page_size],"source_url":response.url,"source_name":"SBA SUBNet live directory" if source_index==0 else "Official SBA fallback","page":page,"has_next":has_next,"status":"live","reachable":True,"warning":""}
-                cache.set(cache_key,payload,43200)
-                if not normalized_query and normalized_state in {"","all"}: cache.set(snapshot_key,payload,172800)
-                return payload
-            except (requests.RequestException,IntegrationError):
-                if attempt<1: time.sleep(.6)
+        try:
+            combined=[]; any_next=False; response_url=source_url
+            source_pages=[page*2,page*2+1] if "sba.gov/federal-contracting" in source_url else [page]
+            for source_page in source_pages:
+                source_params=dict(params); source_params["page"]=source_page
+                response=requests.get(source_url,params=source_params,timeout=18,headers=headers,allow_redirects=True)
+                response.raise_for_status(); response_url=response.url
+                parsed,source_has_next=parse_page(response.text,response.url)
+                combined.extend(parsed); any_next=any_next or source_has_next
+            deduped=[]; seen=set()
+            for row in combined:
+                key=row.get("source_id") or row.get("source_url") or row.get("title")
+                if key in seen: continue
+                seen.add(key); deduped.append(row)
+            if deduped: persist(deduped)
+            results=[row for row in deduped if matches(row)]
+            if not combined: raise IntegrationError("SBA returned a page without SUBNet listings.")
+            payload={"total_records":None,"page_size":page_size,"results":results[:page_size],"source_url":response_url,"source_name":"SBA SUBNet live directory" if source_index==0 else "Official SBA fallback","page":page,"has_next":any_next or len(results)>=page_size,"status":"live","reachable":True,"warning":""}
+            cache.set(cache_key,payload,43200)
+            if not normalized_query and normalized_state in {"","all"}: cache.set(snapshot_key,payload,172800)
+            return payload
+        except (requests.RequestException,IntegrationError):
+            continue
 
     searx=str(getattr(settings,"SEARXNG_URL","") or "").strip()
     if searx and bool(getattr(settings,"AI_WEB_SEARCH_ENABLED",True)):
@@ -1244,7 +1257,7 @@ def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: i
         if query.strip(): terms.append(query.strip())
         if state.strip() and state.strip().lower()!="all": terms.append(state.strip())
         try:
-            wr=requests.get(searx.rstrip("/")+"/search",params={"q":" ".join(terms),"format":"json","language":"en-US","safesearch":1},timeout=18,headers={"User-Agent":"ForgeGov/2.4.1"}); wr.raise_for_status(); rows=wr.json().get("results"); indexed=[]
+            wr=requests.get(searx.rstrip("/")+"/search",params={"q":" ".join(terms),"format":"json","language":"en-US","safesearch":1},timeout=18,headers={"User-Agent":"ForgeGov/2.4.2"}); wr.raise_for_status(); rows=wr.json().get("results"); indexed=[]
             if isinstance(rows,list):
                 for row in rows:
                     if not isinstance(row,dict): continue

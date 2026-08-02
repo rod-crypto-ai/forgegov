@@ -26,6 +26,7 @@ from .models import (
     Vendor,
     ProjectRoom,
     ProjectRoomPartner,
+    ProjectRoomMember,
     ProjectRoomTask,
     ProjectRoomComment,
     ProjectRoomNote,
@@ -92,11 +93,25 @@ class OpportunitySerializer(serializers.ModelSerializer):
 
 class PipelineItemSerializer(WorkspaceRelationshipValidationMixin, serializers.ModelSerializer):
     opportunity_detail = OpportunitySerializer(source="opportunity", read_only=True)
+    owner_name = serializers.SerializerMethodField()
 
     class Meta:
         model = PipelineItem
         fields = "__all__"
-        read_only_fields = ("id", "organization", "owner", "created_at", "updated_at")
+        read_only_fields = ("id", "organization", "created_at", "updated_at")
+
+    def get_owner_name(self, obj):
+        if not obj.owner:
+            return ""
+        return obj.owner.get_full_name() or obj.owner.email or obj.owner.username
+
+    def validate_owner(self, value):
+        if value is None:
+            return value
+        membership = active_membership(self.context["request"].user)
+        if not membership or not Membership.objects.filter(organization=membership.organization, user=value).exists():
+            raise serializers.ValidationError("Owner must be a member of this workspace.")
+        return value
 
 
 class PursuitSerializer(WorkspaceRelationshipValidationMixin, serializers.ModelSerializer):
@@ -280,6 +295,22 @@ class AuditLogSerializer(serializers.ModelSerializer):
         if not obj.actor:
             return "System"
         return obj.actor.get_full_name() or obj.actor.email or obj.actor.username
+
+
+class ProjectRoomMemberSerializer(serializers.ModelSerializer):
+    user_id = serializers.IntegerField(source="membership.user.id", read_only=True)
+    user_name = serializers.SerializerMethodField()
+    email = serializers.CharField(source="membership.user.email", read_only=True)
+    job_title = serializers.CharField(source="membership.job_title", read_only=True)
+
+    class Meta:
+        model = ProjectRoomMember
+        fields = ("id", "project_room", "membership", "user_id", "user_name", "email", "job_title", "role", "created_at", "updated_at")
+        read_only_fields = ("id", "project_room", "user_id", "user_name", "email", "job_title", "created_at", "updated_at")
+
+    def get_user_name(self, obj):
+        user = obj.membership.user
+        return user.get_full_name() or user.email or user.username
 
 
 class ProjectRoomPartnerSerializer(serializers.ModelSerializer):
