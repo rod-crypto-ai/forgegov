@@ -67,6 +67,7 @@ export function OpportunityBriefing({
   const [busy, setBusy] = useState("");
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
+  const [selectedUrls, setSelectedUrls] = useState<Set<string>>(()=>new Set(sourceDocuments.map(row=>row.url)));
   const [answerSources, setAnswerSources] = useState<
     { label: string; title: string; url?: string }[]
   >([]);
@@ -121,7 +122,7 @@ export function OpportunityBriefing({
     try {
       await apiPost(
         `/ai/opportunities/${encodeURIComponent(noticeId)}/documents/`,
-        { documents: sourceDocuments, opportunity },
+        { documents: sourceDocuments.filter(row=>selectedUrls.has(row.url)), opportunity },
       );
       await load();
       setMessage("Government documents were securely ingested and indexed.");
@@ -188,8 +189,7 @@ export function OpportunityBriefing({
             <span className="eyebrow">FORGEAI DOCUMENT INTELLIGENCE</span>
             <h2>Opportunity briefing</h2>
             <p>
-              Answers and reports are grounded in text extracted from authorized
-              solicitation files.
+              Start with the opportunity details immediately. Add selected solicitation files when you want deeper, cited document analysis.
             </p>
           </div>
           <Sparkles />
@@ -213,7 +213,7 @@ export function OpportunityBriefing({
         <button
           className="primary-button"
           onClick={() => void ingest()}
-          disabled={busy !== "" || !sourceDocuments.length}
+          disabled={busy !== "" || selectedUrls.size===0}
         >
           {busy === "ingest" ? (
             <LoaderCircle className="spin" size={16} />
@@ -226,6 +226,8 @@ export function OpportunityBriefing({
         </button>
 
         {message && <p className="inline-message">{message}</p>}
+
+        {sourceDocuments.length>0&&<div className="forgeai-source-selector"><div><strong>Select attachments to ingest</strong><small>{selectedUrls.size} selected</small></div>{sourceDocuments.map((document)=><label key={document.url}><input type="checkbox" checked={selectedUrls.has(document.url)} onChange={(event)=>setSelectedUrls(current=>{const next=new Set(current);if(event.target.checked)next.add(document.url);else next.delete(document.url);return next})}/><span>{document.name}</span></label>)}</div>}
 
         <div className="forgeai-document-status">
           {payload.documents.map((document) => (
@@ -268,7 +270,7 @@ export function OpportunityBriefing({
           {analysisTypes.map(([type, label]) => (
             <button
               key={type}
-              disabled={!ready || busy !== ""}
+              disabled={busy !== ""}
               onClick={() => void analyze(type)}
             >
               {busy === type ? (
@@ -285,24 +287,24 @@ export function OpportunityBriefing({
           <textarea
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
-            placeholder="Ask a question about the ingested solicitation documents…"
+            placeholder={ready?"Ask about the opportunity or its documents…":"Ask about the opportunity details…"}
           />
           <button
             className="primary-button"
-            disabled={!ready || busy !== "" || !question.trim()}
+            disabled={busy !== "" || !question.trim()}
           >
             {busy === "ask" ? (
               <LoaderCircle className="spin" size={16} />
             ) : (
               <Sparkles size={16} />
             )}{" "}
-            Ask documents
+            Ask ForgeAI
           </button>
         </form>
 
         {answer && (
           <article className="context-ai-answer">
-            <h3>Document-grounded answer</h3>
+            <div className="ai-answer-heading"><Sparkles size={18}/><div><h3>ForgeAI</h3><small>{ready?"Using opportunity + document context":"Using opportunity details"}</small></div></div>
             <div className="rich-description">{answer}</div>
             {answerSources.length > 0 && (
               <div className="ai-source-list contextual-source-list">

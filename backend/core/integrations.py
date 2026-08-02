@@ -807,6 +807,22 @@ def search_sam_contract_awards(
     return {"total_records": _safe_int(total, len(normalized)), "limit": params["limit"], "offset": params["offset"], "results": normalized}
 
 
+def _clean_attachment_name(name: Any, url: Any = "", *, fallback: str = "Government attachment") -> str:
+    from urllib.parse import unquote, urlparse
+    import re
+
+    raw = _safe_text(name, max_length=500).strip()
+    parsed_name = unquote(urlparse(str(url or "")).path.rsplit("/", 1)[-1]).strip()
+    candidates = [raw, parsed_name]
+    chosen = next((value for value in candidates if value and value.lower() not in {"download", "attachment", "file"}), fallback)
+    chosen = unquote(chosen).replace("+", " ")
+    chosen = re.sub(r"[\r\n\t]+", " ", chosen)
+    chosen = re.sub(r"\s{2,}", " ", chosen).strip(" ._-")
+    if not chosen:
+        chosen = fallback
+    return chosen[:500]
+
+
 def fetch_sam_opportunity_documents(notice_id: str) -> dict[str, Any]:
     """Return public SAM attachment metadata and fetch the protected description when available."""
     if not settings.SAM_GOV_API_KEY:
@@ -836,11 +852,12 @@ def fetch_sam_opportunity_documents(notice_id: str) -> dict[str, Any]:
     for index, link in enumerate(links if isinstance(links, list) else []):
         if isinstance(link, dict):
             url = link.get("url") or link.get("link") or link.get("href") or ""
-            name = link.get("name") or link.get("title") or link.get("filename") or f"Attachment {index + 1}"
+            name = link.get("name") or link.get("title") or link.get("filename") or link.get("description")
         else:
-            url, name = str(link), f"Attachment {index + 1}"
+            url, name = str(link), ""
         if url:
-            documents.append({"name": name, "url": url, "source": "sam.gov", "preview_available": url.lower().endswith(".pdf")})
+            clean_name = _clean_attachment_name(name, url, fallback=f"Solicitation attachment {index + 1}")
+            documents.append({"name": clean_name, "url": url, "source": "sam.gov", "preview_available": url.lower().split("?", 1)[0].endswith((".pdf", ".txt", ".html", ".htm"))})
     return {"notice_id": notice_id, "description": description, "documents": documents, "source_url": opportunity.source_url if opportunity else ""}
 
 
@@ -1154,7 +1171,7 @@ def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: i
     ):
         candidate=str(candidate or "").strip()
         if candidate and candidate not in source_urls: source_urls.append(candidate)
-    headers={"User-Agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ForgeGov/2.0.3","Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language":"en-US,en;q=0.9","Cache-Control":"no-cache"}
+    headers={"User-Agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ForgeGov/2.4.1","Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language":"en-US,en;q=0.9","Cache-Control":"no-cache"}
 
     def parse_page(html:str,response_url:str)->tuple[list[dict[str,Any]],bool]:
         soup=BeautifulSoup(html,"html.parser"); results=[]
@@ -1227,7 +1244,7 @@ def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: i
         if query.strip(): terms.append(query.strip())
         if state.strip() and state.strip().lower()!="all": terms.append(state.strip())
         try:
-            wr=requests.get(searx.rstrip("/")+"/search",params={"q":" ".join(terms),"format":"json","language":"en-US","safesearch":1},timeout=18,headers={"User-Agent":"ForgeGov/2.0.3"}); wr.raise_for_status(); rows=wr.json().get("results"); indexed=[]
+            wr=requests.get(searx.rstrip("/")+"/search",params={"q":" ".join(terms),"format":"json","language":"en-US","safesearch":1},timeout=18,headers={"User-Agent":"ForgeGov/2.4.1"}); wr.raise_for_status(); rows=wr.json().get("results"); indexed=[]
             if isinstance(rows,list):
                 for row in rows:
                     if not isinstance(row,dict): continue
@@ -1235,9 +1252,12 @@ def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: i
                     if "sba.gov/opportunity/" not in href.lower() or not title: continue
                     identity=sha1(f"{href}|{title}".encode()).hexdigest()[:20]
                     indexed.append({"source_id":f"sba-subnet:{identity}","title":title,"prime_contractor":"","description":_safe_text(row.get("content"),max_length=4000),"closing_date":"","performance_start":"","place_of_performance":state.strip(),"naics":"","point_of_contact":"","source_url":href})
-                    if len(indexed)>=10: break
+                    if len(indexed)>=page_size * (page + 1): break
             if indexed:
-                persist(indexed); return {"total_records":len(indexed),"results":indexed,"source_url":str(getattr(settings,"SBA_SUBNET_URL","") or ""),"source_name":"SBA opportunity web index","page":0,"has_next":False,"status":"indexed","reachable":False,"warning":"Direct SBA directory access is reconnecting. Showing official SBA opportunity pages discovered through live web search."}
+                persist(indexed)
+                start = page * page_size
+                page_rows = indexed[start:start + page_size]
+                return {"total_records":len(indexed),"page_size":page_size,"results":page_rows,"source_url":str(getattr(settings,"SBA_SUBNET_URL","") or ""),"source_name":"SBA opportunity web index","page":page,"has_next":len(indexed) > start + page_size,"status":"indexed","reachable":False,"warning":"Direct SBA directory access is reconnecting. Showing official SBA opportunity pages discovered through live web search."}
         except (requests.RequestException,ValueError,AttributeError): pass
 
     cached=cache.get(cache_key) or cache.get(snapshot_key)

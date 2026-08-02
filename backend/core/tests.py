@@ -74,13 +74,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.4.0")
+        self.assertEqual(response.json()["version"], "2.4.1")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.4.0")
+        self.assertEqual(response.json()["version"], "2.4.1")
 
 
 class RouterRegressionTests(TestCase):
@@ -538,7 +538,7 @@ class ExpansionIntegrationTests(AuthenticatedApiTestCase):
         result = fetch_sam_opportunity_detail("detail-123")
 
         self.assertEqual(result["opportunity"]["noticeId"], "detail-123")
-        self.assertEqual(result["documents"][0]["name"], "Attachment 1")
+        self.assertEqual(result["documents"][0]["name"], "pws.pdf")
         self.assertIn("not confirmed incumbents", result["incumbent_signal_note"])
         self.assertEqual(result["incumbent_signals"][0]["recipient_name"], "EXAMPLE INCUMBENT LLC")
 

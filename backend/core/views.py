@@ -17,6 +17,7 @@ from .integrations import (
     search_sam_contract_awards,
     search_sam_subawards,
     search_sba_subnet_opportunities,
+    _clean_attachment_name,
     search_federal_forecast_sources,
     search_state_local_sources,
     search_usaspending_contract_vehicles,
@@ -107,7 +108,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.4.0"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.4.1"})
 
 
 @api_view(["GET"])
@@ -1097,7 +1098,7 @@ def opportunity_documents(request, source_id: str):
         return Response({"detail": "documents must be a non-empty list of {name, url} records."}, status=status.HTTP_400_BAD_REQUEST)
     results = []
     for row in documents[:40]:
-        name = str((row or {}).get("name") or "Government document")[:500]
+        name = _clean_attachment_name((row or {}).get("name"), (row or {}).get("url"), fallback="Government document")
         url = str((row or {}).get("url") or "").strip()
         if not url:
             continue
@@ -1126,6 +1127,29 @@ def opportunity_documents(request, source_id: str):
         results.append(record)
     return Response(OpportunityDocumentSerializer(results, many=True).data, status=status.HTTP_201_CREATED)
 
+def _opportunity_context(opportunity):
+    raw = opportunity.raw_data if isinstance(opportunity.raw_data, dict) else {}
+    fields = [
+        ("[OPP-1]", "Title", opportunity.title),
+        ("[OPP-2]", "Solicitation", opportunity.solicitation_number),
+        ("[OPP-3]", "Agency", opportunity.agency),
+        ("[OPP-4]", "Office", opportunity.office),
+        ("[OPP-5]", "Description", opportunity.description or raw.get("description")),
+        ("[OPP-6]", "NAICS", opportunity.naics_code),
+        ("[OPP-7]", "PSC", opportunity.psc_code),
+        ("[OPP-8]", "Set-aside", opportunity.set_aside),
+        ("[OPP-9]", "Place of performance", opportunity.place_of_performance),
+        ("[OPP-10]", "Response deadline", opportunity.response_deadline.isoformat() if opportunity.response_deadline else ""),
+        ("[OPP-11]", "Notice type", opportunity.notice_type_raw or opportunity.notice_type),
+    ]
+    lines=[]; sources=[]
+    for label, title, value in fields:
+        if value:
+            lines.append(f"{label} {title}: {value}")
+            sources.append({"label":label,"type":"opportunity","title":title,"url":opportunity.source_url})
+    return "\n".join(lines), sources
+
+
 @api_view(["GET", "POST"])
 @throttle_classes([OpenAIChatThrottle])
 def opportunity_briefing(request, source_id: str):
@@ -1142,15 +1166,16 @@ def opportunity_briefing(request, source_id: str):
     analysis_type = str(request.data.get("analysis_type") or "executive_summary")
     if analysis_type not in ANALYSIS_PROMPTS:
         return Response({"detail": "Unsupported analysis type."}, status=status.HTTP_400_BAD_REQUEST)
-    context, sources = _document_context(organization, opportunity, query=ANALYSIS_PROMPTS[analysis_type], limit=24)
-    if not context:
-        return Response({"detail": "No successfully ingested document text is available. Ingest the government attachments first."}, status=status.HTTP_409_CONFLICT)
-    fingerprint_source = analysis_type + "|" + "|".join(sorted(doc.checksum for doc in OpportunityDocument.objects.filter(organization=organization, opportunity=opportunity, status=OpportunityDocument.Status.READY)))
+    document_context, document_sources = _document_context(organization, opportunity, query=ANALYSIS_PROMPTS[analysis_type], limit=24)
+    opportunity_context, opportunity_sources = _opportunity_context(opportunity)
+    context = "\n\n".join(part for part in (opportunity_context, document_context) if part)
+    sources = opportunity_sources + document_sources
+    fingerprint_source = analysis_type + "|" + str(opportunity.updated_at.timestamp()) + "|" + "|".join(sorted(doc.checksum for doc in OpportunityDocument.objects.filter(organization=organization, opportunity=opportunity, status=OpportunityDocument.Status.READY)))
     fingerprint = sha256(fingerprint_source.encode())
     cached = OpportunityAnalysis.objects.filter(organization=organization, opportunity=opportunity, project_room=None, analysis_type=analysis_type, input_fingerprint=fingerprint).first()
     if cached and not request.data.get("refresh"):
         return Response(OpportunityAnalysisSerializer(cached).data)
-    prompt = f"Opportunity: {opportunity.title}\nSolicitation: {opportunity.solicitation_number}\nAgency: {opportunity.agency}\n\nTASK\n{ANALYSIS_PROMPTS[analysis_type]}\n\nAUTHORIZED SOURCE EXCERPTS\n{context}\n\nCite every document-supported claim using the exact [DOC-*] labels. Clearly label unknowns and inferences."
+    prompt = f"Opportunity: {opportunity.title}\nSolicitation: {opportunity.solicitation_number}\nAgency: {opportunity.agency}\n\nTASK\n{ANALYSIS_PROMPTS[analysis_type]}\n\nAUTHORIZED OPPORTUNITY AND DOCUMENT CONTEXT\n{context}\n\nCite every document-supported claim using the exact [DOC-*] labels. Clearly label unknowns and inferences."
     result = ask_ai(message=prompt, history=[], organization=organization)
     analysis, _ = OpportunityAnalysis.objects.update_or_create(organization=organization, opportunity=opportunity, project_room=None, analysis_type=analysis_type, input_fingerprint=fingerprint, defaults={"content": result.get("answer", ""), "sources": sources, "model": result.get("model", ""), "created_by": request.user})
     return Response(OpportunityAnalysisSerializer(analysis).data)
@@ -1165,10 +1190,12 @@ def opportunity_document_question(request, source_id: str):
         return Response({"detail": "Opportunity not found."}, status=status.HTTP_404_NOT_FOUND)
     if not question:
         return Response({"detail": "A question is required."}, status=status.HTTP_400_BAD_REQUEST)
-    context, sources = _document_context(organization, opportunity, query=question, limit=18)
-    if not context:
-        return Response({"detail": "No ingested document text is available."}, status=status.HTTP_409_CONFLICT)
-    result = ask_ai(message=f"Answer this question only from the authorized document excerpts. Cite exact [DOC-*] labels. If unsupported, say so.\n\nQUESTION\n{question}\n\nDOCUMENT EXCERPTS\n{context}", history=[], organization=organization)
+    document_context, document_sources = _document_context(organization, opportunity, query=question, limit=18)
+    opportunity_context, opportunity_sources = _opportunity_context(opportunity)
+    context = "\n\n".join(part for part in (opportunity_context, document_context) if part)
+    sources = opportunity_sources + document_sources
+    mode = "opportunity details plus ingested documents" if document_context else "opportunity details only"
+    result = ask_ai(message=f"Respond like an experienced capture manager speaking to a colleague. Lead with the direct answer, use short readable paragraphs, and avoid dumping raw fields. Use only the authorized {mode}. Cite exact [OPP-*] and [DOC-*] labels for factual claims. If the available context cannot answer something, say exactly what is missing.\n\nQUESTION\n{question}\n\nAUTHORIZED CONTEXT\n{context}", history=[], organization=organization)
     result["sources"] = sources
     return Response(result)
 
