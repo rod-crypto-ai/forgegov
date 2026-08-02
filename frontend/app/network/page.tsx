@@ -1,0 +1,62 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Building2, Check, Handshake, Search, UserPlus, X } from "lucide-react";
+import { apiGet, apiPatch, apiPost } from "@/lib/api";
+
+type Company={id:number;organization_id:number;organization_name:string;slug:string;uei:string;cage_code:string;tagline:string;description:string;website:string;city:string;state:string;country:string;naics_codes:string[];capabilities:string[];certifications:string[];accepting_partners:boolean;verified:boolean;connection_status:string;connection_id:number|null};
+type Connection={id:number;requester:number;requester_name:string;recipient:number;recipient_name:string;status:string;message:string;created_at:string};
+type RoomInvite={id:number;project_room:number;project_room_name:string;owner_organization_name:string;invited_organization_name:string;status:string;access_level:string;message:string;created_at:string};
+type Profile={tagline:string;description:string;website:string;city:string;state:string;country:string;naics_codes:string[];psc_codes:string[];capabilities:string[];certifications:string[];contract_vehicles:string[];service_areas:string[];contact_email:string;is_public:boolean;accepting_partners:boolean};
+
+function list(value:string){return value.split(",").map(x=>x.trim()).filter(Boolean)}
+
+export default function NetworkPage(){
+ const params=useSearchParams(); const initial=params.get("tab")||"directory";
+ const [tab,setTab]=useState(initial); const [q,setQ]=useState(""); const [companies,setCompanies]=useState<Company[]>([]); const [connections,setConnections]=useState<Connection[]>([]); const [invites,setInvites]=useState<RoomInvite[]>([]); const [profile,setProfile]=useState<Profile|null>(null); const [message,setMessage]=useState(""); const [busy,setBusy]=useState("");
+ async function loadDirectory(){const data=await apiGet<{results:Company[]}>(`/network/directory/?q=${encodeURIComponent(q)}`);setCompanies(data.results)}
+ async function loadAll(){try{const [c,i,p]=await Promise.all([apiGet<Connection[]>("/network/connections/"),apiGet<RoomInvite[]>("/network/project-room-invitations/"),apiGet<Profile>("/network/profile/")]);setConnections(c);setInvites(i);setProfile(p);await loadDirectory()}catch(e){setMessage(e instanceof Error?e.message:"Network could not be loaded")}}
+ useEffect(()=>{
+  let cancelled=false;
+
+  async function loadInitialData(){
+   try{
+    const [connectionData,inviteData,profileData,directoryData]=await Promise.all([
+     apiGet<Connection[]>("/network/connections/"),
+     apiGet<RoomInvite[]>("/network/project-room-invitations/"),
+     apiGet<Profile>("/network/profile/"),
+     apiGet<{results:Company[]}>("/network/directory/?q="),
+    ]);
+
+    if(cancelled)return;
+
+    setConnections(connectionData);
+    setInvites(inviteData);
+    setProfile(profileData);
+    setCompanies(directoryData.results);
+   }catch(error){
+    if(cancelled)return;
+    setMessage(error instanceof Error?error.message:"Network could not be loaded");
+   }
+  }
+
+  void loadInitialData();
+
+  return ()=>{
+   cancelled=true;
+  };
+ },[]);
+ const pending=connections.filter(c=>c.status==="pending"); const active=connections.filter(c=>c.status==="accepted"); const roomPending=invites.filter(i=>i.status==="pending");
+ async function connect(company:Company){setBusy(`c-${company.organization_id}`);try{await apiPost("/network/connections/",{recipient:company.organization_id,message:"We would like to connect and explore government contracting opportunities together."});setMessage(`Connection request sent to ${company.organization_name}.`);await loadAll()}catch(e){setMessage(e instanceof Error?e.message:"Request failed")}finally{setBusy("")}}
+ async function respond(id:number,action:"accept"|"decline",kind:"connection"|"room"){setBusy(`${kind}-${id}`);try{await apiPost(kind==="connection"?`/network/connections/${id}/respond/`:`/network/project-room-invitations/${id}/respond/`,{action});await loadAll()}catch(e){setMessage(e instanceof Error?e.message:"Response failed")}finally{setBusy("")}}
+ async function saveProfile(){if(!profile)return;setBusy("profile");try{await apiPatch("/network/profile/",profile);setMessage("Company Network profile saved.")}catch(e){setMessage(e instanceof Error?e.message:"Profile could not be saved")}finally{setBusy("")}}
+ return <div className="page-stack network-page"><section className="page-hero"><div><span className="eyebrow">FORGEGOV NETWORK</span><h1>Find companies. Build teams. Win together.</h1><p>Search verified company profiles, create trusted connections, and accept secure Project Room invitations without exposing your internal workspace.</p></div></section>
+ <div className="network-tabs">{[["directory","Company Directory"],["invitations",`Invitations (${pending.length+roomPending.length})`],["partners",`Active Partners (${active.length})`],["profile","Company Profile"]].map(([k,l])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}>{l}</button>)}</div>
+ {message&&<div className="network-message">{message}</div>}
+ {tab==="directory"&&<><div className="network-search"><Search size={18}/><input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")void loadDirectory()}} placeholder="Search company name, capability, CAGE, UEI, NAICS or certification"/><button onClick={()=>void loadDirectory()}>Search</button></div><div className="network-grid">{companies.map(company=><article className="network-company-card" key={company.organization_id}><div className="network-company-heading"><span className="company-avatar"><Building2/></span><div><h3>{company.organization_name}{company.verified&&<small> Verified</small>}</h3><p>{company.tagline||company.description||"Company profile available for teaming discovery."}</p></div></div><div className="company-meta"><span>{[company.city,company.state].filter(Boolean).join(", ")||company.country}</span>{company.cage_code&&<span>CAGE {company.cage_code}</span>}</div><div className="chip-row">{[...company.capabilities,...company.certifications,...company.naics_codes].slice(0,8).map(tag=><span key={tag}>{tag}</span>)}</div><div className="card-actions">{company.connection_status==="accepted"?<button disabled><Check size={16}/> Connected</button>:company.connection_status==="pending"?<button disabled>Request pending</button>:<button disabled={!company.accepting_partners||busy===`c-${company.organization_id}`} onClick={()=>void connect(company)}><UserPlus size={16}/> Connect</button>}{company.website&&<a href={company.website} target="_blank" rel="noreferrer">Website</a>}</div></article>)}</div></>}
+ {tab==="invitations"&&<div className="network-list"><h2>Company connection requests</h2>{pending.length===0&&<p>No pending company connections.</p>}{pending.map(row=><article key={row.id}><div><strong>{row.requester_name}</strong><p>{row.message||"Wants to connect with your company."}</p></div><div><button onClick={()=>void respond(row.id,"accept","connection")}><Check/> Accept</button><button className="secondary" onClick={()=>void respond(row.id,"decline","connection")}><X/> Decline</button></div></article>)}<h2>Project Room invitations</h2>{roomPending.length===0&&<p>No pending Project Room invitations.</p>}{roomPending.map(row=><article key={row.id}><div><strong>{row.owner_organization_name}</strong><p>Invited you to {row.project_room_name}. {row.message}</p></div><div><button onClick={()=>void respond(row.id,"accept","room")}><Handshake/> Join room</button><button className="secondary" onClick={()=>void respond(row.id,"decline","room")}><X/> Decline</button></div></article>)}</div>}
+ {tab==="partners"&&<div className="network-list"><h2>Trusted company connections</h2>{active.length===0&&<p>No active partners yet. Search the directory and send a connection request.</p>}{active.map(row=><article key={row.id}><div><strong>{row.requester_name} ↔ {row.recipient_name}</strong><p>Connected company relationship. Invite this company from a Project Room.</p></div><span className="status-pill">Connected</span></article>)}</div>}
+ {tab==="profile"&&profile&&<div className="network-profile-form"><label>Tagline<input value={profile.tagline||""} onChange={e=>setProfile({...profile,tagline:e.target.value})}/></label><label>Company description<textarea value={profile.description||""} onChange={e=>setProfile({...profile,description:e.target.value})}/></label><div className="form-grid"><label>Website<input value={profile.website||""} onChange={e=>setProfile({...profile,website:e.target.value})}/></label><label>Contact email<input value={profile.contact_email||""} onChange={e=>setProfile({...profile,contact_email:e.target.value})}/></label><label>City<input value={profile.city||""} onChange={e=>setProfile({...profile,city:e.target.value})}/></label><label>State<input value={profile.state||""} onChange={e=>setProfile({...profile,state:e.target.value})}/></label></div><label>Capabilities, comma separated<input value={(profile.capabilities||[]).join(", ")} onChange={e=>setProfile({...profile,capabilities:list(e.target.value)})}/></label><label>NAICS codes, comma separated<input value={(profile.naics_codes||[]).join(", ")} onChange={e=>setProfile({...profile,naics_codes:list(e.target.value)})}/></label><label>Certifications, comma separated<input value={(profile.certifications||[]).join(", ")} onChange={e=>setProfile({...profile,certifications:list(e.target.value)})}/></label><div className="check-row"><label><input type="checkbox" checked={profile.is_public} onChange={e=>setProfile({...profile,is_public:e.target.checked})}/> Visible in directory</label><label><input type="checkbox" checked={profile.accepting_partners} onChange={e=>setProfile({...profile,accepting_partners:e.target.checked})}/> Accepting partners</label></div><button onClick={()=>void saveProfile()} disabled={busy==="profile"}>Save company profile</button></div>}
+ </div>
+}

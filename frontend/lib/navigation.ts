@@ -66,6 +66,15 @@ export const navigationGroups: NavGroup[] = [
     ],
   },
   {
+    label: "Network",
+    icon: Network,
+    items: [
+      { href: "/network", label: "Company Directory", icon: Building2, description: "Find companies, connect, manage invitations, and invite trusted partners into Project Rooms." },
+      { href: "/network?tab=invitations", label: "Invitations", icon: Handshake, description: "Review company connection requests and Project Room invitations." },
+      { href: "/network?tab=partners", label: "Active Partners", icon: Users, description: "Manage trusted company relationships and shared Project Rooms." },
+    ],
+  },
+  {
     label: "Beacon",
     icon: ContactRound,
     items: [

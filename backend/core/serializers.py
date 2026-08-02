@@ -37,6 +37,9 @@ from .models import (
     OpportunityDocument,
     OpportunityDocumentChunk,
     OpportunityAnalysis,
+    OrganizationProfile,
+    NetworkConnection,
+    ProjectRoomInvitation,
 )
 from .permissions import active_membership
 
@@ -390,3 +393,37 @@ class CollaborationNotificationSerializer(serializers.ModelSerializer):
         model = CollaborationNotification
         fields = "__all__"
         read_only_fields = ("id", "organization", "user", "created_at", "updated_at")
+
+
+class OrganizationProfileSerializer(serializers.ModelSerializer):
+    organization_id = serializers.IntegerField(source="organization.id", read_only=True)
+    organization_name = serializers.CharField(source="organization.name", read_only=True)
+    slug = serializers.CharField(source="organization.slug", read_only=True)
+    uei = serializers.CharField(source="organization.uei", read_only=True)
+    cage_code = serializers.CharField(source="organization.cage_code", read_only=True)
+
+    class Meta:
+        model = OrganizationProfile
+        fields = ("id", "organization_id", "organization_name", "slug", "uei", "cage_code", "tagline", "description", "website", "city", "state", "country", "naics_codes", "psc_codes", "capabilities", "certifications", "contract_vehicles", "service_areas", "contact_email", "is_public", "accepting_partners", "verified", "created_at", "updated_at")
+        read_only_fields = ("id", "organization_id", "organization_name", "slug", "uei", "cage_code", "verified", "created_at", "updated_at")
+
+
+class NetworkConnectionSerializer(serializers.ModelSerializer):
+    requester_name = serializers.CharField(source="requester.name", read_only=True)
+    recipient_name = serializers.CharField(source="recipient.name", read_only=True)
+
+    class Meta:
+        model = NetworkConnection
+        fields = ("id", "requester", "requester_name", "recipient", "recipient_name", "status", "message", "requested_by", "responded_by", "responded_at", "created_at", "updated_at")
+        read_only_fields = ("id", "requester", "requester_name", "recipient_name", "status", "requested_by", "responded_by", "responded_at", "created_at", "updated_at")
+
+
+class ProjectRoomInvitationSerializer(serializers.ModelSerializer):
+    project_room_name = serializers.CharField(source="project_room.name", read_only=True)
+    owner_organization_name = serializers.CharField(source="project_room.owner_organization.name", read_only=True)
+    invited_organization_name = serializers.CharField(source="invited_organization.name", read_only=True)
+
+    class Meta:
+        model = ProjectRoomInvitation
+        fields = ("id", "project_room", "project_room_name", "owner_organization_name", "invited_organization", "invited_organization_name", "status", "access_level", "can_upload", "can_comment", "can_view_pricing", "message", "invited_by", "responded_by", "responded_at", "created_at", "updated_at")
+        read_only_fields = ("id", "project_room_name", "owner_organization_name", "invited_organization_name", "status", "invited_by", "responded_by", "responded_at", "created_at", "updated_at")

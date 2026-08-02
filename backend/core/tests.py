@@ -23,7 +23,7 @@ from .integrations import (
     upsert_sam_opportunity,
 )
 from .ai import live_web_status
-from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile
+from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, OrganizationProfile, NetworkConnection, ProjectRoomInvitation
 
 User = get_user_model()
 
@@ -74,13 +74,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.3.1")
+        self.assertEqual(response.json()["version"], "2.4.0")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.3.1")
+        self.assertEqual(response.json()["version"], "2.4.0")
 
 
 class RouterRegressionTests(TestCase):
@@ -934,3 +934,49 @@ class ProjectRoomCollaborationSecurityTests(TestCase):
         response = self.client_for(self.owner).get(f"/api/project-rooms/{self.room.id}/tasks/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual({row["title"] for row in response.json()}, {"Prime-only pricing review", "Shared technical draft"})
+
+
+class ForgeGovNetworkSecurityTests(TestCase):
+    def setUp(self):
+        self.prime_user = User.objects.create_user(username="prime-net@example.com", email="prime-net@example.com", password="StrongPass!234")
+        self.partner_user = User.objects.create_user(username="partner-net@example.com", email="partner-net@example.com", password="StrongPass!234")
+        self.outsider_user = User.objects.create_user(username="outsider-net@example.com", email="outsider-net@example.com", password="StrongPass!234")
+        self.prime = Organization.objects.create(name="Network Prime", slug="network-prime")
+        self.partner = Organization.objects.create(name="Network Partner", slug="network-partner")
+        self.outsider = Organization.objects.create(name="Network Outsider", slug="network-outsider")
+        Membership.objects.create(user=self.prime_user, organization=self.prime, role=Membership.Role.OWNER)
+        Membership.objects.create(user=self.partner_user, organization=self.partner, role=Membership.Role.OWNER)
+        Membership.objects.create(user=self.outsider_user, organization=self.outsider, role=Membership.Role.OWNER)
+        OrganizationProfile.objects.create(organization=self.partner, tagline="Cyber and logistics", capabilities=["Cybersecurity", "Logistics"], certifications=["SDVOSB"])
+        OrganizationProfile.objects.create(organization=self.outsider, tagline="Construction", capabilities=["Concrete"])
+        self.room = ProjectRoom.objects.create(owner_organization=self.prime, name="Network Pursuit", created_by=self.prime_user)
+
+    def client_for(self, user):
+        client = APIClient(); client.force_authenticate(user); return client
+
+    def test_directory_excludes_requesting_company_and_searches_capabilities(self):
+        response = self.client_for(self.prime_user).get("/api/network/directory/?q=Cybersecurity")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row["organization_name"] for row in response.json()["results"]], ["Network Partner"])
+
+    def test_connection_requires_recipient_acceptance(self):
+        created = self.client_for(self.prime_user).post("/api/network/connections/", {"recipient": self.partner.id}, format="json")
+        self.assertEqual(created.status_code, 201)
+        row = NetworkConnection.objects.get(pk=created.json()["id"])
+        self.assertEqual(row.status, NetworkConnection.Status.PENDING)
+        accepted = self.client_for(self.partner_user).post(f"/api/network/connections/{row.id}/respond/", {"action": "accept"}, format="json")
+        self.assertEqual(accepted.status_code, 200)
+        row.refresh_from_db(); self.assertEqual(row.status, NetworkConnection.Status.ACCEPTED)
+
+    def test_unconnected_company_cannot_be_invited_to_room(self):
+        response = self.client_for(self.prime_user).post("/api/network/project-room-invitations/", {"project_room": self.room.id, "invited_organization": self.partner.id}, format="json")
+        self.assertEqual(response.status_code, 403)
+
+    def test_accepting_room_invitation_creates_scoped_partner_access(self):
+        NetworkConnection.objects.create(requester=self.prime, recipient=self.partner, requested_by=self.prime_user, status=NetworkConnection.Status.ACCEPTED)
+        invite = self.client_for(self.prime_user).post("/api/network/project-room-invitations/", {"project_room": self.room.id, "invited_organization": self.partner.id, "can_view_pricing": False}, format="json")
+        self.assertEqual(invite.status_code, 201)
+        accepted = self.client_for(self.partner_user).post(f"/api/network/project-room-invitations/{invite.json()['id']}/respond/", {"action":"accept"}, format="json")
+        self.assertEqual(accepted.status_code, 200)
+        self.assertTrue(ProjectRoomPartner.objects.filter(project_room=self.room, organization=self.partner, can_view_pricing=False).exists())
+        self.assertFalse(ProjectRoomPartner.objects.filter(project_room=self.room, organization=self.outsider).exists())

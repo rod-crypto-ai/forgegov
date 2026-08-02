@@ -57,6 +57,9 @@ from .models import (
     OpportunityAnalysis,
     TeamingActivity,
     Vendor,
+    OrganizationProfile,
+    NetworkConnection,
+    ProjectRoomInvitation,
 )
 from .serializers import (
     AgencySerializer,
@@ -89,6 +92,9 @@ from .serializers import (
     OpportunityAnalysisSerializer,
     TeamingActivitySerializer,
     VendorSerializer,
+    OrganizationProfileSerializer,
+    NetworkConnectionSerializer,
+    ProjectRoomInvitationSerializer,
 )
 from .throttles import OpenAIChatThrottle, SamLiveSearchThrottle
 from .document_intelligence import DocumentIngestionError, chunk_sections, download_document, extract_document, sha256
@@ -101,7 +107,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.3.0"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.4.0"})
 
 
 @api_view(["GET"])
@@ -1267,3 +1273,116 @@ class CollaborationNotificationViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         organization=_request_organization(self.request)
         return CollaborationNotification.objects.filter(organization=organization).filter(Q(user=self.request.user)|Q(user__isnull=True))
+
+
+def _network_connection_between(left, right):
+    return NetworkConnection.objects.filter(Q(requester=left, recipient=right) | Q(requester=right, recipient=left)).order_by("-updated_at").first()
+
+
+@api_view(["GET"])
+def network_directory(request):
+    organization = _request_organization(request)
+    query = str(request.query_params.get("q") or "").strip()
+    certification = str(request.query_params.get("certification") or "").strip()
+    state_filter = str(request.query_params.get("state") or "").strip()
+    profiles = OrganizationProfile.objects.select_related("organization").filter(is_public=True).exclude(organization=organization)
+    if query:
+        profiles = profiles.filter(Q(organization__name__icontains=query) | Q(tagline__icontains=query) | Q(description__icontains=query) | Q(capabilities__icontains=query) | Q(organization__cage_code__icontains=query) | Q(organization__uei__icontains=query))
+    if certification:
+        profiles = profiles.filter(certifications__icontains=certification)
+    if state_filter:
+        profiles = profiles.filter(state__iexact=state_filter)
+    data = OrganizationProfileSerializer(profiles[:100], many=True).data
+    for row in data:
+        connection = _network_connection_between(organization, Organization.objects.get(pk=row["organization_id"]))
+        row["connection_status"] = connection.status if connection else "none"
+        row["connection_id"] = connection.id if connection else None
+    return Response({"results": data, "count": len(data)})
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([ReadOnlyOrContributor])
+def network_profile(request):
+    organization = _request_organization(request)
+    profile, _ = OrganizationProfile.objects.get_or_create(organization=organization)
+    if request.method == "PATCH":
+        serializer = OrganizationProfileSerializer(profile, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+    return Response(OrganizationProfileSerializer(profile).data)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([ReadOnlyOrContributor])
+def network_connections(request):
+    organization = _request_organization(request)
+    if request.method == "GET":
+        rows = NetworkConnection.objects.filter(Q(requester=organization) | Q(recipient=organization)).select_related("requester", "recipient")
+        status_filter = str(request.query_params.get("status") or "").strip()
+        if status_filter:
+            rows = rows.filter(status=status_filter)
+        return Response(NetworkConnectionSerializer(rows, many=True).data)
+    recipient_id = request.data.get("recipient")
+    recipient = Organization.objects.filter(pk=recipient_id).exclude(pk=organization.pk).first()
+    if not recipient:
+        return Response({"detail": "Company not found."}, status=status.HTTP_404_NOT_FOUND)
+    existing = _network_connection_between(organization, recipient)
+    if existing and existing.status in {NetworkConnection.Status.PENDING, NetworkConnection.Status.ACCEPTED}:
+        return Response(NetworkConnectionSerializer(existing).data, status=status.HTTP_200_OK)
+    row = NetworkConnection.objects.create(requester=organization, recipient=recipient, requested_by=request.user, message=str(request.data.get("message") or "")[:2000])
+    return Response(NetworkConnectionSerializer(row).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@permission_classes([ReadOnlyOrContributor])
+def network_connection_response(request, connection_id: int):
+    organization = _request_organization(request)
+    row = NetworkConnection.objects.filter(pk=connection_id, recipient=organization, status=NetworkConnection.Status.PENDING).select_related("requester", "recipient").first()
+    if not row:
+        return Response({"detail": "Pending invitation not found."}, status=status.HTTP_404_NOT_FOUND)
+    action = str(request.data.get("action") or "").lower()
+    if action not in {"accept", "decline"}:
+        return Response({"detail": "action must be accept or decline."}, status=status.HTTP_400_BAD_REQUEST)
+    row.status = NetworkConnection.Status.ACCEPTED if action == "accept" else NetworkConnection.Status.DECLINED
+    row.responded_by = request.user
+    row.responded_at = timezone.now()
+    row.save(update_fields=["status", "responded_by", "responded_at", "updated_at"])
+    return Response(NetworkConnectionSerializer(row).data)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([ReadOnlyOrContributor])
+def project_room_invitations(request):
+    organization = _request_organization(request)
+    if request.method == "GET":
+        rows = ProjectRoomInvitation.objects.filter(Q(invited_organization=organization) | Q(project_room__owner_organization=organization)).select_related("project_room", "project_room__owner_organization", "invited_organization")
+        return Response(ProjectRoomInvitationSerializer(rows, many=True).data)
+    room = ProjectRoom.objects.filter(pk=request.data.get("project_room"), owner_organization=organization).first()
+    invited_org = Organization.objects.filter(pk=request.data.get("invited_organization")).exclude(pk=organization.pk).first()
+    if not room or not invited_org:
+        return Response({"detail": "Valid owned Project Room and partner company are required."}, status=status.HTTP_400_BAD_REQUEST)
+    connection = _network_connection_between(organization, invited_org)
+    if not connection or connection.status != NetworkConnection.Status.ACCEPTED:
+        return Response({"detail": "Connect with this company before inviting it to a Project Room."}, status=status.HTTP_403_FORBIDDEN)
+    row, created = ProjectRoomInvitation.objects.update_or_create(project_room=room, invited_organization=invited_org, status=ProjectRoomInvitation.Status.PENDING, defaults={"invited_by": request.user, "access_level": request.data.get("access_level", ProjectRoomPartner.AccessLevel.PARTNER), "can_upload": bool(request.data.get("can_upload", True)), "can_comment": bool(request.data.get("can_comment", True)), "can_view_pricing": bool(request.data.get("can_view_pricing", False)), "message": str(request.data.get("message") or "")[:2000]})
+    return Response(ProjectRoomInvitationSerializer(row).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([ReadOnlyOrContributor])
+def project_room_invitation_response(request, invitation_id: int):
+    organization = _request_organization(request)
+    row = ProjectRoomInvitation.objects.filter(pk=invitation_id, invited_organization=organization, status=ProjectRoomInvitation.Status.PENDING).select_related("project_room").first()
+    if not row:
+        return Response({"detail": "Pending Project Room invitation not found."}, status=status.HTTP_404_NOT_FOUND)
+    action = str(request.data.get("action") or "").lower()
+    if action not in {"accept", "decline"}:
+        return Response({"detail": "action must be accept or decline."}, status=status.HTTP_400_BAD_REQUEST)
+    row.status = ProjectRoomInvitation.Status.ACCEPTED if action == "accept" else ProjectRoomInvitation.Status.DECLINED
+    row.responded_by = request.user
+    row.responded_at = timezone.now()
+    row.save(update_fields=["status", "responded_by", "responded_at", "updated_at"])
+    if action == "accept":
+        ProjectRoomPartner.objects.update_or_create(project_room=row.project_room, organization=organization, defaults={"access_level": row.access_level, "can_upload": row.can_upload, "can_comment": row.can_comment, "can_view_pricing": row.can_view_pricing, "invited_by": row.invited_by})
+    return Response(ProjectRoomInvitationSerializer(row).data)

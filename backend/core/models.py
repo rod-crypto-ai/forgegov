@@ -760,3 +760,78 @@ class OpportunityAnalysis(TimeStampedModel):
         ordering = ["-updated_at"]
         constraints = [models.UniqueConstraint(fields=("organization", "opportunity", "project_room", "analysis_type", "input_fingerprint"), name="unique_cached_opportunity_analysis")]
         indexes = [models.Index(fields=["organization", "opportunity", "analysis_type"], name="core_oppanalysis_org_type_idx")]
+
+
+class OrganizationProfile(TimeStampedModel):
+    organization = models.OneToOneField(Organization, on_delete=models.CASCADE, related_name="network_profile")
+    tagline = models.CharField(max_length=240, blank=True)
+    description = models.TextField(blank=True)
+    website = models.URLField(blank=True)
+    city = models.CharField(max_length=120, blank=True)
+    state = models.CharField(max_length=80, blank=True)
+    country = models.CharField(max_length=80, blank=True, default="United States")
+    naics_codes = models.JSONField(default=list, blank=True)
+    psc_codes = models.JSONField(default=list, blank=True)
+    capabilities = models.JSONField(default=list, blank=True)
+    certifications = models.JSONField(default=list, blank=True)
+    contract_vehicles = models.JSONField(default=list, blank=True)
+    service_areas = models.JSONField(default=list, blank=True)
+    contact_email = models.EmailField(blank=True)
+    is_public = models.BooleanField(default=True)
+    accepting_partners = models.BooleanField(default=True)
+    verified = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["organization__name"]
+
+
+class NetworkConnection(TimeStampedModel):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        ACCEPTED = "accepted", "Accepted"
+        DECLINED = "declined", "Declined"
+        BLOCKED = "blocked", "Blocked"
+
+    requester = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="network_requests_sent")
+    recipient = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="network_requests_received")
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="network_connections_requested")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    message = models.TextField(blank=True)
+    responded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="network_connections_responded")
+    responded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        constraints = [
+            models.UniqueConstraint(fields=("requester", "recipient"), name="unique_directional_network_connection"),
+            models.CheckConstraint(condition=~models.Q(requester=models.F("recipient")), name="network_connection_distinct_orgs"),
+        ]
+        indexes = [
+            models.Index(fields=["recipient", "status", "-created_at"], name="core_netconn_rec_stat_idx"),
+            models.Index(fields=["requester", "status", "-created_at"], name="core_netconn_req_stat_idx"),
+        ]
+
+
+class ProjectRoomInvitation(TimeStampedModel):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        ACCEPTED = "accepted", "Accepted"
+        DECLINED = "declined", "Declined"
+        CANCELLED = "cancelled", "Cancelled"
+
+    project_room = models.ForeignKey(ProjectRoom, on_delete=models.CASCADE, related_name="partner_invitations")
+    invited_organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="project_room_invitations")
+    invited_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="project_room_invitations_sent")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    access_level = models.CharField(max_length=20, choices=ProjectRoomPartner.AccessLevel.choices, default=ProjectRoomPartner.AccessLevel.PARTNER)
+    can_upload = models.BooleanField(default=True)
+    can_comment = models.BooleanField(default=True)
+    can_view_pricing = models.BooleanField(default=False)
+    message = models.TextField(blank=True)
+    responded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="project_room_invitations_responded")
+    responded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [models.UniqueConstraint(fields=("project_room", "invited_organization"), condition=models.Q(status="pending"), name="unique_pending_project_room_invite")]
+        indexes = [models.Index(fields=["invited_organization", "status", "-created_at"], name="core_prinvite_org_stat_idx")]

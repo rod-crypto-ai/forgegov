@@ -73,6 +73,12 @@ from .views import (
     project_room_notes,
     project_room_files,
     project_room_activity,
+    network_directory,
+    network_profile,
+    network_connections,
+    network_connection_response,
+    project_room_invitations,
+    project_room_invitation_response,
 )
 
 router = DefaultRouter()
@@ -144,6 +150,12 @@ urlpatterns = [
     path("workflow/teaming/<int:teaming_id>/activities/", teaming_activity_collection),
     path("workflow/teaming-activities/<int:activity_id>/", teaming_activity_detail),
     path("workflow/project-rooms/<int:room_id>/partners/", project_room_partner),
+    path("network/directory/", network_directory),
+    path("network/profile/", network_profile),
+    path("network/connections/", network_connections),
+    path("network/connections/<int:connection_id>/respond/", network_connection_response),
+    path("network/project-room-invitations/", project_room_invitations),
+    path("network/project-room-invitations/<int:invitation_id>/respond/", project_room_invitation_response),
     path("ai/opportunities/<str:source_id>/documents/", opportunity_documents),
     path("ai/opportunities/<str:source_id>/briefing/", opportunity_briefing),
     path("ai/opportunities/<str:source_id>/ask/", opportunity_document_question),
