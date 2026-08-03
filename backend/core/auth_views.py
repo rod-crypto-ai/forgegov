@@ -336,9 +336,6 @@ def pending_invitation_response(request, invitation_id):
     if action not in {"accept", "decline"}:
         return Response({"detail": "action must be accept or decline."}, status=status.HTTP_400_BAD_REQUEST)
     if action == "accept":
-        existing = Membership.objects.filter(user=request.user, active=True).exclude(organization=row.organization).first()
-        if existing:
-            return Response({"detail": "This account already belongs to another active company workspace. Ask the inviting company to use a partner-company invitation instead."}, status=status.HTTP_409_CONFLICT)
         membership, _ = Membership.objects.update_or_create(
             organization=row.organization,
             user=request.user,
@@ -425,3 +422,18 @@ def audit_logs(request):
     membership = active_membership(request.user)
     rows = AuditLog.objects.filter(organization=membership.organization).select_related("actor")[:250]
     return Response(AuditLogSerializer(rows, many=True).data)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def workspaces(request):
+    memberships = Membership.objects.filter(user=request.user, active=True).select_related("organization").order_by("organization__name")
+    if request.method == "POST":
+        membership = memberships.filter(organization_id=request.data.get("organization")).first()
+        if not membership:
+            return Response({"detail": "You do not have access to that workspace."}, status=status.HTTP_403_FORBIDDEN)
+        response = Response({"organization": {"id": membership.organization_id, "name": membership.organization.name, "slug": membership.organization.slug}, "role": membership.role})
+        response.set_cookie("forgegov_workspace", str(membership.organization_id), secure=not settings.DEBUG, httponly=False, samesite="Lax", max_age=60*60*24*365)
+        return response
+    active = active_membership(request.user)
+    return Response({"active_organization": active.organization_id if active else None, "workspaces": [{"organization":{"id":m.organization_id,"name":m.organization.name,"slug":m.organization.slug},"role":m.role,"job_title":m.job_title} for m in memberships]})

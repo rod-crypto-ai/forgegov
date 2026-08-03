@@ -35,7 +35,11 @@ class CookieJWTAuthentication(JWTAuthentication):
         header_result = super().authenticate(request)
 
         if header_result is not None:
-            return header_result
+            user, token = header_result
+            raw_org = request.headers.get("X-ForgeGov-Organization") or request.COOKIES.get("forgegov_workspace")
+            if raw_org and str(raw_org).isdigit():
+                user._forgegov_organization_id = int(raw_org)
+            return user, token
 
         raw_token = request.COOKIES.get(settings.AUTH_ACCESS_COOKIE_NAME)
 
@@ -45,4 +49,8 @@ class CookieJWTAuthentication(JWTAuthentication):
         validated_token = self.get_validated_token(raw_token)
         enforce_csrf(request)
 
-        return self.get_user(validated_token), validated_token
+        user = self.get_user(validated_token)
+        raw_org = request.headers.get("X-ForgeGov-Organization") or request.COOKIES.get("forgegov_workspace")
+        if raw_org and str(raw_org).isdigit():
+            user._forgegov_organization_id = int(raw_org)
+        return user, validated_token

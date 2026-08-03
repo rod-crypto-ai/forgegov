@@ -24,7 +24,7 @@ from .integrations import (
     upsert_sam_opportunity,
 )
 from .ai import live_web_status
-from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Task, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, ProjectRoomActivity, OrganizationProfile, NetworkConnection, ProjectRoomInvitation
+from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Task, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, ProjectRoomActivity, OrganizationProfile, NetworkConnection, ProjectRoomInvitation, OrganizationJoinRequest
 
 User = get_user_model()
 
@@ -75,13 +75,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.6.2")
+        self.assertEqual(response.json()["version"], "2.6.3")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.6.2")
+        self.assertEqual(response.json()["version"], "2.6.3")
 
 
 class RouterRegressionTests(TestCase):
@@ -1098,11 +1098,12 @@ class CollaborationCompletionTests(TestCase):
         rows = response.json() if isinstance(response.json(), list) else response.json()["results"]
         self.assertTrue(any(row["title"] == "Partner invitation" for row in rows))
 
-    def test_existing_member_of_other_company_cannot_accept_employee_invitation(self):
+    def test_existing_member_can_accept_second_company_membership(self):
         invitation = Invitation.objects.create(organization=self.organization, email=self.recipient.email, role=Membership.Role.VIEWER, token="other-company", expires_at=timezone.now()+timedelta(days=7))
         response = self.recipient_client.post(f"/api/auth/invitations/{invitation.id}/respond/", {"action": "accept"}, format="json")
-        self.assertEqual(response.status_code, 409)
-        self.assertIn("partner-company invitation", response.json()["detail"])
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(Membership.objects.filter(user=self.recipient, organization=self.organization, active=True).exists())
+        self.assertTrue(Membership.objects.filter(user=self.recipient, organization=self.recipient_org, active=True).exists())
 
     def test_pipeline_resolver_target_is_independent_of_assigned_team(self):
         opportunity = Opportunity.objects.create(source="sam.gov", source_id="team-independent-notice", title="Team independent route")
@@ -1110,3 +1111,41 @@ class CollaborationCompletionTests(TestCase):
         response = self.owner_client.get(f"/api/pipeline/{item.id}/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["workspace_url"], "/opportunities/federal-contracts/team-independent-notice")
+
+
+class TeamingWorkspaceUsabilityTests(AuthenticatedApiTestCase):
+    def test_pipeline_can_create_and_link_teaming_workspace(self):
+        opportunity = Opportunity.objects.create(source="sam.gov", source_id="team-room-1", title="Integrated pursuit")
+        item = PipelineItem.objects.create(organization=self.organization, opportunity=opportunity)
+        response = self.client.post(f"/api/workflow/pipeline/{item.id}/project-room/", {"action":"create","name":"Integrated Pursuit Room"}, format="json")
+        self.assertEqual(response.status_code, 201)
+        item.refresh_from_db()
+        self.assertIsNotNone(item.project_room_id)
+        self.assertEqual(response.json()["teaming_workspace_url"], f"/project-rooms/{item.project_room_id}")
+        self.assertEqual(response.json()["workspace_url"], "/opportunities/federal-contracts/team-room-1")
+
+    def test_project_room_delete_is_soft_and_unlinks_pipeline(self):
+        opportunity = Opportunity.objects.create(source="sam.gov", source_id="team-room-2", title="Delete room pursuit")
+        room = ProjectRoom.objects.create(owner_organization=self.organization, opportunity=opportunity, name="Delete Me", created_by=self.user)
+        item = PipelineItem.objects.create(organization=self.organization, opportunity=opportunity, project_room=room, assigned_team=room.name)
+        response = self.client.post(f"/api/project-rooms/{room.id}/lifecycle/", {"action":"delete"}, format="json")
+        self.assertEqual(response.status_code, 200)
+        room.refresh_from_db(); item.refresh_from_db()
+        self.assertIsNotNone(room.deleted_at)
+        self.assertIsNone(item.project_room_id)
+        self.assertEqual(item.assigned_team, "")
+
+    def test_domain_join_request_requires_verified_matching_domain(self):
+        profile, _ = OrganizationProfile.objects.get_or_create(organization=self.organization)
+        profile.website = "https://example.com"; profile.verified = True; profile.save(update_fields=["website", "verified"])
+        self.user.email = "owner@example.com"; self.user.save(update_fields=["email"])
+        response = self.client.post("/api/company/join-requests/", {"organization":self.organization.id}, format="json")
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(OrganizationJoinRequest.objects.filter(organization=self.organization, user=self.user).exists())
+
+    def test_workspace_switch_cookie_selects_second_membership(self):
+        other = Organization.objects.create(name="Second Workspace", slug="second-workspace")
+        Membership.objects.create(user=self.user, organization=other, role=Membership.Role.ADMIN)
+        response = self.client.post("/api/auth/workspaces/", {"organization":other.id}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.cookies["forgegov_workspace"].value, str(other.id))

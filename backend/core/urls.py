@@ -16,6 +16,7 @@ from .auth_views import (
     register,
     team_member_detail,
     team_members,
+    workspaces,
 )
 from .views import (
     AgencyViewSet,
@@ -86,6 +87,10 @@ from .views import (
     project_room_invitations,
     project_room_invitation_manage,
     project_room_invitation_response,
+    pipeline_project_room,
+    project_room_lifecycle,
+    organization_join_requests,
+    organization_join_request_response,
 )
 
 router = DefaultRouter()
@@ -117,6 +122,7 @@ urlpatterns = [
     path("auth/refresh/", refresh),
     path("auth/logout/", logout),
     path("auth/me/", me),
+    path("auth/workspaces/", workspaces),
     path("team/members/", team_members),
     path("team/members/<int:membership_id>/", team_member_detail),
     path("team/invitations/", invitations),
@@ -149,6 +155,7 @@ urlpatterns = [
     path("intelligence/partners/", partner_discovery),
     path("workflow/opportunity-to-pipeline/", add_opportunity_to_pipeline),
     path("workflow/pipeline/<int:pipeline_id>/create-pursuit/", pipeline_to_pursuit),
+    path("workflow/pipeline/<int:pipeline_id>/project-room/", pipeline_project_room),
     path("project-rooms/<int:room_id>/access/", project_room_access_management),
     path("project-rooms/<int:room_id>/tasks/", project_room_tasks),
     path("project-rooms/<int:room_id>/tasks/<int:task_id>/", project_room_task_detail),
@@ -156,6 +163,7 @@ urlpatterns = [
     path("project-rooms/<int:room_id>/notes/", project_room_notes),
     path("project-rooms/<int:room_id>/files/", project_room_files),
     path("project-rooms/<int:room_id>/activity/", project_room_activity),
+    path("project-rooms/<int:room_id>/lifecycle/", project_room_lifecycle),
     path("workflow/saved-searches/", create_saved_search),
     path("workflow/saved-searches/evaluate/", run_saved_search_alerts),
     path("workflow/tasks/", create_workspace_task),
@@ -170,6 +178,8 @@ urlpatterns = [
     path("network/project-room-invitations/", project_room_invitations),
     path("network/project-room-invitations/<int:invitation_id>/manage/", project_room_invitation_manage),
     path("network/project-room-invitations/<int:invitation_id>/respond/", project_room_invitation_response),
+    path("company/join-requests/", organization_join_requests),
+    path("company/join-requests/<int:request_id>/respond/", organization_join_request_response),
     path("ai/opportunities/<str:source_id>/documents/", opportunity_documents),
     path("ai/opportunities/<str:source_id>/briefing/", opportunity_briefing),
     path("ai/opportunities/<str:source_id>/ask/", opportunity_document_question),

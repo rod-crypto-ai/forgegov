@@ -41,6 +41,7 @@ from .models import (
     OrganizationProfile,
     NetworkConnection,
     ProjectRoomInvitation,
+    OrganizationJoinRequest,
 )
 from .permissions import active_membership
 
@@ -95,11 +96,16 @@ class PipelineItemSerializer(WorkspaceRelationshipValidationMixin, serializers.M
     opportunity_detail = OpportunitySerializer(source="opportunity", read_only=True)
     owner_name = serializers.SerializerMethodField()
     workspace_url = serializers.SerializerMethodField()
+    project_room_name = serializers.CharField(source="project_room.name", read_only=True)
+    teaming_workspace_url = serializers.SerializerMethodField()
 
     class Meta:
         model = PipelineItem
         fields = "__all__"
         read_only_fields = ("id", "organization", "created_at", "updated_at")
+
+    def get_teaming_workspace_url(self, obj):
+        return f"/project-rooms/{obj.project_room_id}" if obj.project_room_id else ""
 
     def get_owner_name(self, obj):
         if not obj.owner:
@@ -114,6 +120,14 @@ class PipelineItemSerializer(WorkspaceRelationshipValidationMixin, serializers.M
         if source_id:
             return f"/opportunities/federal-contracts/{source_id}"
         return f"/capture/pipelines?item={obj.pk}"
+
+    def validate_project_room(self, value):
+        if value is None:
+            return value
+        organization = _request_organization(self)
+        if not organization or value.owner_organization_id != organization.id:
+            raise serializers.ValidationError("Select a Project Room owned by this workspace.")
+        return value
 
     def validate_owner(self, value):
         if value is None:
@@ -336,11 +350,24 @@ class ProjectRoomSerializer(serializers.ModelSerializer):
     owner_organization_name = serializers.CharField(source="owner_organization.name", read_only=True)
     opportunity_detail = OpportunitySerializer(source="opportunity", read_only=True)
     partners = ProjectRoomPartnerSerializer(many=True, read_only=True)
+    linked_pipeline_items = serializers.SerializerMethodField()
 
     class Meta:
         model = ProjectRoom
-        fields = ("id", "owner_organization", "owner_organization_name", "opportunity", "opportunity_detail", "name", "description", "status", "created_by", "partners", "created_at", "updated_at")
-        read_only_fields = ("id", "owner_organization", "created_by", "created_at", "updated_at")
+        fields = ("id", "owner_organization", "owner_organization_name", "opportunity", "opportunity_detail", "name", "description", "status", "archived_at", "deleted_at", "created_by", "partners", "linked_pipeline_items", "created_at", "updated_at")
+        read_only_fields = ("id", "owner_organization", "created_by", "archived_at", "deleted_at", "created_at", "updated_at")
+
+    def get_linked_pipeline_items(self, obj):
+        return [{"id": row.id, "title": row.opportunity.title, "stage": row.stage, "owner_name": (row.owner.get_full_name() or row.owner.email) if row.owner else "", "next_action": row.next_action, "follow_up_date": row.follow_up_date.isoformat() if row.follow_up_date else None} for row in obj.pipeline_items.select_related("opportunity", "owner").all()]
+
+
+class OrganizationJoinRequestSerializer(serializers.ModelSerializer):
+    organization_name = serializers.CharField(source="organization.name", read_only=True)
+    user_email = serializers.EmailField(source="user.email", read_only=True)
+    class Meta:
+        model = OrganizationJoinRequest
+        fields = ("id", "organization", "organization_name", "user", "user_email", "email_domain", "requested_role", "status", "reviewed_by", "reviewed_at", "created_at")
+        read_only_fields = ("id", "organization_name", "user", "user_email", "status", "reviewed_by", "reviewed_at", "created_at")
 
 
 class AIMessageSerializer(serializers.ModelSerializer):

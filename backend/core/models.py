@@ -124,6 +124,7 @@ class PipelineItem(TimeStampedModel):
     follow_up_date = models.DateField(null=True, blank=True)
     priority = models.CharField(max_length=20, default="medium")
     assigned_team = models.CharField(max_length=120, blank=True)
+    project_room = models.ForeignKey("ProjectRoom", null=True, blank=True, on_delete=models.SET_NULL, related_name="pipeline_items")
     notes = models.TextField(blank=True)
 
     class Meta:
@@ -540,6 +541,8 @@ class ProjectRoom(TimeStampedModel):
     description = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PLANNING)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_project_rooms")
+    archived_at = models.DateTimeField(null=True, blank=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-updated_at"]
@@ -841,6 +844,27 @@ class NetworkConnection(TimeStampedModel):
             models.Index(fields=["requester", "status", "-created_at"], name="core_netconn_req_stat_idx"),
         ]
 
+
+
+
+class OrganizationJoinRequest(TimeStampedModel):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        APPROVED = "approved", "Approved"
+        DECLINED = "declined", "Declined"
+        CANCELLED = "cancelled", "Cancelled"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="join_requests")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="organization_join_requests")
+    email_domain = models.CharField(max_length=255)
+    requested_role = models.CharField(max_length=20, choices=Membership.Role.choices, default=Membership.Role.VIEWER)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="reviewed_organization_join_requests")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [models.UniqueConstraint(fields=("organization", "user"), condition=models.Q(status="pending"), name="unique_pending_org_join_request")]
 
 class ProjectRoomInvitation(TimeStampedModel):
     class Status(models.TextChoices):

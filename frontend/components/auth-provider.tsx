@@ -10,10 +10,14 @@ type Session = {
   role: string;
 };
 
+type WorkspaceMembership={organization:{id:number;name:string;slug:string};role:string;job_title?:string};
+
 type AuthContextValue = {
   session: Session | null;
+  workspaces: WorkspaceMembership[];
   loading: boolean;
   reload: () => Promise<void>;
+  switchWorkspace: (organizationId:number) => Promise<void>;
   logout: () => Promise<void>;
 };
 
@@ -23,13 +27,18 @@ const publicPaths = ["/sign-in", "/register", "/forgot-password"];
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [workspaces, setWorkspaces] = useState<WorkspaceMembership[]>([]);
   const pathname = usePathname();
   const router = useRouter();
 
   const reload = useCallback(async () => {
     try {
-      const data = await authFetch<Session>("/auth/me/");
+      const [data, workspaceData] = await Promise.all([
+        authFetch<Session>("/auth/me/"),
+        authFetch<{workspaces:WorkspaceMembership[]}>("/auth/workspaces/"),
+      ]);
       setSession(data);
+      setWorkspaces(workspaceData.workspaces??[]);
     } catch {
       setSession(null);
     } finally {
@@ -51,13 +60,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [loading, session, pathname, router]);
 
+
+  const switchWorkspace = useCallback(async (organizationId:number) => {
+    await authFetch("/auth/workspaces/", { method: "POST", body: JSON.stringify({ organization: organizationId }) });
+    await reload();
+    router.refresh();
+  }, [reload, router]);
+
   const logout = useCallback(async () => {
     try { await authFetch("/auth/logout/", { method: "POST" }); } catch {}
     setSession(null);
     router.replace("/sign-in");
   }, [router]);
 
-  const value = useMemo(() => ({ session, loading, reload, logout }), [session, loading, reload, logout]);
+  const value = useMemo(() => ({ session, workspaces, loading, reload, switchWorkspace, logout }), [session, workspaces, loading, reload, switchWorkspace, logout]);
 
   if (loading && !publicPaths.some((path) => pathname.startsWith(path))) {
     return <div className="auth-loading"><div className="auth-spinner" /><p>Securing your ForgeGov workspace…</p></div>;

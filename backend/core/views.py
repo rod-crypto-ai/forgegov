@@ -65,6 +65,7 @@ from .models import (
     OrganizationProfile,
     NetworkConnection,
     ProjectRoomInvitation,
+    OrganizationJoinRequest,
 )
 from .serializers import (
     AgencySerializer,
@@ -102,6 +103,7 @@ from .serializers import (
     OrganizationProfileSerializer,
     NetworkConnectionSerializer,
     ProjectRoomInvitationSerializer,
+    OrganizationJoinRequestSerializer,
 )
 from .throttles import OpenAIChatThrottle, SamLiveSearchThrottle
 from .document_intelligence import DocumentIngestionError, chunk_sections, download_document, extract_document, sha256
@@ -114,7 +116,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.6.2"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.6.3"})
 
 
 @api_view(["GET"])
@@ -1101,7 +1103,7 @@ class ProjectRoomViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         organization = _request_organization(self.request)
-        return ProjectRoom.objects.filter(Q(owner_organization=organization) | Q(partners__organization=organization)).select_related("owner_organization", "opportunity", "created_by").prefetch_related("partners__organization").distinct()
+        return ProjectRoom.objects.filter(deleted_at__isnull=True).filter(Q(owner_organization=organization) | Q(partners__organization=organization)).select_related("owner_organization", "opportunity", "created_by").prefetch_related("partners__organization").distinct()
 
     def perform_create(self, serializer):
         serializer.save(owner_organization=_request_organization(self.request), created_by=self.request.user)
@@ -1117,7 +1119,9 @@ class ProjectRoomViewSet(viewsets.ModelViewSet):
         if instance.owner_organization_id != _request_organization(self.request).id:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Only the owning company can delete this Project Room.")
-        instance.delete()
+        instance.deleted_at = timezone.now()
+        instance.status = ProjectRoom.Status.CLOSED
+        instance.save(update_fields=["deleted_at", "status", "updated_at"])
 
 
 @api_view(["POST", "DELETE"])
@@ -1616,3 +1620,80 @@ def project_room_invitation_response(request, invitation_id: int):
     notify_organization_members(organization=owner_org, title=f"Project Room invitation {action}ed", message=f"{organization.name} {action}ed the invitation to {row.project_room.name}.", kind="project_room_invitation_response", link=f"/project-rooms/{row.project_room_id}", project_room=row.project_room)
     ProjectRoomActivity.objects.create(project_room=row.project_room, actor=request.user, action=f"partner_invitation_{action}ed", summary=f"{organization.name} {action}ed the Project Room invitation.")
     return Response(ProjectRoomInvitationSerializer(row).data)
+
+
+@api_view(["POST"])
+def pipeline_project_room(request, pipeline_id: int):
+    organization = _request_organization(request)
+    item = PipelineItem.objects.select_related("opportunity", "project_room").filter(pk=pipeline_id, organization=organization).first()
+    if not item:
+        return Response({"detail": "Pipeline item not found."}, status=status.HTTP_404_NOT_FOUND)
+    action = str(request.data.get("action") or "link")
+    if action == "create":
+        room = ProjectRoom.objects.create(owner_organization=organization, opportunity=item.opportunity, name=str(request.data.get("name") or item.opportunity.title), description=str(request.data.get("description") or f"Teaming workspace for {item.opportunity.title}"), status=ProjectRoom.Status.ACTIVE, created_by=request.user)
+        item.project_room = room; item.assigned_team = room.name
+        item.save(update_fields=["project_room", "assigned_team", "updated_at"])
+        ProjectRoomActivity.objects.create(project_room=room, actor=request.user, action="room.created_from_pipeline", summary=f"Teaming workspace created from pipeline item {item.opportunity.title}.", metadata={"pipeline_id": item.id})
+        return Response(PipelineItemSerializer(item, context={"request": request}).data, status=status.HTTP_201_CREATED)
+    if action == "unlink":
+        item.project_room = None; item.assigned_team = ""
+        item.save(update_fields=["project_room", "assigned_team", "updated_at"])
+        return Response(PipelineItemSerializer(item, context={"request": request}).data)
+    room = ProjectRoom.objects.filter(pk=request.data.get("project_room"), owner_organization=organization, deleted_at__isnull=True).first()
+    if not room:
+        return Response({"detail": "Select a valid Project Room owned by this workspace."}, status=status.HTTP_400_BAD_REQUEST)
+    if room.opportunity_id and room.opportunity_id != item.opportunity_id:
+        return Response({"detail": "That Project Room is linked to a different opportunity."}, status=status.HTTP_409_CONFLICT)
+    if not room.opportunity_id:
+        room.opportunity = item.opportunity; room.save(update_fields=["opportunity", "updated_at"])
+    item.project_room = room; item.assigned_team = room.name
+    item.save(update_fields=["project_room", "assigned_team", "updated_at"])
+    return Response(PipelineItemSerializer(item, context={"request": request}).data)
+
+@api_view(["POST"])
+def project_room_lifecycle(request, room_id: int):
+    organization = _request_organization(request)
+    room = ProjectRoom.objects.filter(pk=room_id, owner_organization=organization).first()
+    if not room:
+        return Response({"detail": "Project Room not found."}, status=status.HTTP_404_NOT_FOUND)
+    action = str(request.data.get("action") or "archive")
+    if action == "restore":
+        room.archived_at = None; room.deleted_at = None; room.status = ProjectRoom.Status.ACTIVE
+    elif action == "delete":
+        room.deleted_at = timezone.now(); room.status = ProjectRoom.Status.CLOSED
+        room.pipeline_items.update(project_room=None, assigned_team="")
+    else:
+        room.archived_at = timezone.now(); room.status = ProjectRoom.Status.CLOSED
+    room.save(update_fields=["archived_at", "deleted_at", "status", "updated_at"])
+    return Response(ProjectRoomSerializer(room, context={"request": request}).data)
+
+@api_view(["GET", "POST"])
+def organization_join_requests(request):
+    membership = active_membership(request.user)
+    domain = request.user.email.split("@",1)[1].lower() if "@" in request.user.email else ""
+    if request.method == "GET":
+        rows = OrganizationJoinRequest.objects.filter(organization=membership.organization) if membership and membership.role in {Membership.Role.OWNER, Membership.Role.ADMIN} else OrganizationJoinRequest.objects.filter(user=request.user)
+        return Response(OrganizationJoinRequestSerializer(rows, many=True).data)
+    org = Organization.objects.filter(pk=request.data.get("organization")).first()
+    profile = OrganizationProfile.objects.filter(organization=org, verified=True).first() if org else None
+    website_domain = str(getattr(profile, "website", "")).lower().replace("https://", "").replace("http://", "").split("/",1)[0].removeprefix("www.")
+    if not org or not profile or not domain or domain != website_domain:
+        return Response({"detail": "Your email domain must match a verified company website before requesting access."}, status=status.HTTP_400_BAD_REQUEST)
+    row, _ = OrganizationJoinRequest.objects.get_or_create(organization=org, user=request.user, status=OrganizationJoinRequest.Status.PENDING, defaults={"email_domain": domain})
+    notify_organization_members(organization=org, title="Company join request", message=f"{request.user.email} requested access to {org.name}.", kind="company_join_request", link="/company", roles=[Membership.Role.OWNER, Membership.Role.ADMIN])
+    return Response(OrganizationJoinRequestSerializer(row).data, status=status.HTTP_201_CREATED)
+
+@api_view(["POST"])
+def organization_join_request_response(request, request_id: int):
+    membership = active_membership(request.user)
+    row = OrganizationJoinRequest.objects.select_related("organization", "user").filter(pk=request_id).first()
+    if not row or not membership or membership.organization_id != row.organization_id or membership.role not in {Membership.Role.OWNER, Membership.Role.ADMIN}:
+        return Response({"detail": "Only company owners and administrators can review this request."}, status=status.HTTP_403_FORBIDDEN)
+    action = str(request.data.get("action") or "decline")
+    if action == "approve":
+        Membership.objects.update_or_create(organization=row.organization, user=row.user, defaults={"role": row.requested_role, "active": True})
+        row.status = OrganizationJoinRequest.Status.APPROVED
+    else:
+        row.status = OrganizationJoinRequest.Status.DECLINED
+    row.reviewed_by = request.user; row.reviewed_at = timezone.now(); row.save(update_fields=["status", "reviewed_by", "reviewed_at", "updated_at"])
+    return Response(OrganizationJoinRequestSerializer(row).data)

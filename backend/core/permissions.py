@@ -5,7 +5,13 @@ from .models import Membership
 def active_membership(user):
     if not user or not user.is_authenticated:
         return None
-    return user.organization_memberships.filter(active=True).select_related("organization").order_by("id").first()
+    queryset = user.organization_memberships.filter(active=True).select_related("organization")
+    preferred = getattr(user, "_forgegov_organization_id", None)
+    if preferred:
+        selected = queryset.filter(organization_id=preferred).first()
+        if selected:
+            return selected
+    return queryset.order_by("id").first()
 
 
 class IsOrganizationMember(BasePermission):
