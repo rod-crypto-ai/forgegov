@@ -11,6 +11,7 @@ import { apiGet } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
 
 type Summary = { opportunities?: { total?: number; active?: number }; awards?: { total?: number; obligated_total?: number }; pipeline?: { total?: number; by_stage?: Record<string, number>; weighted_value?: number }; pursuits?: { total?: number }; tasks?: { open?: number; overdue?: number }; contacts?: number; vendors?: number; agencies?: number; saved_searches?: number; };
+type CommandCenter={metrics:{pipeline:number;active_rooms:number;open_tasks:number;overdue:number;unread_alerts:number;pending_invitations:number};deadlines:Array<{type:string;title:string;subtitle?:string;due_at:string;href:string;overdue:boolean}>;activity:Array<{type:string;title:string;subtitle?:string;created_at:string;href:string}>;insights:Array<{severity:string;title:string;detail:string;href:string}>;quick_actions:Array<{label:string;href:string}>};
 type Integrations = { sam_gov?: { configured?: boolean }; usaspending?: { reachable?: boolean; stored_awards?: number }; ai?: { web_search_configured?: boolean; web_search_reachable?: boolean | null } };
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 });
 
@@ -18,8 +19,9 @@ export default function DashboardPage() {
   const { session } = useAuth();
   const [summary, setSummary] = useState<Summary>({});
   const [integrations, setIntegrations] = useState<Integrations>({});
+  const [commandCenter,setCommandCenter]=useState<CommandCenter>({metrics:{pipeline:0,active_rooms:0,open_tasks:0,overdue:0,unread_alerts:0,pending_invitations:0},deadlines:[],activity:[],insights:[],quick_actions:[]});
   const [error, setError] = useState("");
-  useEffect(() => { Promise.all([apiGet<Summary>("/dashboard/summary/"), apiGet<Integrations>("/integrations/status/?probe=true")]).then(([a,b]) => {setSummary(a); setIntegrations(b);}).catch((e) => setError(e instanceof Error ? e.message : "Backend unavailable")); }, []);
+  useEffect(() => { Promise.all([apiGet<Summary>("/dashboard/summary/"), apiGet<Integrations>("/integrations/status/?probe=true"), apiGet<CommandCenter>("/dashboard/command-center/")]).then(([a,b,c]) => {setSummary(a); setIntegrations(b); setCommandCenter(c);}).catch((e) => setError(e instanceof Error ? e.message : "Backend unavailable")); }, []);
   const stages = useMemo(() => Object.entries(summary.pipeline?.by_stage ?? {}), [summary]);
   const total = Math.max(summary.pipeline?.total ?? 0, 1);
   const hour = new Date().getHours();
@@ -47,16 +49,10 @@ export default function DashboardPage() {
       <Link href="/settings">Manage data sources <ChevronRight size={15}/></Link>
     </section>
 
-    <section className="release-spotlight" aria-label="ForgeGov v2.3 capabilities">
-      <div className="release-spotlight-copy">
-        <span className="page-kicker">NEW IN FORGEGOV v2.3</span>
-        <h2>ForgeAI document intelligence and secure Project Rooms are live.</h2>
-        <p>Analyze solicitation attachments with citations, generate opportunity briefings, and coordinate internal teams and invited partner companies without exposing private workspace data.</p>
-      </div>
-      <div className="release-spotlight-actions">
-        <Link href="/project-rooms" className="button solid"><FolderKanban size={17}/> Open Project Rooms</Link>
-        <Link href="/opportunities/federal-contracts" className="button ghost"><BrainCircuit size={17}/> Analyze an opportunity</Link>
-      </div>
+    <section className="command-center-grid">
+      <div className="command-panel command-insights"><header><div><span className="panel-kicker">FORGEAI WORKSPACE SIGNALS</span><h2>What needs attention</h2></div><Link href="/assistant">Ask AI <ArrowRight size={14}/></Link></header><div>{commandCenter.insights.map((row,index)=><Link href={row.href} className={`command-insight severity-${row.severity}`} key={`${row.title}-${index}`}><i/><span><b>{row.title}</b><small>{row.detail}</small></span><ChevronRight size={16}/></Link>)}</div></div>
+      <div className="command-panel command-deadlines"><header><div><span className="panel-kicker">DEADLINES</span><h2>Upcoming work</h2></div><Link href="/capture/tasks">All tasks <ArrowRight size={14}/></Link></header><div>{commandCenter.deadlines.length?commandCenter.deadlines.slice(0,5).map((row,index)=><Link href={row.href} key={`${row.type}-${index}`} className={row.overdue?"overdue":""}><CalendarClock size={17}/><span><b>{row.title}</b><small>{row.subtitle||row.type.replaceAll("_"," ")}</small></span><time>{new Date(row.due_at).toLocaleDateString()}</time></Link>):<p className="command-empty">No scheduled deadlines yet.</p>}</div></div>
+      <div className="command-panel command-activity"><header><div><span className="panel-kicker">RECENT ACTIVITY</span><h2>Workspace movement</h2></div><Link href="/audit-log">Audit log <ArrowRight size={14}/></Link></header><div>{commandCenter.activity.length?commandCenter.activity.slice(0,6).map((row,index)=><Link href={row.href} key={`${row.type}-${index}`}><span className={`activity-dot ${row.type}`}/><span><b>{row.title}</b><small>{row.subtitle||row.type}</small></span><time>{new Date(row.created_at).toLocaleDateString()}</time></Link>):<p className="command-empty">Activity will appear as your team works.</p>}</div></div>
     </section>
 
     <section className="metric-grid">

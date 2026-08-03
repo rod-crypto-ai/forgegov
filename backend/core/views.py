@@ -112,7 +112,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.4.2"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.5.0"})
 
 
 @api_view(["GET"])
@@ -770,34 +770,133 @@ def live_sba_subnet_search(request):
 
 @api_view(["GET"])
 def global_search(request):
-    """Search the core ForgeGov intelligence objects without leaving the workspace."""
+    """Unified organization-aware search across ForgeGov intelligence and workspaces."""
     query = str(request.query_params.get("q") or "").strip()
     if len(query) < 2:
-        return Response({"query": query, "results": []})
-    limit = min(max(int(request.query_params.get("limit", 8)), 1), 25)
+        return Response({"query": query, "results": [], "groups": {}})
+    limit = min(max(int(request.query_params.get("limit", 10)), 1), 30)
+    organization = _request_organization(request)
     results = []
+
+    def add(result_type, obj_id, title, subtitle, href, *, group="Intelligence", metadata=None):
+        results.append({
+            "type": result_type,
+            "id": obj_id,
+            "title": title,
+            "subtitle": subtitle or "",
+            "href": href,
+            "group": group,
+            "metadata": metadata or {},
+        })
+
     for item in Opportunity.objects.filter(
-        Q(title__icontains=query) | Q(solicitation_number__icontains=query) | Q(agency__icontains=query)
+        Q(title__icontains=query) | Q(solicitation_number__icontains=query) | Q(agency__icontains=query) | Q(description__icontains=query)
     ).order_by("-posted_date")[:limit]:
         if item.source == "grants.gov" or str(item.source_id).startswith("grants.gov:"):
             grant_id = str(item.source_id).replace("grants.gov:", "", 1)
-            href = f"/opportunities/federal-grants/{grant_id}" if grant_id else "/opportunities/federal-grants"
-            result_type = "grant"
+            add("grant", item.source_id or item.id, item.title, item.solicitation_number or item.agency, f"/opportunities/federal-grants/{grant_id}" if grant_id else "/opportunities/federal-grants", group="Opportunities")
         else:
-            href = f"/opportunities/federal-contracts/{item.source_id}" if item.source_id else "/opportunities/federal-contracts"
-            result_type = "opportunity"
-        results.append({"type":result_type,"id":item.source_id or item.id,"title":item.title,"subtitle":item.solicitation_number or item.agency,"href":href})
-    for item in Vendor.objects.filter(
-        Q(name__icontains=query) | Q(uei__icontains=query) | Q(cage_code__icontains=query)
-    ).order_by("name")[:limit]:
-        results.append({"type":"vendor","id":item.id,"title":item.name,"subtitle":" · ".join(filter(None,[item.uei,item.cage_code,item.state])),"href":f"/participants/vendors/profile?id={item.id}"})
+            add("opportunity", item.source_id or item.id, item.title, item.solicitation_number or item.agency, f"/opportunities/federal-contracts/{item.source_id}" if item.source_id else "/opportunities/federal-contracts", group="Opportunities")
+
+    for item in PipelineItem.objects.filter(organization=organization).filter(
+        Q(opportunity__title__icontains=query) | Q(opportunity__solicitation_number__icontains=query) | Q(notes__icontains=query) | Q(next_action__icontains=query)
+    ).select_related("opportunity")[:limit]:
+        add("pipeline", item.id, item.opportunity.title, f"{item.get_stage_display()} · {item.opportunity.solicitation_number or item.opportunity.agency}", "/capture/pipelines", group="Capture")
+
+    for item in Pursuit.objects.filter(organization=organization).filter(Q(title__icontains=query) | Q(notes__icontains=query) | Q(next_action__icontains=query))[:limit]:
+        add("pursuit", item.id, item.title, item.get_stage_display(), "/capture/pursuits", group="Capture")
+
+    for item in Task.objects.filter(organization=organization).filter(Q(title__icontains=query) | Q(description__icontains=query))[:limit]:
+        add("task", item.id, item.title, "Completed" if item.completed else "Open task", "/capture/tasks", group="Work")
+
+    room_filter = Q(owner_organization=organization) | Q(partners__organization=organization)
+    for item in ProjectRoom.objects.filter(room_filter).filter(Q(name__icontains=query) | Q(description__icontains=query)).distinct()[:limit]:
+        add("project_room", item.id, item.name, item.get_status_display(), f"/project-rooms/{item.id}", group="Collaboration")
+
+    for item in OpportunityDocument.objects.filter(organization=organization).filter(Q(file_name__icontains=query) | Q(chunks__text__icontains=query)).distinct()[:limit]:
+        add("document", item.id, item.file_name, item.opportunity.title, f"/opportunities/federal-contracts/{item.opportunity.source_id}", group="Documents")
+
+    for item in OrganizationProfile.objects.filter(is_public=True).filter(
+        Q(organization__name__icontains=query) | Q(tagline__icontains=query) | Q(description__icontains=query) | Q(capabilities__icontains=query)
+    ).select_related("organization")[:limit]:
+        if item.organization_id != organization.id:
+            add("company", item.organization_id, item.organization.name, item.tagline or ", ".join(item.capabilities[:3]), "/network", group="Network")
+
+    for item in Vendor.objects.filter(Q(name__icontains=query) | Q(uei__icontains=query) | Q(cage_code__icontains=query)).order_by("name")[:limit]:
+        add("vendor", item.id, item.name, " · ".join(filter(None,[item.uei,item.cage_code,item.state])), f"/participants/vendors/profile?id={item.id}", group="Market Intelligence")
     for item in Agency.objects.filter(Q(name__icontains=query) | Q(agency_code__icontains=query)).order_by("name")[:limit]:
-        results.append({"type":"agency","id":item.id,"title":item.name,"subtitle":item.agency_code,"href":f"/intelligence/agency/{item.name}"})
-    for item in Award.objects.filter(
-        Q(recipient_name__icontains=query) | Q(award_number__icontains=query) | Q(description__icontains=query) | Q(awarding_agency__icontains=query)
-    ).order_by("-start_date", "-updated_at")[:limit]:
-        results.append({"type":"award","id":item.id,"title":item.description or item.award_number or "Federal award","subtitle":f"{item.recipient_name} · {item.awarding_agency}".strip(" ·"),"href":f"/intelligence/award/{item.award_number or item.source_id or item.id}"})
-    return Response({"query": query, "results": results[:limit * 3]})
+        add("agency", item.id, item.name, item.agency_code, f"/intelligence/agency/{item.name}", group="Market Intelligence")
+    for item in Award.objects.filter(Q(recipient_name__icontains=query) | Q(award_number__icontains=query) | Q(description__icontains=query) | Q(awarding_agency__icontains=query)).order_by("-start_date", "-updated_at")[:limit]:
+        add("award", item.id, item.description or item.award_number or "Federal award", f"{item.recipient_name} · {item.awarding_agency}".strip(" ·"), f"/intelligence/award/{item.award_number or item.source_id or item.id}", group="Awards")
+
+    groups = {}
+    for row in results:
+        groups.setdefault(row["group"], 0)
+        groups[row["group"]] += 1
+    return Response({"query": query, "results": results[:limit * 8], "groups": groups})
+
+
+@api_view(["GET"])
+def command_center(request):
+    """Organization-scoped operating picture for capture, collaboration, deadlines, and alerts."""
+    organization = _request_organization(request)
+    now = timezone.now()
+    today = now.date()
+    room_filter = Q(owner_organization=organization) | Q(partners__organization=organization)
+    rooms = ProjectRoom.objects.filter(room_filter).distinct()
+
+    deadlines = []
+    for task in Task.objects.filter(organization=organization, completed=False, due_at__isnull=False).order_by("due_at")[:8]:
+        deadlines.append({"type":"task","title":task.title,"due_at":task.due_at.isoformat(),"href":"/capture/tasks","overdue":task.due_at < now})
+    for task in ProjectRoomTask.objects.filter(Q(project_room__owner_organization=organization) | Q(project_room__partners__organization=organization, visibility=ProjectRoomTask.Visibility.SHARED)).distinct().exclude(status=ProjectRoomTask.Status.DONE).filter(due_date__isnull=False).select_related("project_room").order_by("due_date")[:8]:
+        deadlines.append({"type":"project_task","title":task.title,"subtitle":task.project_room.name,"due_at":task.due_date.isoformat(),"href":f"/project-rooms/{task.project_room_id}","overdue":task.due_date < today})
+    deadlines = sorted(deadlines, key=lambda row: row["due_at"])[:10]
+
+    activity = []
+    for row in ProjectRoomActivity.objects.filter(Q(project_room__owner_organization=organization) | Q(project_room__partners__organization=organization, visibility=ProjectRoomNote.Visibility.SHARED)).distinct().select_related("project_room", "actor").order_by("-created_at")[:10]:
+        activity.append({"type":"project_room","title":row.summary,"subtitle":row.project_room.name,"created_at":row.created_at.isoformat(),"href":f"/project-rooms/{row.project_room_id}"})
+    for row in IntelligenceAlert.objects.filter(organization=organization, dismissed=False).order_by("-created_at")[:8]:
+        activity.append({"type":"alert","title":row.title,"subtitle":row.summary[:180],"created_at":row.created_at.isoformat(),"href":"/capture/alerts"})
+    activity = sorted(activity, key=lambda row: row["created_at"], reverse=True)[:12]
+
+    pipeline = PipelineItem.objects.filter(organization=organization)
+    open_tasks = Task.objects.filter(organization=organization, completed=False)
+    active_rooms = rooms.filter(status__in=[ProjectRoom.Status.PLANNING, ProjectRoom.Status.ACTIVE])
+    pending_connections = NetworkConnection.objects.filter(Q(requester=organization) | Q(recipient=organization), status=NetworkConnection.Status.PENDING).count()
+    pending_room_invites = ProjectRoomInvitation.objects.filter(invited_organization=organization, status=ProjectRoomInvitation.Status.PENDING).count()
+    unread_alerts = IntelligenceAlert.objects.filter(organization=organization, read=False, dismissed=False).count()
+    overdue = open_tasks.filter(due_at__lt=now).count() + ProjectRoomTask.objects.filter(Q(project_room__owner_organization=organization) | Q(project_room__partners__organization=organization, visibility=ProjectRoomTask.Visibility.SHARED)).distinct().exclude(status=ProjectRoomTask.Status.DONE).filter(due_date__lt=today).count()
+
+    insights = []
+    if overdue:
+        insights.append({"severity":"high","title":f"{overdue} overdue action{'s' if overdue != 1 else ''}","detail":"Clear overdue work before adding new pursuit commitments.","href":"/capture/tasks"})
+    if pending_connections or pending_room_invites:
+        insights.append({"severity":"medium","title":"Partner responses need attention","detail":f"{pending_connections} connection request(s) and {pending_room_invites} Project Room invitation(s) are pending.","href":"/network?tab=invitations"})
+    if unread_alerts:
+        insights.append({"severity":"info","title":f"{unread_alerts} unread intelligence alert{'s' if unread_alerts != 1 else ''}","detail":"Review new opportunity matches and deadline signals.","href":"/capture/alerts"})
+    if not insights:
+        insights.append({"severity":"success","title":"Workspace is under control","detail":"No overdue work or pending collaboration decisions were detected.","href":"/"})
+
+    return Response({
+        "metrics": {
+            "pipeline": pipeline.count(),
+            "active_rooms": active_rooms.count(),
+            "open_tasks": open_tasks.count(),
+            "overdue": overdue,
+            "unread_alerts": unread_alerts,
+            "pending_invitations": pending_connections + pending_room_invites,
+        },
+        "deadlines": deadlines,
+        "activity": activity,
+        "insights": insights,
+        "quick_actions": [
+            {"label":"Find opportunities","href":"/opportunities/federal-contracts"},
+            {"label":"Open pipeline","href":"/capture/pipelines"},
+            {"label":"Create Project Room","href":"/project-rooms"},
+            {"label":"Find partners","href":"/network"},
+            {"label":"Ask ForgeGov AI","href":"/assistant"},
+        ],
+    })
 
 
 @api_view(["GET"])

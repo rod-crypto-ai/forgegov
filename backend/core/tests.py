@@ -23,7 +23,7 @@ from .integrations import (
     upsert_sam_opportunity,
 )
 from .ai import live_web_status
-from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, OrganizationProfile, NetworkConnection, ProjectRoomInvitation
+from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Task, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, ProjectRoomActivity, OrganizationProfile, NetworkConnection, ProjectRoomInvitation
 
 User = get_user_model()
 
@@ -74,13 +74,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.4.2")
+        self.assertEqual(response.json()["version"], "2.5.0")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.4.2")
+        self.assertEqual(response.json()["version"], "2.5.0")
 
 
 class RouterRegressionTests(TestCase):
@@ -982,3 +982,45 @@ class ForgeGovNetworkSecurityTests(TestCase):
         self.assertEqual(accepted.status_code, 200)
         self.assertTrue(ProjectRoomPartner.objects.filter(project_room=self.room, organization=self.partner, can_view_pricing=False).exists())
         self.assertFalse(ProjectRoomPartner.objects.filter(project_room=self.room, organization=self.outsider).exists())
+
+
+class CommandCenterAndUnifiedSearchTests(AuthenticatedApiTestCase):
+    def setUp(self):
+        super().setUp()
+        self.opportunity = Opportunity.objects.create(source_id="phase5-opp", title="Secure Logistics Support", solicitation_number="FG-2501", agency="Army")
+        self.pipeline = PipelineItem.objects.create(organization=self.organization, opportunity=self.opportunity, stage=PipelineItem.Stage.CAPTURE, notes="Priority logistics pursuit")
+        Task.objects.create(organization=self.organization, pipeline_item=self.pipeline, title="Submit logistics questions", due_at=timezone.now()-timedelta(days=1))
+        self.room = ProjectRoom.objects.create(owner_organization=self.organization, name="Logistics Project Room", status=ProjectRoom.Status.ACTIVE, created_by=self.user)
+        ProjectRoomTask.objects.create(project_room=self.room, title="Draft staffing plan", visibility=ProjectRoomTask.Visibility.SHARED, due_date=timezone.localdate()+timedelta(days=2), created_by=self.user)
+        ProjectRoomActivity.objects.create(project_room=self.room, actor=self.user, action="task_created", summary="Created staffing task", visibility=ProjectRoomNote.Visibility.SHARED)
+
+    def test_command_center_returns_scoped_operating_picture(self):
+        response = self.client.get("/api/dashboard/command-center/")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["metrics"]["pipeline"], 1)
+        self.assertEqual(payload["metrics"]["active_rooms"], 1)
+        self.assertGreaterEqual(payload["metrics"]["overdue"], 1)
+        self.assertTrue(any(row["title"] == "Draft staffing plan" for row in payload["deadlines"]))
+
+    def test_unified_search_finds_workspace_and_intelligence_records(self):
+        response = self.client.get("/api/intelligence/search/?q=logistics&limit=10")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        result_types = {row["type"] for row in payload["results"]}
+        self.assertIn("opportunity", result_types)
+        self.assertIn("pipeline", result_types)
+        self.assertIn("project_room", result_types)
+        self.assertIn("Opportunities", payload["groups"])
+
+    def test_partner_command_center_does_not_expose_internal_room_records(self):
+        partner_user = User.objects.create_user(username="phase5-partner@example.com", email="phase5-partner@example.com", password="StrongPass!234")
+        partner_org = Organization.objects.create(name="Phase Five Partner", slug="phase-five-partner")
+        Membership.objects.create(user=partner_user, organization=partner_org, role=Membership.Role.OWNER)
+        ProjectRoomPartner.objects.create(project_room=self.room, organization=partner_org, invited_by=self.user)
+        ProjectRoomTask.objects.create(project_room=self.room, title="Private pricing action", visibility=ProjectRoomTask.Visibility.INTERNAL, due_date=timezone.localdate()+timedelta(days=1), created_by=self.user)
+        ProjectRoomActivity.objects.create(project_room=self.room, actor=self.user, action="private_note", summary="Internal pricing strategy", visibility=ProjectRoomNote.Visibility.INTERNAL)
+        client=APIClient(); client.force_authenticate(partner_user)
+        payload=client.get("/api/dashboard/command-center/").json()
+        self.assertFalse(any(row["title"] == "Private pricing action" for row in payload["deadlines"]))
+        self.assertFalse(any(row["title"] == "Internal pricing strategy" for row in payload["activity"]))

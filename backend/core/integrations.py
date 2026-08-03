@@ -1171,7 +1171,7 @@ def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: i
     ):
         candidate=str(candidate or "").strip()
         if candidate and candidate not in source_urls: source_urls.append(candidate)
-    headers={"User-Agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ForgeGov/2.4.2","Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language":"en-US,en;q=0.9","Cache-Control":"no-cache"}
+    headers={"User-Agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ForgeGov/2.5.0","Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language":"en-US,en;q=0.9","Cache-Control":"no-cache"}
 
     def parse_page(html:str,response_url:str)->tuple[list[dict[str,Any]],bool]:
         soup=BeautifulSoup(html,"html.parser"); results=[]
@@ -1257,7 +1257,7 @@ def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: i
         if query.strip(): terms.append(query.strip())
         if state.strip() and state.strip().lower()!="all": terms.append(state.strip())
         try:
-            wr=requests.get(searx.rstrip("/")+"/search",params={"q":" ".join(terms),"format":"json","language":"en-US","safesearch":1},timeout=18,headers={"User-Agent":"ForgeGov/2.4.2"}); wr.raise_for_status(); rows=wr.json().get("results"); indexed=[]
+            wr=requests.get(searx.rstrip("/")+"/search",params={"q":" ".join(terms),"format":"json","language":"en-US","safesearch":1},timeout=18,headers={"User-Agent":"ForgeGov/2.5.0"}); wr.raise_for_status(); rows=wr.json().get("results"); indexed=[]
             if isinstance(rows,list):
                 for row in rows:
                     if not isinstance(row,dict): continue
