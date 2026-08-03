@@ -75,13 +75,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.6.1")
+        self.assertEqual(response.json()["version"], "2.6.2")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.6.1")
+        self.assertEqual(response.json()["version"], "2.6.2")
 
 
 class RouterRegressionTests(TestCase):
@@ -1067,3 +1067,46 @@ class CollaborationStabilityTests(AuthenticatedApiTestCase):
         membership.save(update_fields=["active"])
         response = self.client.get("/api/team/members/")
         self.assertEqual(response.status_code, 403)
+
+@override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend", FRONTEND_URL="https://forge-gov.test")
+class CollaborationCompletionTests(TestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(username="completion-owner@example.com", email="completion-owner@example.com", password="StrongPass!234")
+        self.recipient = User.objects.create_user(username="completion-recipient@example.com", email="completion-recipient@example.com", password="StrongPass!234")
+        self.organization = Organization.objects.create(name="Completion Prime", slug="completion-prime")
+        self.recipient_org = Organization.objects.create(name="Completion Recipient", slug="completion-recipient")
+        Membership.objects.create(user=self.owner, organization=self.organization, role=Membership.Role.OWNER)
+        Membership.objects.create(user=self.recipient, organization=self.recipient_org, role=Membership.Role.OWNER)
+        self.owner_client = APIClient(); self.owner_client.force_authenticate(self.owner)
+        self.recipient_client = APIClient(); self.recipient_client.force_authenticate(self.recipient)
+
+    def test_existing_user_sees_email_bound_invitation_and_can_decline(self):
+        created = self.owner_client.post("/api/team/invitations/", {"email": self.recipient.email, "role": Membership.Role.VIEWER}, format="json")
+        self.assertEqual(created.status_code, 201)
+        inbox = self.recipient_client.get("/api/auth/invitations/pending/")
+        self.assertEqual(inbox.status_code, 200)
+        self.assertEqual(inbox.json()[0]["organization_name"], self.organization.name)
+        declined = self.recipient_client.post(f"/api/auth/invitations/{created.json()['id']}/respond/", {"action": "decline"}, format="json")
+        self.assertEqual(declined.status_code, 200)
+        self.assertEqual(declined.json()["status"], Invitation.Status.DECLINED)
+
+    def test_user_specific_notification_is_visible_across_workspace_boundary(self):
+        from .notifications import create_notification
+        create_notification(organization=self.organization, user=self.recipient, title="Partner invitation", message="Review request", kind="project_room_invitation", link="/network?tab=invitations")
+        response = self.recipient_client.get("/api/collaboration/notifications/")
+        self.assertEqual(response.status_code, 200)
+        rows = response.json() if isinstance(response.json(), list) else response.json()["results"]
+        self.assertTrue(any(row["title"] == "Partner invitation" for row in rows))
+
+    def test_existing_member_of_other_company_cannot_accept_employee_invitation(self):
+        invitation = Invitation.objects.create(organization=self.organization, email=self.recipient.email, role=Membership.Role.VIEWER, token="other-company", expires_at=timezone.now()+timedelta(days=7))
+        response = self.recipient_client.post(f"/api/auth/invitations/{invitation.id}/respond/", {"action": "accept"}, format="json")
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("partner-company invitation", response.json()["detail"])
+
+    def test_pipeline_resolver_target_is_independent_of_assigned_team(self):
+        opportunity = Opportunity.objects.create(source="sam.gov", source_id="team-independent-notice", title="Team independent route")
+        item = PipelineItem.objects.create(organization=self.organization, opportunity=opportunity, assigned_team="Strategic Project Room")
+        response = self.owner_client.get(f"/api/pipeline/{item.id}/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["workspace_url"], "/opportunities/federal-contracts/team-independent-notice")

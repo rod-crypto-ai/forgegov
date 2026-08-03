@@ -114,7 +114,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.6.1"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.6.2"})
 
 
 @api_view(["GET"])
@@ -134,6 +134,11 @@ def integration_status(request):
             "configured": bool(settings.OPENAI_API_KEY),
             "model": settings.OPENAI_MODEL,
             "base_url": settings.OPENAI_API_BASE_URL,
+        },
+        "email": {
+            "backend": settings.EMAIL_BACKEND,
+            "configured": settings.EMAIL_BACKEND != "django.core.mail.backends.console.EmailBackend" and bool(getattr(settings, "DEFAULT_FROM_EMAIL", "")),
+            "from_email": getattr(settings, "DEFAULT_FROM_EMAIL", ""),
         },
         "ai": {
             "provider": settings.AI_PROVIDER,
@@ -1445,8 +1450,10 @@ class CollaborationNotificationViewSet(viewsets.ModelViewSet):
     serializer_class=CollaborationNotificationSerializer
     http_method_names=["get","patch","head","options"]
     def get_queryset(self):
-        organization=_request_organization(self.request)
-        return CollaborationNotification.objects.filter(organization=organization).filter(Q(user=self.request.user)|Q(user__isnull=True))
+        organization = _request_organization(self.request)
+        return CollaborationNotification.objects.filter(
+            Q(user=self.request.user) | Q(organization=organization, user__isnull=True)
+        ).select_related("organization", "project_room")
 
 
 def _network_connection_between(left, right):

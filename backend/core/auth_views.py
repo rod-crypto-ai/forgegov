@@ -20,7 +20,7 @@ from .models import AuditLog, CollaborationNotification, Invitation, Membership,
 from .permissions import IsOrganizationAdmin, active_membership
 from .serializers import AuditLogSerializer, InvitationSerializer, MembershipSerializer, UserSerializer
 from .throttles import LoginThrottle, RegistrationThrottle
-from .notifications import create_notification, send_system_email
+from .notifications import create_notification, notify_organization_members, send_system_email
 
 User = get_user_model()
 
@@ -298,6 +298,86 @@ def invitation_action(request, invitation_id):
     else:
         return Response({"detail": "action must be resend or cancel."}, status=status.HTTP_400_BAD_REQUEST)
     return Response(InvitationSerializer(record).data)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def pending_invitations(request):
+    email = str(request.user.email or "").strip().lower()
+    if not email:
+        return Response([])
+    rows = Invitation.objects.filter(
+        email__iexact=email,
+        status=Invitation.Status.PENDING,
+        expires_at__gt=timezone.now(),
+    ).select_related("organization", "invited_by").order_by("-created_at")
+    payload = []
+    for row in rows:
+        data = InvitationSerializer(row).data
+        data["organization_name"] = row.organization.name
+        data["invited_by_name"] = (row.invited_by.get_full_name() or row.invited_by.email) if row.invited_by else "ForgeGov administrator"
+        payload.append(data)
+    return Response(payload)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def pending_invitation_response(request, invitation_id):
+    email = str(request.user.email or "").strip().lower()
+    row = Invitation.objects.select_related("organization", "invited_by").filter(
+        pk=invitation_id,
+        email__iexact=email,
+        status=Invitation.Status.PENDING,
+        expires_at__gt=timezone.now(),
+    ).first()
+    if not row:
+        return Response({"detail": "Pending invitation not found or expired."}, status=status.HTTP_404_NOT_FOUND)
+    action = str(request.data.get("action") or "").lower()
+    if action not in {"accept", "decline"}:
+        return Response({"detail": "action must be accept or decline."}, status=status.HTTP_400_BAD_REQUEST)
+    if action == "accept":
+        existing = Membership.objects.filter(user=request.user, active=True).exclude(organization=row.organization).first()
+        if existing:
+            return Response({"detail": "This account already belongs to another active company workspace. Ask the inviting company to use a partner-company invitation instead."}, status=status.HTTP_409_CONFLICT)
+        membership, _ = Membership.objects.update_or_create(
+            organization=row.organization,
+            user=request.user,
+            defaults={"role": row.role, "job_title": row.job_title, "department": row.department, "active": True},
+        )
+        row.status = Invitation.Status.ACCEPTED
+        row.accepted_by = request.user
+        row.responded_at = timezone.now()
+        row.save(update_fields=["status", "accepted_by", "responded_at", "updated_at"])
+        create_notification(organization=row.organization, user=request.user, title=f"You joined {row.organization.name}", message="Your company membership is active.", kind="membership", link="/company")
+        notify_organization_members(organization=row.organization, title="Employee invitation accepted", message=f"{request.user.email} joined the company workspace.", kind="invitation_response", link="/company", roles=[Membership.Role.OWNER, Membership.Role.ADMIN])
+        audit(request, "team.invitation_accepted", row.organization, "invitation", row.id, {"membership": membership.id})
+    else:
+        row.status = Invitation.Status.DECLINED
+        row.responded_at = timezone.now()
+        row.save(update_fields=["status", "responded_at", "updated_at"])
+        notify_organization_members(organization=row.organization, title="Employee invitation declined", message=f"{request.user.email} declined the company invitation.", kind="invitation_response", link="/company", roles=[Membership.Role.OWNER, Membership.Role.ADMIN])
+        audit(request, "team.invitation_declined", row.organization, "invitation", row.id)
+    return Response(InvitationSerializer(row).data)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def invitation_preview(request):
+    token = str(request.query_params.get("token") or "").strip()
+    row = Invitation.objects.select_related("organization", "invited_by").filter(
+        token=token, status=Invitation.Status.PENDING, expires_at__gt=timezone.now()
+    ).first()
+    if not row:
+        return Response({"detail": "Invitation not found or expired."}, status=status.HTTP_404_NOT_FOUND)
+    return Response({
+        "email": row.email,
+        "organization_name": row.organization.name,
+        "role": row.role,
+        "job_title": row.job_title,
+        "department": row.department,
+        "expires_at": row.expires_at,
+        "invited_by_name": (row.invited_by.get_full_name() or row.invited_by.email) if row.invited_by else "ForgeGov administrator",
+    })
 
 
 @api_view(["GET"])
