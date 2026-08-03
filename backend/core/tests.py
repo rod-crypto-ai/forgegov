@@ -2,6 +2,7 @@ from unittest.mock import Mock, patch
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.core import mail
 from django.core.cache import cache
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
@@ -74,13 +75,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.6.0")
+        self.assertEqual(response.json()["version"], "2.6.1")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.6.0")
+        self.assertEqual(response.json()["version"], "2.6.1")
 
 
 class RouterRegressionTests(TestCase):
@@ -1024,3 +1025,45 @@ class CommandCenterAndUnifiedSearchTests(AuthenticatedApiTestCase):
         payload=client.get("/api/dashboard/command-center/").json()
         self.assertFalse(any(row["title"] == "Private pricing action" for row in payload["deadlines"]))
         self.assertFalse(any(row["title"] == "Internal pricing strategy" for row in payload["activity"]))
+
+
+@override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend", FRONTEND_URL="https://forge-gov.test")
+class CollaborationStabilityTests(AuthenticatedApiTestCase):
+    def test_employee_invitation_sends_email_and_tracks_job_context(self):
+        response = self.client.post("/api/team/invitations/", {
+            "email": "capture@example.com",
+            "role": Membership.Role.CAPTURE,
+            "job_title": "Senior Capture Manager",
+            "department": "Growth",
+        }, format="json")
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.json()["email_delivered"])
+        self.assertEqual(len(mail.outbox), 1)
+        record = Invitation.objects.get(email="capture@example.com")
+        self.assertEqual(record.job_title, "Senior Capture Manager")
+        self.assertEqual(record.department, "Growth")
+        self.assertIsNotNone(record.last_sent_at)
+
+    def test_invitation_can_be_cancelled_and_history_is_preserved(self):
+        invitation = Invitation.objects.create(organization=self.organization, email="viewer@example.com", role=Membership.Role.VIEWER, token="cancel-me", invited_by=self.user, expires_at=timezone.now()+timedelta(days=7))
+        response = self.client.post(f"/api/team/invitations/{invitation.id}/action/", {"action": "cancel"}, format="json")
+        self.assertEqual(response.status_code, 200)
+        invitation.refresh_from_db()
+        self.assertEqual(invitation.status, Invitation.Status.CANCELLED)
+        self.assertIsNotNone(invitation.responded_at)
+
+    def test_pipeline_returns_canonical_workspace_url(self):
+        opportunity = Opportunity.objects.create(source="sam.gov", source_id="notice-261", title="Workspace routing")
+        PipelineItem.objects.create(organization=self.organization, opportunity=opportunity)
+        response = self.client.get("/api/pipeline/")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        rows = payload if isinstance(payload, list) else payload["results"]
+        self.assertEqual(rows[0]["workspace_url"], "/opportunities/federal-contracts/notice-261")
+
+    def test_suspended_membership_loses_workspace_access(self):
+        membership = Membership.objects.get(organization=self.organization, user=self.user)
+        membership.active = False
+        membership.save(update_fields=["active"])
+        response = self.client.get("/api/team/members/")
+        self.assertEqual(response.status_code, 403)

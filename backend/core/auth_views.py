@@ -16,10 +16,11 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 
 from .authentication import enforce_csrf
-from .models import AuditLog, Invitation, Membership, Organization
+from .models import AuditLog, CollaborationNotification, Invitation, Membership, Organization
 from .permissions import IsOrganizationAdmin, active_membership
 from .serializers import AuditLogSerializer, InvitationSerializer, MembershipSerializer, UserSerializer
 from .throttles import LoginThrottle, RegistrationThrottle
+from .notifications import create_notification, send_system_email
 
 User = get_user_model()
 
@@ -116,10 +117,14 @@ def register(request):
             organization = invitation.organization
             role = invitation.role
             invitation.status = Invitation.Status.ACCEPTED
-            invitation.save(update_fields=["status", "updated_at"])
+            invitation.accepted_by = user
+            invitation.responded_at = timezone.now()
+            invitation.save(update_fields=["status", "accepted_by", "responded_at", "updated_at"])
         else:
             if not organization_name:
                 organization_name = f"{first_name or email.split('@')[0]}'s Workspace"
+            if Organization.objects.filter(name__iexact=organization_name).exists():
+                return Response({"detail": "That company already has a ForgeGov workspace. Ask its owner for an invitation."}, status=status.HTTP_409_CONFLICT)
             base_slug = slugify(organization_name) or "workspace"
             slug = base_slug
             suffix = 2
@@ -128,7 +133,7 @@ def register(request):
                 suffix += 1
             organization = Organization.objects.create(name=organization_name, slug=slug)
             role = Membership.Role.OWNER
-        Membership.objects.create(organization=organization, user=user, role=role)
+        Membership.objects.create(organization=organization, user=user, role=role, job_title=invitation.job_title if invitation else "", department=invitation.department if invitation else "")
 
     response = Response({
         "user": UserSerializer(user).data,
@@ -136,6 +141,7 @@ def register(request):
         "role": role,
     }, status=status.HTTP_201_CREATED)
     audit(request, "auth.register", organization, "user", user.id, {"email": email})
+    create_notification(organization=organization, user=user, title="Welcome to ForgeGov", message=f"You joined {organization.name}.", kind="membership", link="/company")
     return _set_auth_cookies(response, user)
 
 
@@ -232,21 +238,66 @@ def invitations(request):
         return Response({"detail": "A valid email and role are required."}, status=status.HTTP_400_BAD_REQUEST)
     if Membership.objects.filter(organization=organization, user__email__iexact=email).exists():
         return Response({"detail": "This user is already a member."}, status=status.HTTP_400_BAD_REQUEST)
-    # Delete older pending tokens so re-inviting the same address cannot violate the status uniqueness constraint.
-    Invitation.objects.filter(organization=organization, email__iexact=email, status=Invitation.Status.PENDING).delete()
+    # Preserve invitation history while ensuring only one pending token remains.
+    Invitation.objects.filter(organization=organization, email__iexact=email, status=Invitation.Status.PENDING).update(status=Invitation.Status.CANCELLED, responded_at=timezone.now())
     record = Invitation.objects.create(
         organization=organization,
         email=email,
         role=role,
+        job_title=str(request.data.get("job_title") or "")[:120],
+        department=str(request.data.get("department") or "")[:120],
         token=secrets.token_urlsafe(48),
         invited_by=request.user,
         expires_at=timezone.now() + timedelta(days=7),
+        last_sent_at=timezone.now(),
     )
     invite_url = f"{settings.FRONTEND_URL.rstrip('/')}/register?invite={record.token}"
-    audit(request, "team.invitation_created", organization, "invitation", record.id, {"email": email, "role": role})
+    delivered = send_system_email(
+        subject=f"You were invited to join {organization.name} on ForgeGov",
+        message=f"{request.user.get_full_name() or request.user.email} invited you to join {organization.name}. Accept your invitation: {invite_url}",
+        recipient=email,
+        html_message=f"<p>You were invited to join <strong>{organization.name}</strong> on ForgeGov.</p><p><a href=\"{invite_url}\">Accept invitation</a></p><p>This invitation expires in 7 days.</p>",
+    )
+    existing_user = User.objects.filter(email__iexact=email).first()
+    if existing_user:
+        create_notification(organization=organization, user=existing_user, title=f"Invitation to {organization.name}", message="Accept the invitation to join this company workspace.", kind="invitation", link=invite_url)
+    audit(request, "team.invitation_created", organization, "invitation", record.id, {"email": email, "role": role, "email_delivered": delivered})
     data = InvitationSerializer(record).data
     data["invite_url"] = invite_url
+    data["email_delivered"] = delivered
     return Response(data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@permission_classes([IsOrganizationAdmin])
+def invitation_action(request, invitation_id):
+    membership = active_membership(request.user)
+    record = Invitation.objects.filter(pk=invitation_id, organization=membership.organization).first()
+    if not record:
+        return Response({"detail": "Invitation not found."}, status=status.HTTP_404_NOT_FOUND)
+    action = str(request.data.get("action") or "").lower()
+    if action == "cancel":
+        if record.status != Invitation.Status.PENDING:
+            return Response({"detail": "Only pending invitations can be cancelled."}, status=status.HTTP_400_BAD_REQUEST)
+        record.status = Invitation.Status.CANCELLED
+        record.responded_at = timezone.now()
+        record.save(update_fields=["status", "responded_at", "updated_at"])
+        audit(request, "team.invitation_cancelled", membership.organization, "invitation", record.id)
+    elif action == "resend":
+        if record.status not in {Invitation.Status.PENDING, Invitation.Status.EXPIRED}:
+            return Response({"detail": "Only pending or expired invitations can be resent."}, status=status.HTTP_400_BAD_REQUEST)
+        record.status = Invitation.Status.PENDING
+        record.token = secrets.token_urlsafe(48)
+        record.expires_at = timezone.now() + timedelta(days=7)
+        record.resend_count += 1
+        record.last_sent_at = timezone.now()
+        record.save(update_fields=["status", "token", "expires_at", "resend_count", "last_sent_at", "updated_at"])
+        invite_url = f"{settings.FRONTEND_URL.rstrip('/')}/register?invite={record.token}"
+        delivered = send_system_email(subject=f"Reminder: join {membership.organization.name} on ForgeGov", message=f"Accept your invitation: {invite_url}", recipient=record.email, html_message=f"<p><a href=\"{invite_url}\">Accept invitation</a></p>")
+        audit(request, "team.invitation_resent", membership.organization, "invitation", record.id, {"email_delivered": delivered})
+    else:
+        return Response({"detail": "action must be resend or cancel."}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(InvitationSerializer(record).data)
 
 
 @api_view(["GET"])
@@ -272,13 +323,19 @@ def team_member_detail(request, membership_id):
         target.delete()
         audit(request, "team.member_removed", current.organization, "membership", membership_id)
         return Response(status=status.HTTP_204_NO_CONTENT)
-    role = str(request.data.get("role") or "")
+    role = str(request.data.get("role") or target.role)
     valid_roles = {value for value, _ in Membership.Role.choices if value != Membership.Role.OWNER}
     if role not in valid_roles:
         return Response({"detail": "A valid non-owner role is required."}, status=status.HTTP_400_BAD_REQUEST)
     target.role = role
-    target.save(update_fields=["role", "updated_at"])
-    audit(request, "team.member_role_updated", current.organization, "membership", membership_id, {"role": role})
+    if "job_title" in request.data:
+        target.job_title = str(request.data.get("job_title") or "")[:120]
+    if "department" in request.data:
+        target.department = str(request.data.get("department") or "")[:120]
+    if "active" in request.data:
+        target.active = bool(request.data.get("active"))
+    target.save(update_fields=["role", "job_title", "department", "active", "updated_at"])
+    audit(request, "team.member_updated", current.organization, "membership", membership_id, {"role": role, "active": target.active})
     return Response(MembershipSerializer(target).data)
 
 

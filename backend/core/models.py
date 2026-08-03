@@ -35,6 +35,8 @@ class Membership(TimeStampedModel):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="organization_memberships")
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.VIEWER)
     job_title = models.CharField(max_length=120, blank=True)
+    department = models.CharField(max_length=120, blank=True)
+    active = models.BooleanField(default=True)
 
     class Meta:
         constraints = [
@@ -450,6 +452,8 @@ class Invitation(TimeStampedModel):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
         ACCEPTED = "accepted", "Accepted"
+        DECLINED = "declined", "Declined"
+        CANCELLED = "cancelled", "Cancelled"
         REVOKED = "revoked", "Revoked"
         EXPIRED = "expired", "Expired"
 
@@ -460,6 +464,12 @@ class Invitation(TimeStampedModel):
     invited_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="sent_forgegov_invitations")
     expires_at = models.DateTimeField()
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    job_title = models.CharField(max_length=120, blank=True)
+    department = models.CharField(max_length=120, blank=True)
+    resend_count = models.PositiveSmallIntegerField(default=0)
+    last_sent_at = models.DateTimeField(null=True, blank=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+    accepted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="accepted_forgegov_invitations")
 
     class Meta:
         ordering = ["-created_at"]
@@ -838,6 +848,7 @@ class ProjectRoomInvitation(TimeStampedModel):
         ACCEPTED = "accepted", "Accepted"
         DECLINED = "declined", "Declined"
         CANCELLED = "cancelled", "Cancelled"
+        EXPIRED = "expired", "Expired"
 
     project_room = models.ForeignKey(ProjectRoom, on_delete=models.CASCADE, related_name="partner_invitations")
     invited_organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="project_room_invitations")
@@ -848,6 +859,9 @@ class ProjectRoomInvitation(TimeStampedModel):
     can_comment = models.BooleanField(default=True)
     can_view_pricing = models.BooleanField(default=False)
     message = models.TextField(blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    last_sent_at = models.DateTimeField(null=True, blank=True)
+    resend_count = models.PositiveSmallIntegerField(default=0)
     responded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="project_room_invitations_responded")
     responded_at = models.DateTimeField(null=True, blank=True)
 

@@ -1,3 +1,4 @@
+from datetime import timedelta
 from django.conf import settings
 from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
 from django.utils import timezone
@@ -5,6 +6,7 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import api_view, throttle_classes, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
+from .notifications import notify_organization_members, send_system_email
 from .permissions import ReadOnlyOrContributor, active_membership
 from .ai import OpenAIIntegrationError, ask_ai, live_web_status
 
@@ -112,7 +114,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.5.0"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.6.1"})
 
 
 @api_view(["GET"])
@@ -1478,10 +1480,17 @@ def network_profile(request):
     organization = _request_organization(request)
     profile, _ = OrganizationProfile.objects.get_or_create(organization=organization)
     if request.method == "PATCH":
+        membership = active_membership(request.user)
+        if not membership or membership.role not in {Membership.Role.OWNER, Membership.Role.ADMIN}:
+            return Response({"detail": "Only company owners and administrators can edit the company profile."}, status=status.HTTP_403_FORBIDDEN)
+        for field in ("name", "uei", "cage_code"):
+            if field in request.data:
+                setattr(organization, field, str(request.data.get(field) or "").strip())
+        organization.save(update_fields=["name", "uei", "cage_code", "updated_at"])
         serializer = OrganizationProfileSerializer(profile, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        return Response(serializer.data)
+        return Response(OrganizationProfileSerializer(profile).data)
     return Response(OrganizationProfileSerializer(profile).data)
 
 
@@ -1503,6 +1512,7 @@ def network_connections(request):
     if existing and existing.status in {NetworkConnection.Status.PENDING, NetworkConnection.Status.ACCEPTED}:
         return Response(NetworkConnectionSerializer(existing).data, status=status.HTTP_200_OK)
     row = NetworkConnection.objects.create(requester=organization, recipient=recipient, requested_by=request.user, message=str(request.data.get("message") or "")[:2000])
+    notify_organization_members(organization=recipient, title=f"Connection request from {organization.name}", message=row.message or "A company wants to connect with your team.", kind="network_connection", link="/network?tab=invitations")
     return Response(NetworkConnectionSerializer(row).data, status=status.HTTP_201_CREATED)
 
 
@@ -1520,6 +1530,7 @@ def network_connection_response(request, connection_id: int):
     row.responded_by = request.user
     row.responded_at = timezone.now()
     row.save(update_fields=["status", "responded_by", "responded_at", "updated_at"])
+    notify_organization_members(organization=row.requester, title=f"Connection request {action}ed", message=f"{organization.name} {action}ed your company connection request.", kind="network_connection_response", link="/network?tab=partners")
     return Response(NetworkConnectionSerializer(row).data)
 
 
@@ -1537,15 +1548,52 @@ def project_room_invitations(request):
     connection = _network_connection_between(organization, invited_org)
     if not connection or connection.status != NetworkConnection.Status.ACCEPTED:
         return Response({"detail": "Connect with this company before inviting it to a Project Room."}, status=status.HTTP_403_FORBIDDEN)
-    row, created = ProjectRoomInvitation.objects.update_or_create(project_room=room, invited_organization=invited_org, status=ProjectRoomInvitation.Status.PENDING, defaults={"invited_by": request.user, "access_level": request.data.get("access_level", ProjectRoomPartner.AccessLevel.PARTNER), "can_upload": bool(request.data.get("can_upload", True)), "can_comment": bool(request.data.get("can_comment", True)), "can_view_pricing": bool(request.data.get("can_view_pricing", False)), "message": str(request.data.get("message") or "")[:2000]})
+    row, created = ProjectRoomInvitation.objects.update_or_create(project_room=room, invited_organization=invited_org, status=ProjectRoomInvitation.Status.PENDING, defaults={"invited_by": request.user, "access_level": request.data.get("access_level", ProjectRoomPartner.AccessLevel.PARTNER), "can_upload": bool(request.data.get("can_upload", True)), "can_comment": bool(request.data.get("can_comment", True)), "can_view_pricing": bool(request.data.get("can_view_pricing", False)), "message": str(request.data.get("message") or "")[:2000], "expires_at": timezone.now()+timedelta(days=14), "last_sent_at": timezone.now()})
+    link = f"/network?tab=invitations"
+    notify_organization_members(organization=invited_org, title=f"Project Room invitation: {room.name}", message=f"{organization.name} invited your company to collaborate.", kind="project_room_invitation", link=link, project_room=room)
+    for member in Membership.objects.filter(organization=invited_org, active=True, role__in=[Membership.Role.OWNER, Membership.Role.ADMIN]).select_related("user"):
+        send_system_email(subject=f"Project Room invitation from {organization.name}", message=f"Open ForgeGov to review the invitation to {room.name}: {settings.FRONTEND_URL.rstrip('/')}{link}", recipient=member.user.email)
+    ProjectRoomActivity.objects.create(project_room=room, actor=request.user, action="partner_invited", summary=f"Invited {invited_org.name} to the Project Room.")
     return Response(ProjectRoomInvitationSerializer(row).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([ReadOnlyOrContributor])
+def project_room_invitation_manage(request, invitation_id: int):
+    organization = _request_organization(request)
+    row = ProjectRoomInvitation.objects.filter(pk=invitation_id, project_room__owner_organization=organization).select_related("project_room", "invited_organization").first()
+    if not row:
+        return Response({"detail": "Project Room invitation not found."}, status=status.HTTP_404_NOT_FOUND)
+    action = str(request.data.get("action") or "").lower()
+    if action == "cancel":
+        if row.status != ProjectRoomInvitation.Status.PENDING:
+            return Response({"detail": "Only pending invitations can be cancelled."}, status=status.HTTP_400_BAD_REQUEST)
+        row.status = ProjectRoomInvitation.Status.CANCELLED
+        row.responded_at = timezone.now()
+        row.save(update_fields=["status", "responded_at", "updated_at"])
+    elif action == "resend":
+        if row.status not in {ProjectRoomInvitation.Status.PENDING, ProjectRoomInvitation.Status.EXPIRED}:
+            return Response({"detail": "Only pending or expired invitations can be resent."}, status=status.HTTP_400_BAD_REQUEST)
+        row.status = ProjectRoomInvitation.Status.PENDING
+        row.expires_at = timezone.now()+timedelta(days=14)
+        row.last_sent_at = timezone.now()
+        row.resend_count += 1
+        row.save(update_fields=["status", "expires_at", "last_sent_at", "resend_count", "updated_at"])
+        link = "/network?tab=invitations"
+        notify_organization_members(organization=row.invited_organization, title=f"Project Room invitation: {row.project_room.name}", message=f"{organization.name} resent the collaboration invitation.", kind="project_room_invitation", link=link, project_room=row.project_room)
+        for member in Membership.objects.filter(organization=row.invited_organization, active=True, role__in=[Membership.Role.OWNER, Membership.Role.ADMIN]).select_related("user"):
+            send_system_email(subject=f"Project Room invitation from {organization.name}", message=f"Open ForgeGov to review the invitation: {settings.FRONTEND_URL.rstrip('/')}{link}", recipient=member.user.email)
+    else:
+        return Response({"detail": "action must be resend or cancel."}, status=status.HTTP_400_BAD_REQUEST)
+    ProjectRoomActivity.objects.create(project_room=row.project_room, actor=request.user, action=f"partner_invitation_{action}", summary=f"{action.title()}ed invitation for {row.invited_organization.name}.")
+    return Response(ProjectRoomInvitationSerializer(row).data)
 
 
 @api_view(["POST"])
 @permission_classes([ReadOnlyOrContributor])
 def project_room_invitation_response(request, invitation_id: int):
     organization = _request_organization(request)
-    row = ProjectRoomInvitation.objects.filter(pk=invitation_id, invited_organization=organization, status=ProjectRoomInvitation.Status.PENDING).select_related("project_room").first()
+    row = ProjectRoomInvitation.objects.filter(pk=invitation_id, invited_organization=organization, status=ProjectRoomInvitation.Status.PENDING).filter(Q(expires_at__isnull=True)|Q(expires_at__gt=timezone.now())).select_related("project_room").first()
     if not row:
         return Response({"detail": "Pending Project Room invitation not found."}, status=status.HTTP_404_NOT_FOUND)
     action = str(request.data.get("action") or "").lower()
@@ -1557,4 +1605,7 @@ def project_room_invitation_response(request, invitation_id: int):
     row.save(update_fields=["status", "responded_by", "responded_at", "updated_at"])
     if action == "accept":
         ProjectRoomPartner.objects.update_or_create(project_room=row.project_room, organization=organization, defaults={"access_level": row.access_level, "can_upload": row.can_upload, "can_comment": row.can_comment, "can_view_pricing": row.can_view_pricing, "invited_by": row.invited_by})
+    owner_org = row.project_room.owner_organization
+    notify_organization_members(organization=owner_org, title=f"Project Room invitation {action}ed", message=f"{organization.name} {action}ed the invitation to {row.project_room.name}.", kind="project_room_invitation_response", link=f"/project-rooms/{row.project_room_id}", project_room=row.project_room)
+    ProjectRoomActivity.objects.create(project_room=row.project_room, actor=request.user, action=f"partner_invitation_{action}ed", summary=f"{organization.name} {action}ed the Project Room invitation.")
     return Response(ProjectRoomInvitationSerializer(row).data)

@@ -94,6 +94,7 @@ class OpportunitySerializer(serializers.ModelSerializer):
 class PipelineItemSerializer(WorkspaceRelationshipValidationMixin, serializers.ModelSerializer):
     opportunity_detail = OpportunitySerializer(source="opportunity", read_only=True)
     owner_name = serializers.SerializerMethodField()
+    workspace_url = serializers.SerializerMethodField()
 
     class Meta:
         model = PipelineItem
@@ -104,6 +105,15 @@ class PipelineItemSerializer(WorkspaceRelationshipValidationMixin, serializers.M
         if not obj.owner:
             return ""
         return obj.owner.get_full_name() or obj.owner.email or obj.owner.username
+
+    def get_workspace_url(self, obj):
+        source_id = str(obj.opportunity.source_id or "")
+        if obj.opportunity.source == "grants.gov" or source_id.startswith("grants.gov:"):
+            grant_id = source_id.removeprefix("grants.gov:")
+            return f"/opportunities/federal-grants/{grant_id}" if grant_id else "/opportunities/federal-grants"
+        if source_id:
+            return f"/opportunities/federal-contracts/{source_id}"
+        return f"/capture/pipelines?item={obj.pk}"
 
     def validate_owner(self, value):
         if value is None:
@@ -265,7 +275,7 @@ class MembershipSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Membership
-        fields = ("id", "organization", "organization_name", "user", "role", "job_title", "created_at")
+        fields = ("id", "organization", "organization_name", "user", "role", "job_title", "department", "active", "created_at")
         read_only_fields = ("id", "organization", "user", "created_at")
 
 
@@ -274,8 +284,8 @@ class InvitationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Invitation
-        fields = ("id", "organization", "email", "role", "status", "expires_at", "invited_by_name", "created_at")
-        read_only_fields = ("id", "organization", "status", "expires_at", "invited_by_name", "created_at")
+        fields = ("id", "organization", "email", "role", "job_title", "department", "status", "expires_at", "resend_count", "last_sent_at", "responded_at", "invited_by_name", "created_at")
+        read_only_fields = ("id", "organization", "status", "expires_at", "resend_count", "last_sent_at", "responded_at", "invited_by_name", "created_at")
 
     def get_invited_by_name(self, obj):
         if not obj.invited_by:
@@ -422,8 +432,8 @@ class ProjectRoomActivitySerializer(serializers.ModelSerializer):
 class CollaborationNotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = CollaborationNotification
-        fields = "__all__"
-        read_only_fields = ("id", "organization", "user", "created_at", "updated_at")
+        fields = ("id", "organization", "user", "project_room", "title", "message", "kind", "read", "link", "created_at", "updated_at")
+        read_only_fields = ("id", "organization", "user", "project_room", "title", "message", "kind", "link", "created_at", "updated_at")
 
 
 class OrganizationProfileSerializer(serializers.ModelSerializer):
@@ -456,5 +466,5 @@ class ProjectRoomInvitationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ProjectRoomInvitation
-        fields = ("id", "project_room", "project_room_name", "owner_organization_name", "invited_organization", "invited_organization_name", "status", "access_level", "can_upload", "can_comment", "can_view_pricing", "message", "invited_by", "responded_by", "responded_at", "created_at", "updated_at")
-        read_only_fields = ("id", "project_room_name", "owner_organization_name", "invited_organization_name", "status", "invited_by", "responded_by", "responded_at", "created_at", "updated_at")
+        fields = ("id", "project_room", "project_room_name", "owner_organization_name", "invited_organization", "invited_organization_name", "status", "access_level", "can_upload", "can_comment", "can_view_pricing", "message", "expires_at", "last_sent_at", "resend_count", "invited_by", "responded_by", "responded_at", "created_at", "updated_at")
+        read_only_fields = ("id", "project_room_name", "owner_organization_name", "invited_organization_name", "status", "last_sent_at", "resend_count", "invited_by", "responded_by", "responded_at", "created_at", "updated_at")

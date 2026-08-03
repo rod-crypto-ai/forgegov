@@ -5,7 +5,7 @@ from .models import Membership
 def active_membership(user):
     if not user or not user.is_authenticated:
         return None
-    return user.organization_memberships.select_related("organization").order_by("id").first()
+    return user.organization_memberships.filter(active=True).select_related("organization").order_by("id").first()
 
 
 class IsOrganizationMember(BasePermission):

@@ -4,6 +4,7 @@ from rest_framework.routers import DefaultRouter
 from .auth_views import (
     audit_logs,
     csrf_token,
+    invitation_action,
     invitations,
     login,
     logout,
@@ -80,6 +81,7 @@ from .views import (
     network_connections,
     network_connection_response,
     project_room_invitations,
+    project_room_invitation_manage,
     project_room_invitation_response,
 )
 
@@ -115,6 +117,7 @@ urlpatterns = [
     path("team/members/", team_members),
     path("team/members/<int:membership_id>/", team_member_detail),
     path("team/invitations/", invitations),
+    path("team/invitations/<int:invitation_id>/action/", invitation_action),
     path("audit-logs/", audit_logs),
     path("health/", health),
     path("dashboard/summary/", dashboard_summary),
@@ -159,6 +162,7 @@ urlpatterns = [
     path("network/connections/", network_connections),
     path("network/connections/<int:connection_id>/respond/", network_connection_response),
     path("network/project-room-invitations/", project_room_invitations),
+    path("network/project-room-invitations/<int:invitation_id>/manage/", project_room_invitation_manage),
     path("network/project-room-invitations/<int:invitation_id>/respond/", project_room_invitation_response),
     path("ai/opportunities/<str:source_id>/documents/", opportunity_documents),
     path("ai/opportunities/<str:source_id>/briefing/", opportunity_briefing),
