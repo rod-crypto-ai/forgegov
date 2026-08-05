@@ -107,6 +107,7 @@ from .serializers import (
 )
 from .throttles import OpenAIChatThrottle, SamLiveSearchThrottle
 from .document_intelligence import DocumentIngestionError, chunk_sections, download_document, extract_document, sha256
+from .intelligence.services import connector_health, opportunity_intelligence
 
 
 def _truthy(value: str | None) -> bool:
@@ -116,7 +117,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.6.3"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.7.0"})
 
 
 @api_view(["GET"])
@@ -158,6 +159,18 @@ def integration_status(request):
             "stored_contract_vehicles": Award.objects.filter(award_type=Award.AwardType.VEHICLE).count(),
         },
     })
+
+
+@api_view(["GET"])
+def intelligence_connectors(request):
+    probe = _truthy(request.query_params.get("probe"))
+    return Response(connector_health(probe=probe))
+
+
+@api_view(["GET"])
+def opportunity_intelligence_view(request, source_id):
+    refresh = _truthy(request.query_params.get("refresh"))
+    return Response(opportunity_intelligence(source_id, refresh=refresh))
 
 
 @api_view(["GET"])

@@ -10,6 +10,7 @@ import {
   CalendarSearch,
   ChartNoAxesCombined,
   ContactRound,
+  Database,
   FileText,
   FolderKanban,
   Handshake,
@@ -88,6 +89,7 @@ export const navigationGroups: NavGroup[] = [
     items: [
       { href: "/reports/funding", label: "Funding", icon: BadgeDollarSign, description: "Analyze obligated dollars, ceiling values, agency concentration, and spending movement." },
       { href: "/reports/new-entrants", label: "New Entrants", icon: ChartNoAxesCombined, description: "Identify vendors entering agencies, categories, and markets for the first time." },
+      { href: "/intelligence/connectors", label: "Connector Manager", icon: Database, description: "Monitor official data-source configuration, reachability, and evidence readiness." },
     ],
   },
   {

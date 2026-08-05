@@ -75,13 +75,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.6.3")
+        self.assertEqual(response.json()["version"], "2.7.0")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.6.3")
+        self.assertEqual(response.json()["version"], "2.7.0")
 
 
 class RouterRegressionTests(TestCase):
@@ -1149,3 +1149,24 @@ class TeamingWorkspaceUsabilityTests(AuthenticatedApiTestCase):
         response = self.client.post("/api/auth/workspaces/", {"organization":other.id}, format="json")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.cookies["forgegov_workspace"].value, str(other.id))
+
+class IntelligenceFoundationTests(AuthenticatedApiTestCase):
+    def test_connector_manager_returns_normalized_health_rows(self):
+        response = self.client.get('/api/intelligence/connectors/')
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertGreaterEqual(payload['summary']['total'], 4)
+        self.assertTrue(all({'key','label','configured','status','official_url'} <= set(row) for row in payload['connectors']))
+
+    @patch('core.intelligence.services.opportunity.fetch_sam_opportunity_detail')
+    def test_opportunity_intelligence_labels_official_and_derived_data(self, detail):
+        detail.return_value = {'title':'JLTV Support','department':'Army','naicsCode':'811310','classificationCode':'J023'}
+        Opportunity.objects.create(source_id='intel-1', title='JLTV Support', agency='Army', naics_code='811310', psc_code='J023')
+        Award.objects.create(source_id='award-intel-1', recipient_name='Example Incumbent', awarding_agency='Army', naics_code='811310', psc_code='J023', obligated_amount=1000000)
+        response = self.client.get('/api/intelligence/opportunities/intel-1/')
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload['data']['incumbent']['name'], 'Example Incumbent')
+        self.assertEqual(payload['data']['past_winners'][0]['classification'], 'official')
+        self.assertEqual(payload['data']['likely_competitors'][0]['classification'], 'ai_derived')
+        self.assertTrue(any(row['source_kind']=='official' for row in payload['evidence']))

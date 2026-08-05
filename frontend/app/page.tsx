@@ -46,7 +46,7 @@ export default function DashboardPage() {
       <div><i className="ok"/><span><b>Grants.gov</b><small>Public grant search active</small></span></div>
       <div><i className={integrations.ai?.web_search_reachable ? "ok" : integrations.ai?.web_search_configured ? "warn" : "warn"}/><span><b>Live web</b><small>{integrations.ai?.web_search_reachable ? "SearXNG connected" : integrations.ai?.web_search_configured ? "Reconnecting" : "Setup available"}</small></span></div>
       <div><Database size={17}/><span><b>{integrations.usaspending?.stored_awards ?? summary.awards?.total ?? 0} awards indexed</b><small>Stored in ForgeGov</small></span></div>
-      <Link href="/settings">Manage data sources <ChevronRight size={15}/></Link>
+      <Link href="/intelligence/connectors">Manage data sources <ChevronRight size={15}/></Link>
     </section>
 
     <section className="command-center-grid">
