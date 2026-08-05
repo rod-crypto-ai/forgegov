@@ -6,7 +6,7 @@ from typing import Any
 
 from django.db.models import Q
 
-from ...integrations import fetch_sam_opportunity_detail
+from ...integrations import fetch_sam_opportunity_detail, search_usaspending_awards
 from ...models import Award, Opportunity, OrganizationProfile
 from ..evidence import derived_evidence, official_evidence
 from ..schemas import Confidence, IntelligenceResult
@@ -92,6 +92,14 @@ def opportunity_intelligence(source_id: str, refresh: bool = False) -> dict[str,
     naics = str(detail.get("naicsCode") or detail.get("naics") or getattr(stored, "naics_code", "") or "")
     psc = str(detail.get("classificationCode") or detail.get("psc") or getattr(stored, "psc_code", "") or "")
     awards = Award.objects.filter(Q(awarding_agency__icontains=agency) | Q(funding_agency__icontains=agency)).order_by("-start_date")[:25] if agency else Award.objects.none()
+    if not awards.exists() and (agency or naics or title):
+        try:
+            live = search_usaspending_awards(keyword=title[:120], agency=agency, naics=naics, start_date="2016-01-01", limit=50, persist=True)
+            if live.get("results"):
+                warnings.append("Historical award evidence was refreshed from USAspending.")
+                awards = Award.objects.filter(Q(awarding_agency__icontains=agency) | Q(funding_agency__icontains=agency)).order_by("-start_date")[:25] if agency else Award.objects.order_by("-start_date")[:25]
+        except Exception as exc:
+            warnings.append(f"Live incumbent research was unavailable: {exc}")
     past_winners: list[dict[str, Any]] = []
     seen: set[str] = set()
     for award in awards:
@@ -108,7 +116,10 @@ def opportunity_intelligence(source_id: str, refresh: bool = False) -> dict[str,
         })
         if len(past_winners) >= 8:
             break
-    incumbent = past_winners[0] if past_winners else None
+    incumbent = past_winners[0] if past_winners else {"status": "not_found", "classification": "official", "reason": "No reliable historical award evidence matched this opportunity. Use Refresh research after more award data is synchronized."}
+    if isinstance(incumbent, dict) and incumbent.get("name"):
+        incumbent["status"] = "likely"
+        incumbent["match_reason"] = "Most recent matching historical award. Verify against the predecessor contract before treating as confirmed."
     evidence = [official_evidence("SAM.gov", "Opportunity notice", f"https://sam.gov/opp/{source_id}/view", "Official solicitation record")]
     if past_winners:
         evidence.append(official_evidence("USAspending / stored awards", "Historical award records", detail="Normalized award history stored by ForgeGov"))

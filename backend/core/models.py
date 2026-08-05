@@ -824,6 +824,8 @@ class NetworkConnection(TimeStampedModel):
         ACCEPTED = "accepted", "Accepted"
         DECLINED = "declined", "Declined"
         BLOCKED = "blocked", "Blocked"
+        CANCELLED = "cancelled", "Cancelled"
+        DISCONNECTED = "disconnected", "Disconnected"
 
     requester = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="network_requests_sent")
     recipient = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="network_requests_received")

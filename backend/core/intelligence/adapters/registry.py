@@ -5,6 +5,7 @@ from .forecasts import ForecastAdapter
 from .sam import SamAdapter
 from .subnet import SubnetAdapter
 from .usaspending import UsaSpendingAdapter
+from .searxng import SearxngAdapter
 
 
 connector_registry: tuple[IntelligenceAdapter, ...] = (
@@ -12,4 +13,5 @@ connector_registry: tuple[IntelligenceAdapter, ...] = (
     UsaSpendingAdapter(),
     SubnetAdapter(),
     ForecastAdapter(),
+    SearxngAdapter(),
 )

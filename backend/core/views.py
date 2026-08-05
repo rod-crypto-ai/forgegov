@@ -117,7 +117,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.7.0"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.7.0-m1.1"})
 
 
 @api_view(["GET"])
@@ -1556,6 +1556,46 @@ def network_connection_response(request, connection_id: int):
     row.save(update_fields=["status", "responded_by", "responded_at", "updated_at"])
     notify_organization_members(organization=row.requester, title=f"Connection request {action}ed", message=f"{organization.name} {action}ed your company connection request.", kind="network_connection_response", link="/network?tab=partners")
     return Response(NetworkConnectionSerializer(row).data)
+
+
+
+
+@api_view(["POST"])
+@permission_classes([ReadOnlyOrContributor])
+def network_connection_manage(request, connection_id: int):
+    organization = _request_organization(request)
+    row = NetworkConnection.objects.filter(pk=connection_id).filter(Q(requester=organization)|Q(recipient=organization)).select_related("requester","recipient").first()
+    if not row:
+        return Response({"detail":"Connection not found."}, status=status.HTTP_404_NOT_FOUND)
+    action = str(request.data.get("action") or "").lower()
+    if action == "cancel" and row.requester_id == organization.id and row.status == NetworkConnection.Status.PENDING:
+        row.status = NetworkConnection.Status.CANCELLED
+    elif action == "disconnect" and row.status == NetworkConnection.Status.ACCEPTED:
+        row.status = NetworkConnection.Status.DISCONNECTED
+        ProjectRoomPartner.objects.filter(organization=organization).delete()
+    elif action == "block" and row.recipient_id == organization.id:
+        row.status = NetworkConnection.Status.BLOCKED
+    elif action == "unblock" and row.status == NetworkConnection.Status.BLOCKED:
+        row.status = NetworkConnection.Status.DISCONNECTED
+    else:
+        return Response({"detail":"That action is not valid for the current relationship state."}, status=status.HTTP_400_BAD_REQUEST)
+    row.responded_by=request.user; row.responded_at=timezone.now(); row.save(update_fields=["status","responded_by","responded_at","updated_at"])
+    other = row.recipient if row.requester_id == organization.id else row.requester
+    notify_organization_members(organization=other,title=f"Partnership {row.status}",message=f"{organization.name} changed the company relationship to {row.status}.",kind="network_connection_update",link="/network?tab=partners")
+    return Response(NetworkConnectionSerializer(row).data)
+
+
+@api_view(["GET"])
+def naics_catalog(request):
+    import json
+    from pathlib import Path
+    rows=json.loads((Path(__file__).resolve().parent/"data"/"naics_2022.json").read_text())
+    q=str(request.query_params.get("q") or "").strip().lower()
+    if q:
+        rows=[r for r in rows if q in r["code"].lower() or q in r["title"].lower()]
+    level=request.query_params.get("level")
+    if level and str(level).isdigit(): rows=[r for r in rows if r["level"]==int(level)]
+    return Response({"version":"2022","source":"U.S. Census Bureau","results":rows[:250]})
 
 
 @api_view(["GET", "POST"])
