@@ -110,6 +110,7 @@ from .serializers import (
 )
 from .throttles import OpenAIChatThrottle, SamLiveSearchThrottle
 from .document_intelligence import DocumentIngestionError, capture_readiness_summary, chunk_sections, download_document, extract_document, extract_structured_intelligence, sha256
+from .capture_intelligence import build_capture_assessment
 from .intelligence.services import connector_health, opportunity_intelligence
 from .intelligence.services.award_ingestion import award_intelligence_summary, connector_registry_payload, sync_usaspending_awards
 
@@ -121,7 +122,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.8.0-m1"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.8.0-m2.1"})
 
 
 @api_view(["GET", "POST"])
@@ -1480,6 +1481,25 @@ def opportunity_document_intelligence(request, source_id: str):
             for document in documents
         ],
     })
+
+
+@api_view(["GET", "POST"])
+@throttle_classes([OpenAIChatThrottle])
+def opportunity_capture_assessment(request, source_id: str):
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(source_id)
+    if not opportunity:
+        return Response({"detail": "Opportunity not found."}, status=status.HTTP_404_NOT_FOUND)
+    include_ai = request.method == "POST" or _truthy(request.query_params.get("include_ai"))
+    refresh_ai = request.method == "POST" and _truthy(str(request.data.get("refresh", "false")))
+    payload = build_capture_assessment(
+        organization=organization,
+        opportunity=opportunity,
+        include_ai=include_ai,
+        refresh_ai=refresh_ai,
+        user=request.user,
+    )
+    return Response(payload)
 
 
 def _room_access(request, room_id):

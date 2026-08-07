@@ -24,6 +24,7 @@ from .integrations import (
     upsert_sam_opportunity,
 )
 from .ai import live_web_status
+from .capture_intelligence import build_capture_assessment
 from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Task, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, ProjectRoomActivity, OrganizationProfile, NetworkConnection, ProjectRoomInvitation, OrganizationJoinRequest, AwardSyncRun, ConnectorSource
 
 User = get_user_model()
@@ -75,13 +76,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.8.0-m1")
+        self.assertEqual(response.json()["version"], "2.8.0-m2.1")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.8.0-m1")
+        self.assertEqual(response.json()["version"], "2.8.0-m2.1")
 
 
 class RouterRegressionTests(TestCase):
@@ -1276,3 +1277,46 @@ class DocumentIntelligenceStructuredExtractionTests(SimpleTestCase):
         self.assertEqual(len(sections), 1)
         self.assertIn("scope.txt", sections[0][1])
         self.assertIn("CLIN 0002", sections[0][2])
+
+
+class CaptureAssessmentTests(AuthenticatedApiTestCase):
+    def test_capture_assessment_returns_decision_scores_without_ai(self):
+        opportunity = Opportunity.objects.create(
+            source_id="capture-1",
+            title="Vehicle maintenance support",
+            agency="Department of the Army",
+            naics_code="811310",
+            psc_code="J023",
+            response_deadline=timezone.now() + timedelta(days=21),
+        )
+        PipelineItem.objects.create(
+            organization=self.organization,
+            opportunity=opportunity,
+            stage=PipelineItem.Stage.REVIEWING,
+            estimated_value=500000,
+            probability_of_win=55,
+        )
+        payload = build_capture_assessment(
+            organization=self.organization,
+            opportunity=opportunity,
+            include_ai=False,
+            user=self.user,
+        )
+        self.assertIn(payload["bid_decision"]["recommendation"], {"bid", "hold", "no_bid"})
+        self.assertGreaterEqual(payload["scores"]["health"], 0)
+        self.assertLessEqual(payload["scores"]["health"], 100)
+        self.assertEqual(len(payload["risks"]), 6)
+        self.assertTrue(payload["actions"])
+
+    def test_capture_assessment_endpoint_is_workspace_scoped(self):
+        Opportunity.objects.create(
+            source_id="capture-api-1",
+            title="Logistics support",
+            response_deadline=timezone.now() + timedelta(days=30),
+        )
+        response = self.client.get("/api/ai/opportunities/capture-api-1/capture-assessment/")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIn("scores", body)
+        self.assertIn("bid_decision", body)
+        self.assertIn("readiness", body)
