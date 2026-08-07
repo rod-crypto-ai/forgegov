@@ -280,7 +280,7 @@ def usaspending_status(*, probe: bool = False) -> dict[str, Any]:
     if not probe:
         return result
 
-    url = f"{settings.USASPENDING_BASE_URL.rstrip('/')}/api/v2/references/agency/"
+    url = f"{settings.USASPENDING_BASE_URL.rstrip('/')}/api/v2/awards/last_updated/"
     try:
         response = requests.get(url, timeout=15)
         result.update({"reachable": response.ok, "status_code": response.status_code})
