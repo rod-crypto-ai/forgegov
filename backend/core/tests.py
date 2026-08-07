@@ -25,6 +25,7 @@ from .integrations import (
 )
 from .ai import live_web_status
 from .capture_intelligence import build_capture_assessment
+from .win_strategy import build_win_strategy
 from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Task, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, ProjectRoomActivity, OrganizationProfile, NetworkConnection, ProjectRoomInvitation, OrganizationJoinRequest, AwardSyncRun, ConnectorSource
 
 User = get_user_model()
@@ -76,13 +77,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.8.0-m2.1")
+        self.assertEqual(response.json()["version"], "2.8.0-m2.2")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.8.0-m2.1")
+        self.assertEqual(response.json()["version"], "2.8.0-m2.2")
 
 
 class RouterRegressionTests(TestCase):
@@ -1320,3 +1321,43 @@ class CaptureAssessmentTests(AuthenticatedApiTestCase):
         self.assertIn("scores", body)
         self.assertIn("bid_decision", body)
         self.assertIn("readiness", body)
+
+
+class WinStrategyTests(AuthenticatedApiTestCase):
+    def test_win_strategy_returns_evidence_backed_sections(self):
+        opportunity = Opportunity.objects.create(
+            source_id="win-1",
+            title="Vehicle maintenance support",
+            agency="Department of the Army",
+            naics_code="811310",
+            psc_code="J023",
+            response_deadline=timezone.now() + timedelta(days=30),
+        )
+        Award.objects.create(
+            source_id="award-win-1",
+            award_number="W56TEST001",
+            recipient_name="EXAMPLE MAINTENANCE LLC",
+            awarding_agency="Department of the Army",
+            obligated_amount=2500000,
+            start_date=timezone.now().date() - timedelta(days=365),
+            end_date=timezone.now().date() + timedelta(days=180),
+            naics_code="811310",
+            psc_code="J023",
+            description="Vehicle maintenance and repair support",
+        )
+        payload = build_win_strategy(organization=self.organization, opportunity=opportunity)
+        self.assertEqual(payload["incumbent"]["status"], "likely")
+        self.assertTrue(payload["similar_contracts"])
+        self.assertIn("pricing_readiness", payload)
+        self.assertIn("win_strategy", payload)
+        self.assertIn("compliance_matrix", payload)
+
+    def test_win_strategy_endpoint_is_workspace_scoped(self):
+        Opportunity.objects.create(source_id="win-api-1", title="Logistics support", agency="Army")
+        response = self.client.get("/api/ai/opportunities/win-api-1/win-strategy/")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIn("incumbent", body)
+        self.assertIn("competitors", body)
+        self.assertIn("teaming_recommendations", body)
+        self.assertIn("recommended_actions", body)
