@@ -6,18 +6,29 @@ import { apiGet } from "@/lib/api";
 
 type Connector = {
   key: string;
-  label: string;
-  configured: boolean;
+  name: string;
+  label?: string;
+  scope: string;
+  jurisdiction_code: string;
+  jurisdiction_name: string;
+  configured: boolean | null;
   reachable: boolean | null;
   status: string;
   detail: string;
   official_url: string;
   authentication: string;
+  documentation_url?: string;
+  license_name?: string;
+  license_url?: string;
+  capabilities?: string[];
+  rate_limit?: string;
+  last_sync_at?: string | null;
+  record_count?: number;
 };
 
 type Payload = {
   connectors: Connector[];
-  summary: { total: number; healthy: number; attention: number };
+  summary: { total: number; healthy: number; attention?: number; enabled?: number };
 };
 
 const empty: Payload = { connectors: [], summary: { total: 0, healthy: 0, attention: 0 } };
@@ -31,7 +42,7 @@ export default function ConnectorManagerPage() {
     setLoading(true);
     setError("");
     try {
-      setData(await apiGet<Payload>(`/intelligence/connectors/${probe ? "?probe=true" : ""}`));
+      setData(await apiGet<Payload>(`/intelligence/connector-registry/${probe ? "?probe=true" : ""}`));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Connector status could not be loaded.");
     } finally {
@@ -67,12 +78,15 @@ export default function ConnectorManagerPage() {
 
     <section className="connector-grid">
       {data.connectors.map(row => <article className={`connector-card status-${row.status}`} key={row.key}>
-        <header><span className="connector-icon"><ServerCog/></span><div><h2>{row.label}</h2><p>{row.detail}</p></div><span className="connector-status"><i/>{row.status.replaceAll("_", " ")}</span></header>
+        <header><span className="connector-icon"><ServerCog/></span><div><h2>{row.name || row.label}</h2><p>{row.detail || "Connector metadata registered."}</p></div><span className="connector-status"><i/>{row.status.replaceAll("_", " ")}</span></header>
         <dl>
-          <div><dt>Configuration</dt><dd>{row.configured ? "Configured" : "Required"}</dd></div>
+          <div><dt>Scope</dt><dd>{row.scope}{row.jurisdiction_name ? ` · ${row.jurisdiction_name}` : ""}</dd></div>
+          <div><dt>Configuration</dt><dd>{row.configured === null ? "Not probed" : row.configured ? "Configured" : "Required"}</dd></div>
           <div><dt>Reachability</dt><dd>{row.reachable === null ? "Not probed" : row.reachable ? "Reachable" : "Unavailable"}</dd></div>
           <div><dt>Authentication</dt><dd><KeyRound size={14}/>{row.authentication}</dd></div>
-          <div><dt>Data classification</dt><dd>Official source</dd></div>
+          <div><dt>License</dt><dd>{row.license_name || "Review required"}</dd></div>
+          <div><dt>Coverage</dt><dd>{row.capabilities?.join(", ") || "Metadata only"}</dd></div>
+          <div><dt>Stored records</dt><dd>{(row.record_count || 0).toLocaleString()}</dd></div>
         </dl>
         <a href={row.official_url} target="_blank" rel="noreferrer">Open official source <ExternalLink size={14}/></a>
       </article>)}

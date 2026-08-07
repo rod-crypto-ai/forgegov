@@ -334,6 +334,13 @@ def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None =
     defaults = {
         "source": "usaspending.gov",
         "award_number": award_number,
+        "parent_award_number": _safe_text(_usa_value(record, "Parent Award ID", "parent_award_id", "referenced_idv"), max_length=160),
+        "awarding_office": _safe_text(_usa_value(record, "Awarding Sub Agency", "awarding_sub_agency_name", "awarding_office_name"), max_length=255),
+        "funding_office": _safe_text(_usa_value(record, "Funding Sub Agency", "funding_sub_agency_name", "funding_office_name"), max_length=255),
+        "recipient_cage": _safe_text(_usa_value(record, "recipient_cage", "Recipient CAGE"), max_length=16),
+        "set_aside_code": _safe_text(_usa_value(record, "set_aside_code", "Set Aside"), max_length=40),
+        "jurisdiction_level": "federal",
+        "jurisdiction_code": "US",
         "award_type": award_type or Award.AwardType.CONTRACT,
         "description": description,
         "recipient_name": recipient,
@@ -409,9 +416,9 @@ def search_usaspending_awards(
     payload = {
         "filters": filters,
         "fields": [
-            "Award ID", "Recipient Name", "Award Amount", "Total Outlays", "Description",
-            "Start Date", "End Date", "Awarding Agency", "Funding Agency", "Contract Award Type",
-            "generated_unique_award_id",
+            "Award ID", "Recipient Name", "Recipient UEI", "Award Amount", "Potential Award Amount", "Total Outlays", "Description",
+            "Start Date", "End Date", "Awarding Agency", "Funding Agency", "Awarding Sub Agency", "Funding Sub Agency",
+            "Contract Award Type", "NAICS Code", "PSC Code", "Place of Performance", "generated_unique_award_id",
         ],
         "page": max(1, page),
         "limit": max(1, min(limit, 100)),

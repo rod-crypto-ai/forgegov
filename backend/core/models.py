@@ -262,6 +262,14 @@ class Award(TimeStampedModel):
     source = models.CharField(max_length=80, default="usaspending.gov")
     source_id = models.CharField(max_length=255, unique=True)
     award_number = models.CharField(max_length=160, blank=True, db_index=True)
+    parent_award_number = models.CharField(max_length=160, blank=True, db_index=True)
+    awarding_office = models.CharField(max_length=255, blank=True)
+    funding_office = models.CharField(max_length=255, blank=True)
+    recipient_cage = models.CharField(max_length=16, blank=True)
+    set_aside_code = models.CharField(max_length=40, blank=True)
+    jurisdiction_level = models.CharField(max_length=24, default="federal")
+    jurisdiction_code = models.CharField(max_length=24, blank=True)
+    source_updated_at = models.DateTimeField(null=True, blank=True)
     award_type = models.CharField(max_length=40, choices=AwardType.choices, default=AwardType.CONTRACT)
     description = models.TextField(blank=True)
     recipient_name = models.CharField(max_length=255, blank=True)
@@ -284,6 +292,64 @@ class Award(TimeStampedModel):
 
     def __str__(self):
         return self.award_number or self.source_id
+
+
+class ConnectorSource(TimeStampedModel):
+    class Scope(models.TextChoices):
+        FEDERAL = "federal", "Federal"
+        STATE = "state", "State"
+        LOCAL = "local", "Local"
+        COMMERCIAL = "commercial", "Commercial"
+
+    key = models.SlugField(max_length=120, unique=True)
+    name = models.CharField(max_length=255)
+    scope = models.CharField(max_length=24, choices=Scope.choices, default=Scope.FEDERAL)
+    jurisdiction_code = models.CharField(max_length=24, blank=True)
+    jurisdiction_name = models.CharField(max_length=120, blank=True)
+    official_url = models.URLField(blank=True)
+    documentation_url = models.URLField(blank=True)
+    license_name = models.CharField(max_length=160, blank=True)
+    license_url = models.URLField(blank=True)
+    authentication = models.CharField(max_length=160, blank=True)
+    capabilities = models.JSONField(default=list, blank=True)
+    enabled = models.BooleanField(default=True)
+    last_status = models.CharField(max_length=40, default="not_checked")
+    last_checked_at = models.DateTimeField(null=True, blank=True)
+    last_sync_at = models.DateTimeField(null=True, blank=True)
+    record_count = models.PositiveBigIntegerField(default=0)
+    rate_limit = models.CharField(max_length=120, blank=True)
+    last_error = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["scope", "jurisdiction_name", "name"]
+
+    def __str__(self):
+        return self.name
+
+
+class AwardSyncRun(TimeStampedModel):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        RUNNING = "running", "Running"
+        SUCCEEDED = "succeeded", "Succeeded"
+        FAILED = "failed", "Failed"
+        PARTIAL = "partial", "Partial"
+
+    connector_key = models.CharField(max_length=120, db_index=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    cursor = models.JSONField(default=dict, blank=True)
+    pages_processed = models.PositiveIntegerField(default=0)
+    records_seen = models.PositiveIntegerField(default=0)
+    records_created = models.PositiveIntegerField(default=0)
+    records_updated = models.PositiveIntegerField(default=0)
+    errors = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
 
 
 class Contact(TimeStampedModel):

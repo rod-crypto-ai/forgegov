@@ -24,7 +24,7 @@ from .integrations import (
     upsert_sam_opportunity,
 )
 from .ai import live_web_status
-from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Task, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, ProjectRoomActivity, OrganizationProfile, NetworkConnection, ProjectRoomInvitation, OrganizationJoinRequest
+from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Task, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, ProjectRoomActivity, OrganizationProfile, NetworkConnection, ProjectRoomInvitation, OrganizationJoinRequest, AwardSyncRun, ConnectorSource
 
 User = get_user_model()
 
@@ -75,13 +75,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.7.0-m1.1")
+        self.assertEqual(response.json()["version"], "2.7.0-m2")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.7.0-m1.1")
+        self.assertEqual(response.json()["version"], "2.7.0-m2")
 
 
 class RouterRegressionTests(TestCase):
@@ -1170,3 +1170,50 @@ class IntelligenceFoundationTests(AuthenticatedApiTestCase):
         self.assertEqual(payload['data']['past_winners'][0]['classification'], 'official')
         self.assertEqual(payload['data']['likely_competitors'][0]['classification'], 'ai_derived')
         self.assertTrue(any(row['source_kind']=='official' for row in payload['evidence']))
+
+
+class AwardIngestionAndConnectorSdkTests(AuthenticatedApiTestCase):
+    def test_connector_registry_includes_federal_and_state_reference(self):
+        response = self.client.get("/api/intelligence/connector-registry/")
+        self.assertEqual(response.status_code, 200)
+        keys = {row["key"] for row in response.json()["connectors"]}
+        self.assertIn("usaspending-awards", keys)
+        self.assertIn("texas-smartbuy-reference", keys)
+        texas = next(row for row in response.json()["connectors"] if row["key"] == "texas-smartbuy-reference")
+        self.assertEqual(texas["scope"], "state")
+        self.assertEqual(texas["jurisdiction_code"], "TX")
+        self.assertIn("license_name", texas)
+
+    def test_award_summary_uses_official_stored_awards(self):
+        Award.objects.create(
+            source="usaspending.gov",
+            source_id="CONT_AWD_TEST_1",
+            award_number="WTEST-001",
+            recipient_name="HOWARD DYNAMICS LLC",
+            awarding_agency="Department of the Army",
+            obligated_amount=125000,
+            potential_amount=200000,
+            naics_code="811310",
+            jurisdiction_level="federal",
+            jurisdiction_code="US",
+        )
+        response = self.client.get("/api/intelligence/awards/summary/?agency=Army&naics=811310")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["totals"]["records"], 1)
+        self.assertEqual(payload["likely_incumbent"]["recipient_name"], "HOWARD DYNAMICS LLC")
+        self.assertEqual(payload["classification"], "official_historical_awards")
+
+    @patch("core.views.sync_usaspending_awards")
+    def test_owner_can_start_award_ingestion(self, mocked_sync):
+        mocked_sync.return_value = type("Run", (), {
+            "id": 99,
+            "status": "succeeded",
+            "records_seen": 5,
+            "records_created": 3,
+            "records_updated": 2,
+            "errors": [],
+        })()
+        response = self.client.post("/api/intelligence/awards/ingestion/", {"pages": 1, "limit": 5}, format="json")
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["records_created"], 3)

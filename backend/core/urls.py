@@ -93,6 +93,9 @@ from .views import (
     project_room_lifecycle,
     organization_join_requests,
     organization_join_request_response,
+    award_ingestion,
+    connector_registry_view,
+    award_intelligence_view,
 )
 
 router = DefaultRouter()
@@ -138,6 +141,9 @@ urlpatterns = [
     path("dashboard/command-center/", command_center),
     path("integrations/status/", integration_status),
     path("intelligence/connectors/", intelligence_connectors),
+    path("intelligence/connector-registry/", connector_registry_view),
+    path("intelligence/awards/ingestion/", award_ingestion),
+    path("intelligence/awards/summary/", award_intelligence_view),
     path("intelligence/opportunities/<str:source_id>/", opportunity_intelligence_view),
     path("ai/chat/", ai_chat),
     path("live/sam/opportunities/", live_sam_search),

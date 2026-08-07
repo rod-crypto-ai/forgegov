@@ -66,6 +66,8 @@ from .models import (
     NetworkConnection,
     ProjectRoomInvitation,
     OrganizationJoinRequest,
+    AwardSyncRun,
+    ConnectorSource,
 )
 from .serializers import (
     AgencySerializer,
@@ -108,6 +110,7 @@ from .serializers import (
 from .throttles import OpenAIChatThrottle, SamLiveSearchThrottle
 from .document_intelligence import DocumentIngestionError, chunk_sections, download_document, extract_document, sha256
 from .intelligence.services import connector_health, opportunity_intelligence
+from .intelligence.services.award_ingestion import award_intelligence_summary, connector_registry_payload, sync_usaspending_awards
 
 
 def _truthy(value: str | None) -> bool:
@@ -117,7 +120,68 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.7.0-m1.1"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.7.0-m2"})
+
+
+@api_view(["GET", "POST"])
+def award_ingestion(request):
+    if request.method == "GET":
+        latest = AwardSyncRun.objects.order_by("-created_at")[:20]
+        return Response({
+            "runs": [{
+                "id": row.id,
+                "connector_key": row.connector_key,
+                "status": row.status,
+                "started_at": row.started_at,
+                "completed_at": row.completed_at,
+                "pages_processed": row.pages_processed,
+                "records_seen": row.records_seen,
+                "records_created": row.records_created,
+                "records_updated": row.records_updated,
+                "errors": row.errors,
+            } for row in latest],
+            "stored_awards": Award.objects.filter(source="usaspending.gov").count(),
+        })
+    membership = active_membership(request.user)
+    if not membership or membership.role not in {Membership.Role.OWNER, Membership.Role.ADMIN}:
+        return Response({"detail": "Only workspace owners and administrators can start award ingestion."}, status=403)
+    try:
+        run = sync_usaspending_awards(
+            start_date=request.data.get("start_date"),
+            end_date=request.data.get("end_date"),
+            pages=int(request.data.get("pages") or 1),
+            limit=int(request.data.get("limit") or 100),
+            keyword=str(request.data.get("keyword") or ""),
+            agency=str(request.data.get("agency") or ""),
+            naics=str(request.data.get("naics") or ""),
+        )
+    except (ValueError, IntegrationError) as exc:
+        return Response({"detail": str(exc)}, status=400)
+    return Response({
+        "id": run.id,
+        "status": run.status,
+        "records_seen": run.records_seen,
+        "records_created": run.records_created,
+        "records_updated": run.records_updated,
+        "errors": run.errors,
+    }, status=201)
+
+
+@api_view(["GET"])
+def connector_registry_view(request):
+    probe = _truthy(request.query_params.get("probe"))
+    return Response(connector_registry_payload(probe=probe))
+
+
+@api_view(["GET"])
+def award_intelligence_view(request):
+    return Response(award_intelligence_summary(
+        agency=str(request.query_params.get("agency") or ""),
+        naics=str(request.query_params.get("naics") or ""),
+        psc=str(request.query_params.get("psc") or ""),
+        recipient=str(request.query_params.get("recipient") or ""),
+        limit=max(1, min(int(request.query_params.get("limit") or 10), 50)),
+    ))
 
 
 @api_view(["GET"])
