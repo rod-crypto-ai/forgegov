@@ -1,4 +1,5 @@
 from datetime import timedelta
+from decimal import Decimal
 from django.conf import settings
 from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
 from django.utils import timezone
@@ -120,7 +121,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.7.0-m2"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.7.0-m3"})
 
 
 @api_view(["GET", "POST"])
@@ -963,6 +964,27 @@ def command_center(request):
     if not insights:
         insights.append({"severity":"success","title":"Workspace is under control","detail":"No overdue work or pending collaboration decisions were detected.","href":"/"})
 
+    weighted_pipeline = Decimal("0")
+    for item in pipeline.exclude(stage__in=[PipelineItem.Stage.LOST, PipelineItem.Stage.NO_BID, PipelineItem.Stage.ARCHIVED]):
+        if item.estimated_value:
+            weighted_pipeline += item.estimated_value * Decimal(item.probability_of_win or 0) / Decimal("100")
+
+    recent_awards = Award.objects.order_by("-source_updated_at", "-updated_at")
+    recent_award_count = recent_awards.filter(source_updated_at__gte=now - timedelta(days=30)).count()
+    latest_sync = AwardSyncRun.objects.filter(connector_key="usaspending").order_by("-created_at").first()
+    connector_rows = ConnectorSource.objects.filter(enabled=True).order_by("scope", "name")
+    connector_health = {
+        "healthy": connector_rows.filter(last_status__in=["healthy", "reachable", "ok"]).count(),
+        "attention": connector_rows.exclude(last_status__in=["healthy", "reachable", "ok", "not_checked"]).count(),
+        "total": connector_rows.count(),
+    }
+    top_award_recipients = list(
+        Award.objects.exclude(recipient_name="")
+        .values("recipient_name")
+        .annotate(awards=Count("id"), obligated=Sum("obligated_amount"))
+        .order_by("-obligated")[:5]
+    )
+
     return Response({
         "metrics": {
             "pipeline": pipeline.count(),
@@ -971,6 +993,15 @@ def command_center(request):
             "overdue": overdue,
             "unread_alerts": unread_alerts,
             "pending_invitations": pending_connections + pending_room_invites,
+            "weighted_pipeline": float(weighted_pipeline),
+        },
+        "intelligence": {
+            "recent_awards_30d": recent_award_count,
+            "stored_awards": Award.objects.count(),
+            "latest_award_sync": latest_sync.completed_at.isoformat() if latest_sync and latest_sync.completed_at else None,
+            "latest_award_sync_status": latest_sync.status if latest_sync else "not_run",
+            "connectors": connector_health,
+            "top_award_recipients": top_award_recipients,
         },
         "deadlines": deadlines,
         "activity": activity,

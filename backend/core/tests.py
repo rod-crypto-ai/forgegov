@@ -75,13 +75,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.7.0-m2")
+        self.assertEqual(response.json()["version"], "2.7.0-m3")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.7.0-m2")
+        self.assertEqual(response.json()["version"], "2.7.0-m3")
 
 
 class RouterRegressionTests(TestCase):
@@ -1002,6 +1002,10 @@ class CommandCenterAndUnifiedSearchTests(AuthenticatedApiTestCase):
         self.assertEqual(payload["metrics"]["pipeline"], 1)
         self.assertEqual(payload["metrics"]["active_rooms"], 1)
         self.assertGreaterEqual(payload["metrics"]["overdue"], 1)
+        self.assertIn("weighted_pipeline", payload["metrics"])
+        self.assertIn("intelligence", payload)
+        self.assertIn("connectors", payload["intelligence"])
+        self.assertIn("stored_awards", payload["intelligence"])
         self.assertTrue(any(row["title"] == "Draft staffing plan" for row in payload["deadlines"]))
 
     def test_unified_search_finds_workspace_and_intelligence_records(self):
