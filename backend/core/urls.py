@@ -75,6 +75,7 @@ from .views import (
     opportunity_documents,
     opportunity_briefing,
     opportunity_document_question,
+    opportunity_document_intelligence,
     project_room_tasks,
     project_room_access_management,
     project_room_task_detail,
@@ -195,5 +196,6 @@ urlpatterns = [
     path("ai/opportunities/<str:source_id>/documents/", opportunity_documents),
     path("ai/opportunities/<str:source_id>/briefing/", opportunity_briefing),
     path("ai/opportunities/<str:source_id>/ask/", opportunity_document_question),
+    path("ai/opportunities/<str:source_id>/document-intelligence/", opportunity_document_intelligence),
     path("", include(router.urls)),
 ]

@@ -4,6 +4,9 @@ import hashlib
 import io
 import ipaddress
 import socket
+import re
+import zipfile
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -55,8 +58,111 @@ def download_document(url: str) -> tuple[bytes, str]:
 def _clean(text: str) -> str:
     return "\n".join(line.strip() for line in str(text or "").replace("\x00", " ").splitlines() if line.strip())
 
+
+ALLOWED_ARCHIVE_SUFFIXES = {".pdf", ".docx", ".xlsx", ".xlsm", ".txt", ".html", ".htm"}
+MAX_ARCHIVE_MEMBERS = 80
+
+def _safe_archive_name(name: str) -> str:
+    normalized = str(name or "").replace("\\", "/").lstrip("/")
+    parts = [part for part in normalized.split("/") if part not in {"", ".", ".."}]
+    return "/".join(parts)[:500]
+
+def _extract_zip(data: bytes) -> list[tuple[int | None, str | None, str]]:
+    sections: list[tuple[int | None, str | None, str]] = []
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as exc:
+        raise DocumentIngestionError("The ZIP attachment is not a valid archive.") from exc
+    members = [item for item in archive.infolist() if not item.is_dir()][:MAX_ARCHIVE_MEMBERS]
+    for item in members:
+        safe_name = _safe_archive_name(item.filename)
+        if not safe_name:
+            continue
+        suffix = Path(safe_name.lower()).suffix
+        if suffix not in ALLOWED_ARCHIVE_SUFFIXES:
+            continue
+        if item.file_size > MAX_DOCUMENT_BYTES:
+            continue
+        member_data = archive.read(item)
+        nested = extract_document(member_data, safe_name, "")
+        for page_number, section, text in nested:
+            location = f"{safe_name} · {section}" if section else safe_name
+            sections.append((page_number, location, text))
+    return sections
+
+def _first_matches(text: str, pattern: str, *, flags: int = re.IGNORECASE | re.MULTILINE, limit: int = 25) -> list[str]:
+    matches: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(pattern, text, flags):
+        value = " ".join((match.group(1) if match.groups() else match.group(0)).split()).strip(" :-")
+        if value and value.lower() not in seen:
+            seen.add(value.lower())
+            matches.append(value[:500])
+        if len(matches) >= limit:
+            break
+    return matches
+
+def extract_structured_intelligence(sections: list[tuple[int | None, str | None, str]]) -> dict:
+    """Extract deterministic solicitation signals before AI analysis.
+
+    These fields are evidence hints, not authoritative legal interpretations.
+    """
+    joined = "\n".join(text for _, _, text in sections if text)
+    upper = joined.upper()
+    section_l = any(marker in upper for marker in ("SECTION L", "INSTRUCTIONS TO OFFERORS", "INSTRUCTIONS, CONDITIONS"))
+    section_m = any(marker in upper for marker in ("SECTION M", "EVALUATION FACTORS", "BASIS FOR AWARD"))
+    clins = _first_matches(joined, r"\b(?:CLIN|SUBCLIN|ELIN)\s*[:#-]?\s*([0-9A-Z]{4,10})\b", limit=60)
+    far_clauses = _first_matches(joined, r"\b((?:FAR|DFARS)\s+\d{2,3}\.\d{3,6}(?:-\d+)?)\b", limit=80)
+    dates = _first_matches(joined, r"\b((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+\d{4})\b", limit=40)
+    cmmc = _first_matches(joined, r"\b(CMMC(?:\s+Level)?\s*[123])\b", limit=10)
+    certifications = _first_matches(joined, r"\b((?:ISO\s*\d{4,5}(?::\d{4})?)|(?:CMMC(?:\s+Level)?\s*[123])|(?:NIST\s*SP\s*800-171))\b", limit=25)
+    deliverables = _first_matches(joined, r"(?:deliverable|CDRL|submission)\s*[:#-]?\s*([^\n]{5,180})", limit=30)
+    labor_categories = _first_matches(joined, r"(?:labor categor(?:y|ies)|key personnel|staffing)\s*[:#-]?\s*([^\n]{5,180})", limit=30)
+    return {
+        "section_l_detected": section_l,
+        "section_m_detected": section_m,
+        "clins": clins,
+        "clauses": far_clauses,
+        "key_dates": dates,
+        "cmmc": cmmc,
+        "certifications": certifications,
+        "deliverables": deliverables,
+        "labor_categories": labor_categories,
+        "character_count": len(joined),
+        "extraction_version": "2.8.0-m1",
+    }
+
+def capture_readiness_summary(documents) -> dict:
+    ready = [doc for doc in documents if getattr(doc, "status", "") == "ready"]
+    metadata = [getattr(doc, "metadata", {}) or {} for doc in ready]
+    intelligence = [item.get("structured_intelligence") or {} for item in metadata]
+    has_l = any(item.get("section_l_detected") for item in intelligence)
+    has_m = any(item.get("section_m_detected") for item in intelligence)
+    has_clins = any(item.get("clins") for item in intelligence)
+    has_dates = any(item.get("key_dates") for item in intelligence)
+    has_compliance = any(item.get("clauses") or item.get("certifications") or item.get("cmmc") for item in intelligence)
+    checks = {
+        "documents_indexed": bool(ready),
+        "section_l": has_l,
+        "section_m": has_m,
+        "clins": has_clins,
+        "key_dates": has_dates,
+        "compliance_signals": has_compliance,
+    }
+    score = round(sum(1 for value in checks.values() if value) / len(checks) * 100)
+    return {
+        "score": score,
+        "checks": checks,
+        "ready_documents": len(ready),
+        "status": "ready" if score >= 80 else "developing" if score >= 40 else "insufficient_evidence",
+        "warning": "Readiness reflects extracted evidence coverage, not a bid/no-bid or legal compliance determination.",
+    }
+
+
 def extract_document(data: bytes, filename: str, content_type: str = "") -> list[tuple[int | None, str | None, str]]:
     suffix = Path(filename.lower()).suffix
+    if suffix == ".zip" or content_type in {"application/zip", "application/x-zip-compressed"}:
+        return _extract_zip(data)
     if suffix == ".pdf" or content_type == "application/pdf":
         from pypdf import PdfReader
         reader = PdfReader(io.BytesIO(data))

@@ -29,9 +29,33 @@ type Analysis = {
   sources: { label: string; title: string; url?: string }[];
   updated_at: string;
 };
+type StructuredIntelligence = {
+  document_id: number;
+  file_name: string;
+  section_l_detected?: boolean;
+  section_m_detected?: boolean;
+  clins?: string[];
+  clauses?: string[];
+  key_dates?: string[];
+  cmmc?: string[];
+  certifications?: string[];
+  deliverables?: string[];
+  labor_categories?: string[];
+};
+
+type CaptureReadiness = {
+  score: number;
+  status: string;
+  ready_documents: number;
+  checks: Record<string, boolean>;
+  warning?: string;
+};
+
 type BriefingPayload = {
   documents: IngestedDocument[];
   analyses: Analysis[];
+  capture_readiness?: CaptureReadiness;
+  structured_intelligence?: StructuredIntelligence[];
 };
 
 const analysisTypes = [
@@ -41,6 +65,9 @@ const analysisTypes = [
   ["bid_no_bid", "Bid / no-bid"],
   ["compliance_matrix", "Compliance matrix"],
   ["amendment_comparison", "Compare amendments"],
+  ["sections_l_m", "Sections L & M"],
+  ["clin_deliverables", "CLINs & deliverables"],
+  ["security_compliance", "Security & compliance"],
 ] as const;
 
 function titleFor(type: string) {
@@ -116,6 +143,18 @@ export function OpportunityBriefing({
     [payload.documents],
   );
 
+  const extracted = payload.structured_intelligence ?? [];
+  const signalCounts = useMemo(() => {
+    const countUnique = (key: keyof StructuredIntelligence) =>
+      new Set(extracted.flatMap((row) => Array.isArray(row[key]) ? (row[key] as string[]) : [])).size;
+    return {
+      clins: countUnique("clins"),
+      clauses: countUnique("clauses"),
+      dates: countUnique("key_dates"),
+      deliverables: countUnique("deliverables"),
+    };
+  }, [extracted]);
+
   async function ingest() {
     setBusy("ingest");
     setMessage("");
@@ -144,7 +183,7 @@ export function OpportunityBriefing({
         refresh,
       });
       setPayload((current) => ({
-        documents: current.documents,
+        ...current,
         analyses: [
           result,
           ...current.analyses.filter((row) => row.analysis_type !== type),
@@ -208,7 +247,30 @@ export function OpportunityBriefing({
             <span>Analyses</span>
             <strong>{payload.analyses.length}</strong>
           </div>
+          <div>
+            <span>Readiness</span>
+            <strong>{payload.capture_readiness ? `${payload.capture_readiness.score}%` : "—"}</strong>
+          </div>
         </div>
+
+        {payload.capture_readiness && (
+          <div className="document-intelligence-summary">
+            <div className="readiness-meter">
+              <div>
+                <span>Evidence coverage</span>
+                <strong>{payload.capture_readiness.score}%</strong>
+              </div>
+              <div className="readiness-track"><span style={{width:`${payload.capture_readiness.score}%`}} /></div>
+              <small>{payload.capture_readiness.warning}</small>
+            </div>
+            <div className="document-signal-grid">
+              <div><span>CLIN / ELIN signals</span><strong>{signalCounts.clins}</strong></div>
+              <div><span>FAR / DFARS signals</span><strong>{signalCounts.clauses}</strong></div>
+              <div><span>Key dates found</span><strong>{signalCounts.dates}</strong></div>
+              <div><span>Deliverable signals</span><strong>{signalCounts.deliverables}</strong></div>
+            </div>
+          </div>
+        )}
 
         <button
           className="primary-button"

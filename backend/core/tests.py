@@ -75,13 +75,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.7.0-m3")
+        self.assertEqual(response.json()["version"], "2.8.0-m1")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.7.0-m3")
+        self.assertEqual(response.json()["version"], "2.8.0-m1")
 
 
 class RouterRegressionTests(TestCase):
@@ -1221,3 +1221,58 @@ class AwardIngestionAndConnectorSdkTests(AuthenticatedApiTestCase):
         response = self.client.post("/api/intelligence/awards/ingestion/", {"pages": 1, "limit": 5}, format="json")
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["records_created"], 3)
+
+
+class DocumentIntelligenceStructuredExtractionTests(SimpleTestCase):
+    def test_structured_intelligence_extracts_core_solicitation_signals(self):
+        from .document_intelligence import extract_structured_intelligence
+
+        sections = [
+            (
+                1,
+                None,
+                """
+                SECTION L - INSTRUCTIONS TO OFFERORS
+                CLIN 0001
+                Deliverable: Monthly status report
+                FAR 52.212-1
+                DFARS 252.204-7012
+                CMMC Level 2
+                Questions due August 20, 2026
+                """,
+            ),
+            (
+                2,
+                None,
+                """
+                SECTION M - EVALUATION FACTORS FOR AWARD
+                Labor Categories: Field Service Representative
+                """,
+            ),
+        ]
+
+        result = extract_structured_intelligence(sections)
+
+        self.assertTrue(result["section_l_detected"])
+        self.assertTrue(result["section_m_detected"])
+        self.assertIn("0001", result["clins"])
+        self.assertTrue(any("252.204-7012" in clause for clause in result["clauses"]))
+        self.assertTrue(any("CMMC" in certification for certification in result["certifications"]))
+        self.assertTrue(result["deliverables"])
+        self.assertTrue(result["labor_categories"])
+
+    def test_zip_ingestion_reads_supported_members(self):
+        import io
+        import zipfile
+        from .document_intelligence import extract_document
+
+        payload = io.BytesIO()
+        with zipfile.ZipFile(payload, "w") as archive:
+            archive.writestr("scope.txt", "SECTION L\\nCLIN 0002\\nDeliverable: Final report")
+            archive.writestr("ignored.exe", "not indexed")
+
+        sections = extract_document(payload.getvalue(), "attachments.zip", "application/zip")
+
+        self.assertEqual(len(sections), 1)
+        self.assertIn("scope.txt", sections[0][1])
+        self.assertIn("CLIN 0002", sections[0][2])

@@ -109,7 +109,7 @@ from .serializers import (
     OrganizationJoinRequestSerializer,
 )
 from .throttles import OpenAIChatThrottle, SamLiveSearchThrottle
-from .document_intelligence import DocumentIngestionError, chunk_sections, download_document, extract_document, sha256
+from .document_intelligence import DocumentIngestionError, capture_readiness_summary, chunk_sections, download_document, extract_document, extract_structured_intelligence, sha256
 from .intelligence.services import connector_health, opportunity_intelligence
 from .intelligence.services.award_ingestion import award_intelligence_summary, connector_registry_payload, sync_usaspending_awards
 
@@ -121,7 +121,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.7.0-m3"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.8.0-m1"})
 
 
 @api_view(["GET", "POST"])
@@ -1276,6 +1276,9 @@ ANALYSIS_PROMPTS = {
     "bid_no_bid": "Prepare a transparent bid/no-bid brief. State verified facts, unknowns, strengths, gaps, likely teaming needs, resource burden, disqualifiers, and a recommendation. Do not invent a win probability.",
     "compliance_matrix": "Create a compliance matrix in markdown with columns Requirement, Source, Response Owner, Status, and Notes. Include only requirements supported by the provided documents.",
     "amendment_comparison": "Compare the ingested documents as potential versions or amendments. Identify changed dates, scope, clauses, attachments, instructions, and evaluation language. If versions cannot be reliably matched, say so clearly.",
+    "sections_l_m": "Locate and summarize Section L / instructions to offerors and Section M / evaluation factors. Cite the exact source passages. If either section is not present, say so.",
+    "clin_deliverables": "Extract CLINs, SUBCLINs, ELINs, CDRLs, deliverables, quantities, units, and stated delivery schedules. Do not invent missing line items.",
+    "security_compliance": "Extract explicit FAR, DFARS, CMMC, NIST, cybersecurity, insurance, certification, and security requirements. Separate mandatory requirements from references or background.",
 }
 
 def _opportunity_for_source(source_id: str):
@@ -1341,6 +1344,14 @@ def opportunity_documents(request, source_id: str):
                 record.page_count = len({page for page, _, _ in sections if page})
                 record.character_count = sum(len(text) for _, _, text in sections)
                 record.error_message = ""
+                metadata = dict(record.metadata or {})
+                metadata["structured_intelligence"] = extract_structured_intelligence(sections)
+                metadata["ingestion"] = {
+                    "checksum": digest,
+                    "content_type": content_type,
+                    "indexed_at": timezone.now().isoformat(),
+                }
+                record.metadata = metadata
                 record.save()
         except (DocumentIngestionError, ValueError, OSError) as exc:
             record.status = OpportunityDocument.Status.FAILED
@@ -1384,7 +1395,21 @@ def opportunity_briefing(request, source_id: str):
     if request.method == "GET":
         analyses = OpportunityAnalysis.objects.filter(organization=organization, opportunity=opportunity)
         documents = OpportunityDocument.objects.filter(organization=organization, opportunity=opportunity).prefetch_related("chunks")
-        return Response({"documents": OpportunityDocumentSerializer(documents, many=True).data, "analyses": OpportunityAnalysisSerializer(analyses, many=True).data})
+        document_rows = list(documents)
+        return Response({
+            "documents": OpportunityDocumentSerializer(document_rows, many=True).data,
+            "analyses": OpportunityAnalysisSerializer(analyses, many=True).data,
+            "capture_readiness": capture_readiness_summary(document_rows),
+            "structured_intelligence": [
+                {
+                    "document_id": document.id,
+                    "file_name": document.file_name,
+                    **((document.metadata or {}).get("structured_intelligence") or {}),
+                }
+                for document in document_rows
+                if document.status == OpportunityDocument.Status.READY
+            ],
+        })
     analysis_type = str(request.data.get("analysis_type") or "executive_summary")
     if analysis_type not in ANALYSIS_PROMPTS:
         return Response({"detail": "Unsupported analysis type."}, status=status.HTTP_400_BAD_REQUEST)
@@ -1420,6 +1445,41 @@ def opportunity_document_question(request, source_id: str):
     result = ask_ai(message=f"Respond like an experienced capture manager speaking to a colleague. Lead with the direct answer, use short readable paragraphs, and avoid dumping raw fields. Use only the authorized {mode}. Cite exact [OPP-*] and [DOC-*] labels for factual claims. If the available context cannot answer something, say exactly what is missing.\n\nQUESTION\n{question}\n\nAUTHORIZED CONTEXT\n{context}", history=[], organization=organization)
     result["sources"] = sources
     return Response(result)
+
+
+@api_view(["GET"])
+def opportunity_document_intelligence(request, source_id: str):
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(source_id)
+    if not opportunity:
+        return Response({"detail": "Opportunity not found."}, status=status.HTTP_404_NOT_FOUND)
+    documents = list(
+        OpportunityDocument.objects.filter(
+            organization=organization,
+            opportunity=opportunity,
+        ).prefetch_related("chunks")
+    )
+    return Response({
+        "opportunity": {
+            "source_id": opportunity.source_id,
+            "title": opportunity.title,
+            "solicitation_number": opportunity.solicitation_number,
+        },
+        "capture_readiness": capture_readiness_summary(documents),
+        "documents": [
+            {
+                "id": document.id,
+                "file_name": document.file_name,
+                "status": document.status,
+                "source_url": document.source_url,
+                "page_count": document.page_count,
+                "character_count": document.character_count,
+                "structured_intelligence": (document.metadata or {}).get("structured_intelligence") or {},
+                "error_message": document.error_message,
+            }
+            for document in documents
+        ],
+    })
 
 
 def _room_access(request, room_id):

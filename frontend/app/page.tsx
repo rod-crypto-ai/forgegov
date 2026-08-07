@@ -12,7 +12,7 @@ import { useAuth } from "@/components/auth-provider";
 
 type Summary = { opportunities?: { total?: number; active?: number }; awards?: { total?: number; obligated_total?: number }; pipeline?: { total?: number; by_stage?: Record<string, number>; weighted_value?: number }; pursuits?: { total?: number }; tasks?: { open?: number; overdue?: number }; contacts?: number; vendors?: number; agencies?: number; saved_searches?: number; };
 type CommandCenter={metrics:{pipeline:number;active_rooms:number;open_tasks:number;overdue:number;unread_alerts:number;pending_invitations:number;weighted_pipeline?:number};intelligence?:{recent_awards_30d:number;stored_awards:number;latest_award_sync:string|null;latest_award_sync_status:string;connectors:{healthy:number;attention:number;total:number};top_award_recipients:Array<{recipient_name:string;awards:number;obligated:number}>};deadlines:Array<{type:string;title:string;subtitle?:string;due_at:string;href:string;overdue:boolean}>;activity:Array<{type:string;title:string;subtitle?:string;created_at:string;href:string}>;insights:Array<{severity:string;title:string;detail:string;href:string}>;quick_actions:Array<{label:string;href:string}>};
-type Integrations = { sam_gov?: { configured?: boolean }; usaspending?: { reachable?: boolean; stored_awards?: number }; ai?: { web_search_configured?: boolean; web_search_reachable?: boolean | null } };
+type Integrations = { sam_gov?: { configured?: boolean }; usaspending?: { reachable?: boolean; stored_awards?: number }; ai?: { web_search_configured?: boolean; web_search_reachable?: boolean | null; web_search_status?: string } };
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 });
 
 export default function DashboardPage() {
@@ -44,7 +44,7 @@ export default function DashboardPage() {
       <div><i className={integrations.sam_gov?.configured ? "ok" : "warn"}/><span><b>SAM.gov</b><small>{integrations.sam_gov?.configured ? "Live search ready" : "API key required"}</small></span></div>
       <div><i className={integrations.usaspending?.reachable ? "ok" : "warn"}/><span><b>USAspending</b><small>{integrations.usaspending?.reachable ? "Live award data" : "Connection unavailable"}</small></span></div>
       <div><i className="ok"/><span><b>Grants.gov</b><small>Public grant search active</small></span></div>
-      <div><i className={integrations.ai?.web_search_reachable ? "ok" : integrations.ai?.web_search_configured ? "warn" : "warn"}/><span><b>Live web</b><small>{integrations.ai?.web_search_reachable ? "SearXNG connected" : integrations.ai?.web_search_configured ? "Reconnecting" : "Setup available"}</small></span></div>
+      <div><i className={integrations.ai?.web_search_status === "live" || integrations.ai?.web_search_reachable ? "ok" : "warn"}/><span><b>Live web</b><small>{integrations.ai?.web_search_status === "live" || integrations.ai?.web_search_reachable ? "SearXNG connected" : integrations.ai?.web_search_status === "invalid_response" ? "Invalid response" : integrations.ai?.web_search_status === "unavailable" ? "Service unavailable" : integrations.ai?.web_search_configured ? "Configured" : "Setup available"}</small></span></div>
       <div><Database size={17}/><span><b>{integrations.usaspending?.stored_awards ?? summary.awards?.total ?? 0} awards indexed</b><small>Stored in ForgeGov</small></span></div>
       <Link href="/intelligence/connectors">Manage data sources <ChevronRight size={15}/></Link>
     </section>
