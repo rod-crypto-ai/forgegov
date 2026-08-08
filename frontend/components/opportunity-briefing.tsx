@@ -143,7 +143,10 @@ export function OpportunityBriefing({
     [payload.documents],
   );
 
-  const extracted = payload.structured_intelligence ?? [];
+  const extracted = useMemo(
+    () => payload.structured_intelligence ?? [],
+    [payload.structured_intelligence],
+  );
   const signalCounts = useMemo(() => {
     const countUnique = (key: keyof StructuredIntelligence) =>
       new Set(extracted.flatMap((row) => Array.isArray(row[key]) ? (row[key] as string[]) : [])).size;

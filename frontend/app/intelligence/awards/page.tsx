@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, BadgeDollarSign, Database, RefreshCw, Search, ShieldCheck, TriangleAlert } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
 
@@ -28,19 +28,19 @@ export default function AwardIntelligencePage() {
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
 
-  async function load() {
+  const load = useCallback(async () => {
     const [summaryData, ingestionData] = await Promise.all([
       apiGet<Summary>(`/intelligence/awards/summary/?agency=${encodeURIComponent(agency)}&naics=${encodeURIComponent(naics)}`),
       apiGet<Ingestion>("/intelligence/awards/ingestion/"),
     ]);
     setSummary(summaryData);
     setIngestion(ingestionData);
-  }
+  }, [agency, naics]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load().catch(error => setMessage(error instanceof Error ? error.message : "Award intelligence could not be loaded.")), 0);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [load]);
 
   async function search(event: FormEvent) {
     event.preventDefault();

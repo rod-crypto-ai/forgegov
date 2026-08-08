@@ -79,6 +79,7 @@ from .views import (
     opportunity_capture_assessment,
     opportunity_win_strategy,
     opportunity_capture_command_center,
+    opportunity_proposal_workspace,
     project_room_tasks,
     project_room_access_management,
     project_room_task_detail,
@@ -203,5 +204,6 @@ urlpatterns = [
     path("ai/opportunities/<str:source_id>/capture-assessment/", opportunity_capture_assessment),
     path("ai/opportunities/<str:source_id>/win-strategy/", opportunity_win_strategy),
     path("ai/opportunities/<str:source_id>/command-center/", opportunity_capture_command_center),
+    path("ai/opportunities/<str:source_id>/proposal-workspace/", opportunity_proposal_workspace),
     path("", include(router.urls)),
 ]

@@ -113,6 +113,7 @@ from .document_intelligence import DocumentIngestionError, capture_readiness_sum
 from .capture_intelligence import build_capture_assessment
 from .win_strategy import build_win_strategy
 from .capture_command_center import build_capture_command_center
+from .proposal_workspace import build_proposal_workspace
 from .intelligence.services import connector_health, opportunity_intelligence
 from .intelligence.services.award_ingestion import award_intelligence_summary, connector_registry_payload, sync_usaspending_awards
 
@@ -124,7 +125,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.8.0-m2.3"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.9.0-m1"})
 
 
 @api_view(["GET", "POST"])
@@ -1520,6 +1521,15 @@ def opportunity_capture_command_center(request, source_id: str):
     if not opportunity:
         return Response({"detail": "Opportunity not found."}, status=status.HTTP_404_NOT_FOUND)
     return Response(build_capture_command_center(organization=organization, opportunity=opportunity))
+
+
+@api_view(["GET"])
+def opportunity_proposal_workspace(request, source_id: str):
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(source_id)
+    if not opportunity:
+        return Response({"detail": "Opportunity not found."}, status=status.HTTP_404_NOT_FOUND)
+    return Response(build_proposal_workspace(organization=organization, opportunity=opportunity))
 
 
 def _room_access(request, room_id):
