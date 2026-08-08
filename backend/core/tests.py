@@ -77,13 +77,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.8.0-m2.2")
+        self.assertEqual(response.json()["version"], "2.8.0-m2.3")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.8.0-m2.2")
+        self.assertEqual(response.json()["version"], "2.8.0-m2.3")
 
 
 class RouterRegressionTests(TestCase):
@@ -1361,3 +1361,58 @@ class WinStrategyTests(AuthenticatedApiTestCase):
         self.assertIn("competitors", body)
         self.assertIn("teaming_recommendations", body)
         self.assertIn("recommended_actions", body)
+
+class CaptureCommandCenterTests(AuthenticatedApiTestCase):
+    def test_command_center_combines_capture_and_win_strategy(self):
+        opportunity = Opportunity.objects.create(
+            source_id="command-center-1",
+            title="Fleet maintenance support",
+            agency="Department of the Army",
+            naics_code="811310",
+            psc_code="J023",
+            response_deadline=timezone.now() + timedelta(days=21),
+        )
+        pipeline = PipelineItem.objects.create(
+            organization=self.organization,
+            opportunity=opportunity,
+            stage=PipelineItem.Stage.CAPTURE,
+            estimated_value=5000000,
+            probability_of_win=65,
+            notes="Customer values rapid field support and parts availability.",
+        )
+        Task.objects.create(
+            organization=self.organization,
+            pipeline_item=pipeline,
+            title="Validate staffing plan",
+            due_at=timezone.now() + timedelta(days=3),
+        )
+        Award.objects.create(
+            source_id="command-award-1",
+            award_number="W56COMMAND001",
+            recipient_name="EXAMPLE SERVICES LLC",
+            awarding_agency="Department of the Army",
+            obligated_amount=3000000,
+            start_date=timezone.now().date() - timedelta(days=365),
+            end_date=timezone.now().date() + timedelta(days=120),
+            naics_code="811310",
+            psc_code="J023",
+            description="Fleet vehicle maintenance and field support",
+        )
+        from .capture_command_center import build_capture_command_center
+        payload = build_capture_command_center(organization=self.organization, opportunity=opportunity)
+        self.assertIn("scores", payload)
+        self.assertIn("next_actions", payload)
+        self.assertIn("capture_memory", payload)
+        self.assertIn("proposal_tasks", payload)
+        self.assertIn("competition", payload)
+        self.assertEqual(payload["proposal_tasks"][0]["title"], "Validate staffing plan")
+        self.assertTrue(any(row["type"] == "pipeline" for row in payload["capture_memory"]))
+
+    def test_command_center_endpoint_is_workspace_scoped(self):
+        Opportunity.objects.create(source_id="command-api-1", title="Command center test", agency="Army")
+        response = self.client.get("/api/ai/opportunities/command-api-1/command-center/")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIn("health", body)
+        self.assertIn("timeline", body)
+        self.assertIn("warnings", body)

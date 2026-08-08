@@ -19,6 +19,6 @@ class RenderHealthCheckMiddleware:
                 "status": "ok",
                 "service": "forgegov-api",
                 "product": "ForgeGov",
-                "version": "2.8.0-m2.2",
+                "version": "2.8.0-m2.3",
             })
         return self.get_response(request)
