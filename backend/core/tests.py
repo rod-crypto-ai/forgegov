@@ -78,13 +78,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.9.0-m2")
+        self.assertEqual(response.json()["version"], "2.9.0-m3")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.9.0-m2")
+        self.assertEqual(response.json()["version"], "2.9.0-m3")
 
 
 class RouterRegressionTests(TestCase):
@@ -1486,3 +1486,47 @@ class ProposalExecutionTests(AuthenticatedApiTestCase):
         from django.urls import resolve
         match = resolve("/api/ai/opportunities/example/proposal-execution/")
         self.assertEqual(match.func.__name__, "view")
+
+
+class SubmissionControlTests(AuthenticatedApiTestCase):
+    def test_submission_control_route_is_registered(self):
+        from django.urls import resolve
+        match = resolve("/api/ai/opportunities/example/submission-control/")
+        self.assertEqual(match.func.__name__, "view")
+        export_match = resolve("/api/ai/opportunities/example/submission-exports/pdf/")
+        self.assertEqual(export_match.func.__name__, "view")
+
+    def test_submission_control_blocks_snapshot_until_human_gates_are_clear(self):
+        opportunity = Opportunity.objects.create(
+            source_id="submission-control-1",
+            title="Submission control proposal",
+            agency="Department of the Army",
+            response_deadline=timezone.now() + timedelta(days=20),
+        )
+        response = self.client.get("/api/ai/opportunities/submission-control-1/submission-control/")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertFalse(body["submission_readiness"]["ready"])
+        self.assertGreater(len(body["submission_readiness"]["blockers"]), 0)
+        submit = self.client.post(
+            "/api/ai/opportunities/submission-control-1/submission-control/",
+            {"action": "submit", "confirmation_reference": "TEST-RECEIPT"},
+            format="json",
+        )
+        self.assertEqual(submit.status_code, 400)
+
+    def test_closeout_is_company_workspace_scoped(self):
+        opportunity = Opportunity.objects.create(
+            source_id="submission-control-2",
+            title="Closeout proposal",
+            response_deadline=timezone.now() + timedelta(days=10),
+        )
+        self.client.get("/api/ai/opportunities/submission-control-2/submission-control/")
+        response = self.client.post(
+            "/api/ai/opportunities/submission-control-2/submission-control/",
+            {"action": "update_closeout", "status": "evaluation", "debrief_requested": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["closeout"]["status"], "evaluation")
+        self.assertTrue(response.json()["closeout"]["debrief_requested"])

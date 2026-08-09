@@ -84,6 +84,8 @@ from .views import (
     proposal_requirement_detail,
     proposal_review_detail,
     proposal_finding_detail,
+    opportunity_submission_control,
+    opportunity_submission_export,
     project_room_tasks,
     project_room_access_management,
     project_room_task_detail,
@@ -213,5 +215,7 @@ urlpatterns = [
     path("ai/opportunities/<str:source_id>/proposal-requirements/<int:requirement_id>/", proposal_requirement_detail),
     path("ai/opportunities/<str:source_id>/proposal-reviews/<int:review_id>/", proposal_review_detail),
     path("ai/opportunities/<str:source_id>/proposal-findings/<int:finding_id>/", proposal_finding_detail),
+    path("ai/opportunities/<str:source_id>/submission-control/", opportunity_submission_control),
+    path("ai/opportunities/<str:source_id>/submission-exports/<str:export_format>/", opportunity_submission_export),
     path("", include(router.urls)),
 ]

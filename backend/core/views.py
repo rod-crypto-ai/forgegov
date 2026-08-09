@@ -73,6 +73,8 @@ from .models import (
     ProposalRequirement,
     ProposalReview,
     ProposalFinding,
+    ProposalSubmissionSnapshot,
+    ProposalCloseout,
 )
 from .serializers import (
     AgencySerializer,
@@ -119,6 +121,7 @@ from .win_strategy import build_win_strategy
 from .capture_command_center import build_capture_command_center
 from .proposal_workspace import build_proposal_workspace
 from .proposal_execution import proposal_execution_payload, ensure_proposal_execution, update_plan, update_requirement, update_review, update_finding
+from .submission_control import build_submission_control, create_submission_snapshot, update_closeout, export_submission_control
 from .intelligence.services import connector_health, opportunity_intelligence
 from .intelligence.services.award_ingestion import award_intelligence_summary, connector_registry_payload, sync_usaspending_awards
 
@@ -130,7 +133,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.9.0-m2"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.9.0-m3"})
 
 
 @api_view(["GET", "POST"])
@@ -1627,6 +1630,53 @@ def proposal_finding_detail(request, source_id: str, finding_id: int):
         return Response({"detail": "Proposal finding not found."}, status=404)
     update_finding(finding, request.data, organization)
     return Response(proposal_execution_payload(organization=organization, opportunity=finding.plan.opportunity, user=request.user))
+
+
+@api_view(["GET", "POST"])
+@permission_classes([ReadOnlyOrContributor])
+def opportunity_submission_control(request, source_id: str):
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(source_id)
+    if not opportunity:
+        return Response({"detail": "Opportunity not found."}, status=404)
+    plan = ensure_proposal_execution(organization=organization, opportunity=opportunity, user=request.user)
+    if request.method == "POST":
+        action = str(request.data.get("action") or "").strip()
+        try:
+            if action == "submit":
+                snapshot = create_submission_snapshot(
+                    plan=plan,
+                    user=request.user,
+                    confirmation_reference=str(request.data.get("confirmation_reference") or ""),
+                    notes=str(request.data.get("notes") or ""),
+                )
+                payload = build_submission_control(organization=organization, opportunity=opportunity, user=request.user)
+                payload["created_snapshot_id"] = snapshot.id
+                return Response(payload, status=201)
+            if action == "update_closeout":
+                closeout, _ = ProposalCloseout.objects.get_or_create(plan=plan, defaults={"updated_by": request.user})
+                update_closeout(closeout, request.data, request.user)
+            elif action:
+                return Response({"detail": "Unsupported submission-control action."}, status=400)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+    return Response(build_submission_control(organization=organization, opportunity=opportunity, user=request.user))
+
+
+@api_view(["GET"])
+@permission_classes([ReadOnlyOrContributor])
+def opportunity_submission_export(request, source_id: str, export_format: str):
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(source_id)
+    if not opportunity:
+        return Response({"detail": "Opportunity not found."}, status=404)
+    plan = ProposalPlan.objects.filter(organization=organization, opportunity=opportunity).first()
+    if not plan:
+        return Response({"detail": "Proposal plan not found."}, status=404)
+    try:
+        return export_submission_control(plan=plan, fmt=export_format)
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=400)
 
 
 def _room_access(request, room_id):

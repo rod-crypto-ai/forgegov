@@ -547,6 +547,74 @@ class ProposalFinding(TimeStampedModel):
         ]
 
 
+class ProposalSubmissionSnapshot(TimeStampedModel):
+    """Immutable record of what ForgeGov recorded at submission time."""
+
+    plan = models.ForeignKey(ProposalPlan, on_delete=models.CASCADE, related_name="submission_snapshots")
+    sequence = models.PositiveIntegerField(default=1)
+    submitted_at = models.DateTimeField(default=timezone.now)
+    submitted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="proposal_submission_snapshots",
+    )
+    delivery_method = models.CharField(max_length=500, blank=True)
+    confirmation_reference = models.CharField(max_length=500, blank=True)
+    notes = models.TextField(blank=True)
+    opportunity_snapshot = models.JSONField(default=dict, blank=True)
+    requirement_snapshot = models.JSONField(default=list, blank=True)
+    review_snapshot = models.JSONField(default=list, blank=True)
+    finding_snapshot = models.JSONField(default=list, blank=True)
+    file_manifest = models.JSONField(default=list, blank=True)
+    amendment_snapshot = models.JSONField(default=dict, blank=True)
+    snapshot_hash = models.CharField(max_length=64)
+
+    class Meta:
+        ordering = ["-submitted_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(fields=("plan", "sequence"), name="unique_prop_submit_sequence"),
+        ]
+        indexes = [
+            models.Index(fields=["plan", "-submitted_at"], name="propsub_plan_time_idx"),
+        ]
+
+
+class ProposalCloseout(TimeStampedModel):
+    class Status(models.TextChoices):
+        SUBMITTED = "submitted", "Submitted"
+        EVALUATION = "evaluation", "Evaluation"
+        DISCUSSIONS = "discussions", "Discussions"
+        FPR = "fpr", "Final Proposal Revision"
+        AWARDED = "awarded", "Awarded"
+        LOST = "lost", "Lost"
+        CANCELLED = "cancelled", "Cancelled"
+
+    plan = models.OneToOneField(ProposalPlan, on_delete=models.CASCADE, related_name="closeout")
+    status = models.CharField(max_length=30, choices=Status.choices, default=Status.SUBMITTED)
+    awardee = models.CharField(max_length=500, blank=True)
+    award_value = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    award_date = models.DateField(null=True, blank=True)
+    debrief_requested = models.BooleanField(default=False)
+    debrief_received = models.BooleanField(default=False)
+    win_loss_reason = models.TextField(blank=True)
+    customer_feedback = models.TextField(blank=True)
+    strengths = models.JSONField(default=list, blank=True)
+    weaknesses = models.JSONField(default=list, blank=True)
+    lessons_learned = models.JSONField(default=list, blank=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="updated_proposal_closeouts",
+    )
+
+    class Meta:
+        ordering = ["-updated_at"]
+
+
 class TeamingActivity(TimeStampedModel):
     class ActivityType(models.TextChoices):
         NOTE = "note", "Note"
