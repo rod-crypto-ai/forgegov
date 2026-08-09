@@ -69,6 +69,10 @@ from .models import (
     OrganizationJoinRequest,
     AwardSyncRun,
     ConnectorSource,
+    ProposalPlan,
+    ProposalRequirement,
+    ProposalReview,
+    ProposalFinding,
 )
 from .serializers import (
     AgencySerializer,
@@ -114,6 +118,7 @@ from .capture_intelligence import build_capture_assessment
 from .win_strategy import build_win_strategy
 from .capture_command_center import build_capture_command_center
 from .proposal_workspace import build_proposal_workspace
+from .proposal_execution import proposal_execution_payload, ensure_proposal_execution, update_plan, update_requirement, update_review, update_finding
 from .intelligence.services import connector_health, opportunity_intelligence
 from .intelligence.services.award_ingestion import award_intelligence_summary, connector_registry_payload, sync_usaspending_awards
 
@@ -125,7 +130,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.9.0-m1"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.9.0-m2"})
 
 
 @api_view(["GET", "POST"])
@@ -1530,6 +1535,98 @@ def opportunity_proposal_workspace(request, source_id: str):
     if not opportunity:
         return Response({"detail": "Opportunity not found."}, status=status.HTTP_404_NOT_FOUND)
     return Response(build_proposal_workspace(organization=organization, opportunity=opportunity))
+
+
+@api_view(["GET", "POST"])
+@permission_classes([ReadOnlyOrContributor])
+def opportunity_proposal_execution(request, source_id: str):
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(source_id)
+    if not opportunity:
+        return Response({"detail": "Opportunity not found."}, status=status.HTTP_404_NOT_FOUND)
+    plan = ensure_proposal_execution(organization=organization, opportunity=opportunity, user=request.user)
+    if request.method == "POST":
+        action = str(request.data.get("action") or "sync")
+        if action == "update_plan":
+            update_plan(plan, request.data)
+        elif action == "accept_amendment_baseline":
+            documents = OpportunityDocument.objects.filter(organization=organization, opportunity=opportunity).order_by("-updated_at")
+            from .proposal_execution import _snapshot
+            plan.amendment_baseline = _snapshot(opportunity, documents)
+            plan.amendment_checked_at = timezone.now()
+            plan.save(update_fields=["amendment_baseline", "amendment_checked_at", "updated_at"])
+        elif action == "create_finding":
+            review = plan.reviews.filter(pk=request.data.get("review_id")).first() if request.data.get("review_id") else None
+            requirement = plan.requirements.filter(pk=request.data.get("requirement_id")).first() if request.data.get("requirement_id") else None
+            severity = str(request.data.get("severity") or ProposalFinding.Severity.MEDIUM)
+            if severity not in {value for value, _ in ProposalFinding.Severity.choices}:
+                return Response({"detail": "Invalid finding severity."}, status=400)
+            title = str(request.data.get("title") or "").strip()
+            if not title:
+                return Response({"detail": "Finding title is required."}, status=400)
+            owner_id = request.data.get("owner_id") or None
+            if owner_id and not Membership.objects.filter(organization=organization, user_id=owner_id, active=True).exists():
+                return Response({"detail": "Finding owner must belong to the active company workspace."}, status=400)
+            ProposalFinding.objects.create(
+                plan=plan,
+                review=review,
+                requirement=requirement,
+                severity=severity,
+                title=title[:500],
+                detail=str(request.data.get("detail") or ""),
+                owner_id=owner_id,
+                due_at=request.data.get("due_at") or None,
+                created_by=request.user,
+            )
+        elif action != "sync":
+            return Response({"detail": "Unsupported proposal execution action."}, status=400)
+    return Response(proposal_execution_payload(organization=organization, opportunity=opportunity, user=request.user))
+
+
+@api_view(["PATCH"])
+@permission_classes([ReadOnlyOrContributor])
+def proposal_requirement_detail(request, source_id: str, requirement_id: int):
+    organization = _request_organization(request)
+    requirement = ProposalRequirement.objects.filter(
+        pk=requirement_id,
+        plan__organization=organization,
+        plan__opportunity__source_id=source_id,
+    ).select_related("plan").first()
+    if not requirement:
+        return Response({"detail": "Proposal requirement not found."}, status=404)
+    update_requirement(requirement, request.data, organization)
+    opportunity = requirement.plan.opportunity
+    return Response(proposal_execution_payload(organization=organization, opportunity=opportunity, user=request.user))
+
+
+@api_view(["PATCH"])
+@permission_classes([ReadOnlyOrContributor])
+def proposal_review_detail(request, source_id: str, review_id: int):
+    organization = _request_organization(request)
+    review = ProposalReview.objects.filter(
+        pk=review_id,
+        plan__organization=organization,
+        plan__opportunity__source_id=source_id,
+    ).select_related("plan").first()
+    if not review:
+        return Response({"detail": "Proposal review not found."}, status=404)
+    update_review(review, request.data, organization)
+    return Response(proposal_execution_payload(organization=organization, opportunity=review.plan.opportunity, user=request.user))
+
+
+@api_view(["PATCH"])
+@permission_classes([ReadOnlyOrContributor])
+def proposal_finding_detail(request, source_id: str, finding_id: int):
+    organization = _request_organization(request)
+    finding = ProposalFinding.objects.filter(
+        pk=finding_id,
+        plan__organization=organization,
+        plan__opportunity__source_id=source_id,
+    ).select_related("plan").first()
+    if not finding:
+        return Response({"detail": "Proposal finding not found."}, status=404)
+    update_finding(finding, request.data, organization)
+    return Response(proposal_execution_payload(organization=organization, opportunity=finding.plan.opportunity, user=request.user))
 
 
 def _room_access(request, room_id):

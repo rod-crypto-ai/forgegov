@@ -433,6 +433,120 @@ class OpportunityWorkspace(TimeStampedModel):
         constraints = [models.UniqueConstraint(fields=("organization", "opportunity"), name="unique_opportunity_workspace_per_org")]
 
 
+class ProposalPlan(TimeStampedModel):
+    class Status(models.TextChoices):
+        PLANNING = "planning", "Planning"
+        IN_PROGRESS = "in_progress", "In Progress"
+        REVIEW = "review", "Review"
+        SUBMISSION_READY = "submission_ready", "Submission Ready"
+        SUBMITTED = "submitted", "Submitted"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="proposal_plans")
+    opportunity = models.ForeignKey(Opportunity, on_delete=models.CASCADE, related_name="proposal_plans")
+    status = models.CharField(max_length=30, choices=Status.choices, default=Status.PLANNING)
+    submission_method = models.CharField(max_length=500, blank=True)
+    final_submission_verified = models.BooleanField(default=False)
+    amendment_baseline = models.JSONField(default=dict, blank=True)
+    amendment_checked_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_proposal_plans")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=("organization", "opportunity"), name="unique_proposal_plan_per_org_opportunity"),
+        ]
+        indexes = [
+            models.Index(fields=["organization", "status"], name="core_propplan_org_status_idx"),
+        ]
+
+
+class ProposalRequirement(TimeStampedModel):
+    class Status(models.TextChoices):
+        NEEDS_REVIEW = "needs_review", "Needs Review"
+        OPEN = "open", "Open"
+        IN_PROGRESS = "in_progress", "In Progress"
+        COMPLIANT = "compliant", "Compliant"
+        NOT_APPLICABLE = "not_applicable", "Not Applicable"
+
+    plan = models.ForeignKey(ProposalPlan, on_delete=models.CASCADE, related_name="requirements")
+    key = models.CharField(max_length=160)
+    requirement = models.TextField()
+    source = models.CharField(max_length=500, blank=True)
+    source_kind = models.CharField(max_length=80, blank=True)
+    evidence = models.TextField(blank=True)
+    status = models.CharField(max_length=30, choices=Status.choices, default=Status.NEEDS_REVIEW)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="owned_proposal_requirements")
+    due_at = models.DateTimeField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=("plan", "key"), name="unique_proposal_requirement_key"),
+        ]
+        indexes = [
+            models.Index(fields=["plan", "status"], name="core_propreq_plan_status_idx"),
+        ]
+
+
+class ProposalReview(TimeStampedModel):
+    class ReviewType(models.TextChoices):
+        PINK = "pink", "Pink Team"
+        RED = "red", "Red Team"
+        GOLD = "gold", "Gold Team"
+        FINAL = "final", "Final Submission Check"
+
+    class Status(models.TextChoices):
+        PLANNED = "planned", "Planned"
+        IN_PROGRESS = "in_progress", "In Progress"
+        PASSED = "passed", "Passed"
+        BLOCKED = "blocked", "Blocked"
+
+    plan = models.ForeignKey(ProposalPlan, on_delete=models.CASCADE, related_name="reviews")
+    review_type = models.CharField(max_length=20, choices=ReviewType.choices)
+    target_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=30, choices=Status.choices, default=Status.PLANNED)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="owned_proposal_reviews")
+    completed_at = models.DateTimeField(null=True, blank=True)
+    summary = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["target_at", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=("plan", "review_type"), name="unique_proposal_review_type"),
+        ]
+
+
+class ProposalFinding(TimeStampedModel):
+    class Severity(models.TextChoices):
+        LOW = "low", "Low"
+        MEDIUM = "medium", "Medium"
+        HIGH = "high", "High"
+        CRITICAL = "critical", "Critical"
+
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        RESOLVED = "resolved", "Resolved"
+        ACCEPTED = "accepted", "Accepted Risk"
+
+    plan = models.ForeignKey(ProposalPlan, on_delete=models.CASCADE, related_name="findings")
+    review = models.ForeignKey(ProposalReview, null=True, blank=True, on_delete=models.CASCADE, related_name="findings")
+    requirement = models.ForeignKey(ProposalRequirement, null=True, blank=True, on_delete=models.SET_NULL, related_name="findings")
+    severity = models.CharField(max_length=20, choices=Severity.choices, default=Severity.MEDIUM)
+    title = models.CharField(max_length=500)
+    detail = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="owned_proposal_findings")
+    due_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_proposal_findings")
+
+    class Meta:
+        ordering = ["status", "-created_at"]
+        indexes = [
+            models.Index(fields=["plan", "status", "severity"], name="propfind_plan_stat_idx"),
+        ]
+
+
 class TeamingActivity(TimeStampedModel):
     class ActivityType(models.TextChoices):
         NOTE = "note", "Note"

@@ -699,3 +699,39 @@ body{background:radial-gradient(circle at 80% -10%,rgba(45,137,255,.08),transpar
 
 /* ForgeGov v2.9.0-M1 Proposal + Compliance Command Center */
 .proposal-command-shell{display:grid;gap:18px}.proposal-command-header{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}.proposal-command-header h2{margin:5px 0}.proposal-alerts{display:grid;gap:8px}.proposal-alerts p{display:flex;gap:8px;align-items:center;margin:0;padding:10px 12px;border:1px solid var(--border);border-radius:12px}.proposal-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.proposal-kpis article{padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--panel)}.proposal-kpis span,.proposal-kpis small{display:block}.proposal-kpis strong{display:block;font-size:28px;margin:6px 0}.proposal-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:16px}.proposal-matrix,.proposal-outline,.proposal-review-list,.proposal-checklist,.proposal-task-grid{display:grid;gap:10px}.proposal-matrix article{display:grid;grid-template-columns:110px 1fr;gap:12px;padding:12px;border:1px solid var(--border);border-radius:12px}.proposal-matrix article>span,.proposal-outline article>span{font-size:11px;text-transform:uppercase;font-weight:800}.proposal-outline article,.proposal-review-list article,.proposal-task-grid article{padding:12px;border:1px solid var(--border);border-radius:12px}.proposal-outline p,.proposal-task-grid p{margin:5px 0}.proposal-review-list article{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center}.proposal-checklist p{display:flex;gap:9px;align-items:center;margin:0;padding:9px 0;border-bottom:1px solid var(--border)}.proposal-task-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.proposal-task-grid article.complete{opacity:.62}.proposal-warning{font-size:12px;opacity:.72;margin:0}.proposal-loading{display:grid;place-items:center;min-height:220px;text-align:center}@media(max-width:1024px){.proposal-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.proposal-grid{grid-template-columns:1fr}.proposal-task-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:640px){.proposal-command-header{display:grid}.proposal-kpis,.proposal-task-grid{grid-template-columns:1fr}.proposal-matrix article{grid-template-columns:1fr}.proposal-review-list article{grid-template-columns:1fr}}
+
+
+/* v2.9.0-M2 Proposal Execution + Review Management */
+.proposal-execution-shell{display:grid;gap:18px}
+.proposal-execution-kpis{grid-template-columns:repeat(4,minmax(0,1fr))}
+.proposal-amendment-alert{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:start;padding:16px;border:1px solid #f1c56b;border-radius:16px;background:#fff8e7}
+.proposal-amendment-alert p{margin:4px 0 0}
+.proposal-execution-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(320px,.85fr);gap:18px}
+.proposal-execution-requirements,.proposal-review-gates,.proposal-findings,.proposal-project-tasks{display:grid;gap:10px}
+.proposal-execution-requirements article{display:grid;grid-template-columns:minmax(0,1fr) minmax(190px,240px);gap:14px;padding:14px;border:1px solid var(--border);border-radius:14px;background:var(--surface)}
+.proposal-execution-requirement-main{display:grid;gap:5px}
+.proposal-execution-controls{display:grid;gap:8px;align-content:start}
+.proposal-execution-controls select,.proposal-review-gates select,.proposal-findings select,.proposal-new-finding select,.proposal-new-finding input,.proposal-submission-control input{width:100%;min-height:40px;border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:8px 10px}
+.proposal-state{display:inline-flex;width:max-content;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;background:#eef2f7}
+.proposal-state.compliant,.proposal-state.not_applicable{background:#e2f7ef;color:#0f7658}
+.proposal-state.in_progress{background:#e9f1ff;color:#1f5fae}
+.proposal-state.needs_review,.proposal-state.open{background:#fff1d6;color:#925f08}
+.proposal-review-gates article,.proposal-findings article,.proposal-project-tasks article{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:13px;border:1px solid var(--border);border-radius:13px}
+.proposal-review-gates article>div,.proposal-findings article>div,.proposal-project-tasks article{min-width:0}
+.proposal-review-gates select,.proposal-findings select{width:auto;min-width:130px}
+.review-passed{border-color:#a7dfcc!important;background:#f2fbf7}
+.review-blocked{border-color:#f0b5b5!important;background:#fff6f6}
+.proposal-new-finding{display:grid;grid-template-columns:1fr 140px auto;gap:8px;margin-bottom:12px}
+.finding-critical{border-left:4px solid #b42318!important}
+.finding-high{border-left:4px solid #d97706!important}
+.finding-medium{border-left:4px solid #ca8a04!important}
+.finding-low{border-left:4px solid #2563eb!important}
+.proposal-submission-control{display:grid;gap:14px}
+.proposal-submission-control label{display:grid;gap:6px;font-weight:700}
+.proposal-verification-check{grid-template-columns:auto 1fr!important;align-items:start;font-weight:500!important}
+.proposal-verification-check input{width:18px!important;min-height:18px!important;margin-top:2px}
+.proposal-final-state{padding:14px 16px;border-radius:14px}
+.proposal-final-state.ready{background:#e5f7f0;border:1px solid #a8dfcb}
+.proposal-final-state.blocked{background:#fff5e6;border:1px solid #f0c67c}
+@media (max-width:1100px){.proposal-execution-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.proposal-execution-grid{grid-template-columns:1fr}}
+@media (max-width:720px){.proposal-execution-kpis{grid-template-columns:1fr}.proposal-amendment-alert{grid-template-columns:auto 1fr}.proposal-amendment-alert .secondary-button{grid-column:1/-1}.proposal-execution-requirements article{grid-template-columns:1fr}.proposal-new-finding{grid-template-columns:1fr}.proposal-review-gates article,.proposal-findings article{align-items:stretch;flex-direction:column}.proposal-review-gates select,.proposal-findings select{width:100%}}

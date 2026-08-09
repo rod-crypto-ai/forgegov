@@ -1,3 +1,4 @@
+from .models import OpportunityWorkspace
 from unittest.mock import Mock, patch
 from datetime import timedelta
 
@@ -77,13 +78,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.9.0-m1")
+        self.assertEqual(response.json()["version"], "2.9.0-m2")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.9.0-m1")
+        self.assertEqual(response.json()["version"], "2.9.0-m2")
 
 
 class RouterRegressionTests(TestCase):
@@ -1423,3 +1424,65 @@ class ProposalWorkspaceRouteTests(TestCase):
         from django.urls import resolve
         match = resolve('/api/ai/opportunities/example/proposal-workspace/')
         self.assertEqual(match.func.__name__, 'view')
+
+
+class ProposalExecutionTests(AuthenticatedApiTestCase):
+    def test_proposal_execution_seeds_persistent_requirements_and_reviews(self):
+        opportunity = Opportunity.objects.create(
+            source_id="proposal-execution-1",
+            title="Maintenance proposal",
+            agency="Department of the Army",
+            response_deadline=timezone.now() + timedelta(days=30),
+        )
+        OpportunityWorkspace.objects.create(
+            organization=self.organization,
+            opportunity=opportunity,
+            compliance_items=[
+                {"id": "workspace-req", "label": "Submit technical volume", "complete": False, "source": "Section L"},
+            ],
+        )
+        response = self.client.get("/api/ai/opportunities/proposal-execution-1/proposal-execution/")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertGreaterEqual(body["counts"]["requirements_total"], 1)
+        self.assertEqual(body["counts"]["reviews_total"], 4)
+        self.assertIn("amendment_impact", body)
+        self.assertIn("members", body)
+        from .models import ProposalPlan, ProposalRequirement, ProposalReview
+        plan = ProposalPlan.objects.get(organization=self.organization, opportunity=opportunity)
+        self.assertTrue(ProposalRequirement.objects.filter(plan=plan, key="workspace-req").exists())
+        self.assertEqual(ProposalReview.objects.filter(plan=plan).count(), 4)
+
+    def test_requirement_update_is_workspace_scoped_and_persistent(self):
+        opportunity = Opportunity.objects.create(
+            source_id="proposal-execution-2",
+            title="Logistics proposal",
+            response_deadline=timezone.now() + timedelta(days=25),
+        )
+        first = self.client.get("/api/ai/opportunities/proposal-execution-2/proposal-execution/")
+        requirement_id = first.json()["requirements"][0]["id"]
+        response = self.client.patch(
+            f"/api/ai/opportunities/proposal-execution-2/proposal-requirements/{requirement_id}/",
+            {"status": "in_progress", "owner_id": self.user.id, "notes": "Assigned for response drafting."},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        row = next(item for item in response.json()["requirements"] if item["id"] == requirement_id)
+        self.assertEqual(row["status"], "in_progress")
+        self.assertEqual(row["owner_id"], self.user.id)
+
+    def test_submission_ready_requires_human_gates(self):
+        opportunity = Opportunity.objects.create(
+            source_id="proposal-execution-3",
+            title="Field support proposal",
+            response_deadline=timezone.now() + timedelta(days=35),
+        )
+        response = self.client.get("/api/ai/opportunities/proposal-execution-3/proposal-execution/")
+        body = response.json()
+        self.assertFalse(body["plan"]["submission_ready"])
+        self.assertFalse(body["plan"]["final_submission_verified"])
+
+    def test_proposal_execution_route_is_registered(self):
+        from django.urls import resolve
+        match = resolve("/api/ai/opportunities/example/proposal-execution/")
+        self.assertEqual(match.func.__name__, "view")

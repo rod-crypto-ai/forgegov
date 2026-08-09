@@ -17,7 +17,7 @@ def _unique(values):
 
 
 def build_proposal_workspace(*, organization, opportunity) -> dict[str, Any]:
-    documents=list(OpportunityDocument.objects.filter(opportunity=opportunity).order_by('-updated_at'))
+    documents=list(OpportunityDocument.objects.filter(organization=organization, opportunity=opportunity).order_by('-updated_at'))
     ready=[doc for doc in documents if doc.status == OpportunityDocument.Status.READY]
     readiness=capture_readiness_summary(documents)
     structured=[((doc.metadata or {}).get('structured_intelligence') or {}) for doc in ready]
