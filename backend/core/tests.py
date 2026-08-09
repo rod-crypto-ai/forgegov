@@ -78,13 +78,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.9.0-m3")
+        self.assertEqual(response.json()["version"], "2.9.0-m4")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.9.0-m3")
+        self.assertEqual(response.json()["version"], "2.9.0-m4")
 
 
 class RouterRegressionTests(TestCase):
@@ -1530,3 +1530,30 @@ class SubmissionControlTests(AuthenticatedApiTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["closeout"]["status"], "evaluation")
         self.assertTrue(response.json()["closeout"]["debrief_requested"])
+
+
+class PursuitDecisionIntelligenceTests(AuthenticatedApiTestCase):
+    def test_pursuit_decision_is_explainable_and_persistent(self):
+        opportunity = Opportunity.objects.create(
+            source_id="decision-m4-1", title="Vehicle sustainment", agency="Department of the Army",
+            naics_code="811310", psc_code="J023", response_deadline=timezone.now() + timedelta(days=30),
+        )
+        PipelineItem.objects.create(
+            organization=self.organization, opportunity=opportunity, stage=PipelineItem.Stage.CAPTURE,
+            estimated_value=1000000, probability_of_win=50,
+        )
+        response = self.client.get("/api/ai/opportunities/decision-m4-1/pursuit-decision/")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIn(body["decision"]["recommendation"], ["PURSUE", "PURSUE WITH CONDITIONS", "HOLD", "NO-BID"])
+        self.assertEqual(sum(row["weight"] for row in body["scorecard"]), 100)
+        self.assertIn("evidence", body)
+        created = self.client.post("/api/ai/opportunities/decision-m4-1/pursuit-decision/", {}, format="json")
+        self.assertEqual(created.status_code, 201)
+        self.assertTrue(created.json().get("recorded_snapshot_id"))
+
+    def test_command_center_includes_pursuit_decision_without_new_tab(self):
+        Opportunity.objects.create(source_id="decision-m4-2", title="Decision command center", agency="Army")
+        response = self.client.get("/api/ai/opportunities/decision-m4-2/command-center/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("pursuit_decision", response.json())

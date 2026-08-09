@@ -24,6 +24,7 @@ type CommandCenterPayload = {
   proposal_tasks:Array<{id:string;title:string;status:string;priority:string;due_at?:string|null;source:string;assigned_to:string}>;
   capture_memory:Array<{type:string;title:string;content:string;updated_at?:string|null;visibility?:string;model?:string}>;
   project_room?:{id:number;name:string;href:string}|null;
+  pursuit_decision?:{decision:{recommendation:string;score:number;win_probability:number;confidence:number;evidence_coverage:number;conditions:string[];hard_blockers:string[]};economics:{estimated_value?:string|number|null;expected_value?:string|number|null};warning:string};
   warnings:string[];
 };
 
@@ -52,6 +53,8 @@ export function CaptureCommandCenter({noticeId}:{noticeId:string}){
       <article className={`command-kpi ${scoreTone(ready)}`}><span><ShieldCheck size={17}/>Proposal readiness</span><strong>{ready}<small>/100</small></strong><p>{data.health.compliance_missing} missing compliance row(s)</p></article>
       <article className={`command-kpi decision ${decision==="bid"?"strong":decision==="no bid"?"risk":"watch"}`}><span><CheckCircle2 size={17}/>Bid posture</span><strong>{decision.toUpperCase()}</strong><p>{Number(data.bid_decision.confidence??0)}% evidence confidence</p></article>
     </div>
+
+    {data.pursuit_decision&&<section className="data-panel pursuit-decision-banner"><div><span className="eyebrow">PURSUIT DECISION INTELLIGENCE</span><h3>{data.pursuit_decision.decision.recommendation}</h3><p>{data.pursuit_decision.decision.conditions[0]||"Current evidence supports the recommendation without a material condition."}</p></div><div className="pursuit-decision-metrics"><span><b>{data.pursuit_decision.decision.win_probability}%</b> win probability</span><span><b>{data.pursuit_decision.decision.confidence}%</b> confidence</span><span><b>{data.pursuit_decision.decision.evidence_coverage}%</b> evidence</span><span><b>{data.pursuit_decision.economics.expected_value?new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",maximumFractionDigits:0}).format(Number(data.pursuit_decision.economics.expected_value)):"—"}</b> expected value</span></div><small>{data.pursuit_decision.warning}</small></section>}
 
     <div className="capture-command-primary">
       <section className="data-panel command-executive"><div className="panel-title-row"><div><span className="eyebrow">EXECUTIVE BRIEF</span><h3>Current pursuit posture</h3></div><Brain size={20}/></div><p className="command-summary">{data.summary}</p><div className="command-rationale">{(data.bid_decision.rationale??[]).slice(0,5).map((row,index)=><p key={index}><span/><>{row}</></p>)}</div><div className="command-shortcuts"><Link href="#" onClick={e=>e.preventDefault()}>Health {health}</Link><span>Incumbent: {incumbent}</span><span>{data.health.competitor_signals} competitor signal(s)</span><span>{data.health.teaming_matches} partner match(es)</span></div></section>

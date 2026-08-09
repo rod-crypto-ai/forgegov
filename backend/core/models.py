@@ -615,6 +615,31 @@ class ProposalCloseout(TimeStampedModel):
         ordering = ["-updated_at"]
 
 
+class PursuitDecisionSnapshot(TimeStampedModel):
+    """Persistent, explainable decision record for a pursuit at a point in time."""
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="pursuit_decisions")
+    opportunity = models.ForeignKey(Opportunity, on_delete=models.CASCADE, related_name="pursuit_decisions")
+    recommendation = models.CharField(max_length=40)
+    win_probability = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    confidence = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    evidence_coverage = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    estimated_value = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    expected_value = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    target_margin_percent = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    pursuit_cost = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    subcontractor_share_percent = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    scorecard = models.JSONField(default=dict, blank=True)
+    evidence = models.JSONField(default=list, blank=True)
+    conditions = models.JSONField(default=list, blank=True)
+    rationale = models.JSONField(default=list, blank=True)
+    recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="recorded_pursuit_decisions")
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["organization", "opportunity", "-created_at"], name="pdec_org_opp_time_idx")]
+
+
 class TeamingActivity(TimeStampedModel):
     class ActivityType(models.TextChoices):
         NOTE = "note", "Note"

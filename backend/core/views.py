@@ -119,6 +119,7 @@ from .document_intelligence import DocumentIngestionError, capture_readiness_sum
 from .capture_intelligence import build_capture_assessment
 from .win_strategy import build_win_strategy
 from .capture_command_center import build_capture_command_center
+from .pursuit_decision import build_pursuit_decision, record_pursuit_decision
 from .proposal_workspace import build_proposal_workspace
 from .proposal_execution import proposal_execution_payload, ensure_proposal_execution, update_plan, update_requirement, update_review, update_finding
 from .submission_control import build_submission_control, create_submission_snapshot, update_closeout, export_submission_control
@@ -133,7 +134,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.9.0-m3"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.9.0-m4"})
 
 
 @api_view(["GET", "POST"])
@@ -1528,7 +1529,24 @@ def opportunity_capture_command_center(request, source_id: str):
     opportunity = _opportunity_for_source(source_id)
     if not opportunity:
         return Response({"detail": "Opportunity not found."}, status=status.HTTP_404_NOT_FOUND)
-    return Response(build_capture_command_center(organization=organization, opportunity=opportunity))
+    payload = build_capture_command_center(organization=organization, opportunity=opportunity)
+    payload["pursuit_decision"] = build_pursuit_decision(organization=organization, opportunity=opportunity)
+    return Response(payload)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([ReadOnlyOrContributor])
+def opportunity_pursuit_decision(request, source_id: str):
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(source_id)
+    if not opportunity:
+        return Response({"detail": "Opportunity not found."}, status=status.HTTP_404_NOT_FOUND)
+    if request.method == "POST":
+        snapshot = record_pursuit_decision(organization=organization, opportunity=opportunity, user=request.user, payload=request.data)
+        result = build_pursuit_decision(organization=organization, opportunity=opportunity)
+        result["recorded_snapshot_id"] = snapshot.id
+        return Response(result, status=201)
+    return Response(build_pursuit_decision(organization=organization, opportunity=opportunity))
 
 
 @api_view(["GET"])
