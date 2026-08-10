@@ -78,13 +78,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.9.0-m5.2")
+        self.assertEqual(response.json()["version"], "3.0.0-m1")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.9.0-m5.2")
+        self.assertEqual(response.json()["version"], "3.0.0-m1")
 
 
 class RouterRegressionTests(TestCase):
@@ -1630,3 +1630,93 @@ class AiResponseDocumentHardeningTests(AuthenticatedApiTestCase):
         self.assertIn("Section L.pdf", context)
         self.assertIn("Section M.pdf", context)
         self.assertGreaterEqual(len(sources), 2)
+
+
+class PricingEngineTests(AuthenticatedApiTestCase):
+    def test_pricing_workspace_creates_plan_and_default_scenarios(self):
+        opportunity = Opportunity.objects.create(
+            source_id="pricing-m1-1",
+            title="Pricing foundation test",
+            agency="Department of the Navy",
+        )
+        response = self.client.get("/api/pricing/opportunities/pricing-m1-1/")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["plan"]["revision"], 1)
+        self.assertEqual(body["plan"]["status"], "draft")
+        self.assertEqual(len(body["scenarios"]), 3)
+        self.assertEqual(float(body["totals"]["price"]), 0.0)
+
+    def test_pricing_engine_calculates_labor_burden_and_profit(self):
+        opportunity = Opportunity.objects.create(source_id="pricing-m1-2", title="Labor pricing")
+        self.client.patch(
+            "/api/pricing/opportunities/pricing-m1-2/",
+            {
+                "action": "update_plan",
+                "payroll_burden_percent": "10",
+                "fringe_percent": "20",
+                "overhead_percent": "10",
+                "ga_percent": "10",
+                "target_profit_percent": "10",
+            },
+            format="json",
+        )
+        response = self.client.patch(
+            "/api/pricing/opportunities/pricing-m1-2/",
+            {
+                "action": "add_item",
+                "category": "labor",
+                "name": "Senior Technician",
+                "labor_hours": "100",
+                "labor_rate": "50",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        totals = response.json()["totals"]
+        self.assertEqual(float(totals["direct"]), 5000.0)
+        self.assertGreater(float(totals["total_cost"]), 5000.0)
+        self.assertGreater(float(totals["price"]), float(totals["total_cost"]))
+        self.assertGreater(float(totals["profit"]), 0.0)
+
+    def test_pricing_revision_preserves_financial_history(self):
+        opportunity = Opportunity.objects.create(source_id="pricing-m1-3", title="Revision test")
+        self.client.patch(
+            "/api/pricing/opportunities/pricing-m1-3/",
+            {"action": "add_item", "category": "material", "name": "Parts", "quantity": "2", "unit_cost": "1000"},
+            format="json",
+        )
+        response = self.client.patch(
+            "/api/pricing/opportunities/pricing-m1-3/",
+            {"action": "new_revision"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["plan"]["revision"], 2)
+        self.assertEqual(len(response.json()["items"]), 1)
+        from .models import PricingPlan
+        revisions = list(PricingPlan.objects.filter(organization=self.organization, opportunity=opportunity).order_by("revision"))
+        self.assertEqual(len(revisions), 2)
+        self.assertEqual(revisions[0].status, "locked")
+
+    def test_pursuit_decision_consumes_real_pricing_economics(self):
+        opportunity = Opportunity.objects.create(source_id="pricing-m1-4", title="Decision economics", agency="Army")
+        PipelineItem.objects.create(
+            organization=self.organization,
+            opportunity=opportunity,
+            stage=PipelineItem.Stage.CAPTURE,
+            estimated_value=900000,
+            probability_of_win=50,
+        )
+        self.client.patch(
+            "/api/pricing/opportunities/pricing-m1-4/",
+            {"action": "add_item", "category": "subcontract", "name": "Prime subcontract", "quantity": "1", "unit_cost": "500000"},
+            format="json",
+        )
+        pricing = self.client.get("/api/pricing/opportunities/pricing-m1-4/").json()
+        decision = self.client.get("/api/ai/opportunities/pricing-m1-4/pursuit-decision/")
+        self.assertEqual(decision.status_code, 200)
+        economics = decision.json()["economics"]
+        self.assertEqual(float(economics["estimated_value"]), float(pricing["totals"]["price"]))
+        self.assertEqual(float(economics["target_margin_percent"]), float(pricing["totals"]["margin_percent"]))
+        self.assertEqual(economics["pricing_revision"], 1)

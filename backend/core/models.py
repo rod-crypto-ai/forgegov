@@ -615,6 +615,121 @@ class ProposalCloseout(TimeStampedModel):
         ordering = ["-updated_at"]
 
 
+class PricingProfile(TimeStampedModel):
+    """Organization-level pricing defaults reused across pursuits."""
+
+    organization = models.OneToOneField(Organization, on_delete=models.CASCADE, related_name="pricing_profile")
+    fringe_percent = models.DecimalField(max_digits=7, decimal_places=3, default=0)
+    overhead_percent = models.DecimalField(max_digits=7, decimal_places=3, default=0)
+    ga_percent = models.DecimalField(max_digits=7, decimal_places=3, default=0)
+    material_handling_percent = models.DecimalField(max_digits=7, decimal_places=3, default=0)
+    subcontract_handling_percent = models.DecimalField(max_digits=7, decimal_places=3, default=0)
+    payroll_burden_percent = models.DecimalField(max_digits=7, decimal_places=3, default=0)
+    default_profit_percent = models.DecimalField(max_digits=7, decimal_places=3, default=12)
+    minimum_margin_percent = models.DecimalField(max_digits=7, decimal_places=3, default=8)
+    annual_escalation_percent = models.DecimalField(max_digits=7, decimal_places=3, default=3)
+    payment_lag_days = models.PositiveIntegerField(default=30)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="updated_pricing_profiles")
+
+
+class PricingPlan(TimeStampedModel):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        REVIEW = "review", "Ready for Review"
+        APPROVED = "approved", "Approved"
+        LOCKED = "locked", "Locked"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="pricing_plans")
+    opportunity = models.ForeignKey(Opportunity, on_delete=models.CASCADE, related_name="pricing_plans")
+    name = models.CharField(max_length=255, default="Target Pricing")
+    revision = models.PositiveIntegerField(default=1)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    fringe_percent = models.DecimalField(max_digits=7, decimal_places=3, default=0)
+    overhead_percent = models.DecimalField(max_digits=7, decimal_places=3, default=0)
+    ga_percent = models.DecimalField(max_digits=7, decimal_places=3, default=0)
+    material_handling_percent = models.DecimalField(max_digits=7, decimal_places=3, default=0)
+    subcontract_handling_percent = models.DecimalField(max_digits=7, decimal_places=3, default=0)
+    payroll_burden_percent = models.DecimalField(max_digits=7, decimal_places=3, default=0)
+    target_profit_percent = models.DecimalField(max_digits=7, decimal_places=3, default=12)
+    minimum_margin_percent = models.DecimalField(max_digits=7, decimal_places=3, default=8)
+    annual_escalation_percent = models.DecimalField(max_digits=7, decimal_places=3, default=3)
+    pursuit_cost = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    notes = models.TextField(blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="approved_pricing_plans")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_pricing_plans")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=("organization", "opportunity", "revision"), name="uniq_priceplan_org_opp_rev"),
+        ]
+        ordering = ["-revision", "-updated_at"]
+        indexes = [models.Index(fields=["organization", "opportunity", "status"], name="priceplan_org_opp_stat")]
+
+
+class PricingClin(TimeStampedModel):
+    plan = models.ForeignKey(PricingPlan, on_delete=models.CASCADE, related_name="clins")
+    clin = models.CharField(max_length=80)
+    description = models.CharField(max_length=500, blank=True)
+    option_year = models.PositiveSmallIntegerField(default=0)
+    quantity = models.DecimalField(max_digits=18, decimal_places=3, default=1)
+    unit = models.CharField(max_length=80, default="LOT")
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["option_year", "sort_order", "clin"]
+        constraints = [models.UniqueConstraint(fields=("plan", "clin", "option_year"), name="uniq_priceclin_plan_clin_yr")]
+
+
+class PricingCostItem(TimeStampedModel):
+    class Category(models.TextChoices):
+        LABOR = "labor", "Labor"
+        MATERIAL = "material", "Materials"
+        TRAVEL = "travel", "Travel"
+        EQUIPMENT = "equipment", "Equipment"
+        SUBCONTRACT = "subcontract", "Subcontractor"
+        BOND = "bond", "Bond"
+        INSURANCE = "insurance", "Insurance"
+        OTHER = "other", "Other Direct Cost"
+
+    plan = models.ForeignKey(PricingPlan, on_delete=models.CASCADE, related_name="cost_items")
+    clin = models.ForeignKey(PricingClin, null=True, blank=True, on_delete=models.SET_NULL, related_name="cost_items")
+    category = models.CharField(max_length=30, choices=Category.choices)
+    name = models.CharField(max_length=500)
+    quantity = models.DecimalField(max_digits=18, decimal_places=3, default=1)
+    unit_cost = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    labor_hours = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    labor_rate = models.DecimalField(max_digits=18, decimal_places=4, default=0)
+    option_year = models.PositiveSmallIntegerField(default=0)
+    escalation_percent = models.DecimalField(max_digits=7, decimal_places=3, default=0)
+    source = models.CharField(max_length=500, blank=True)
+    source_kind = models.CharField(max_length=40, default="user")
+    notes = models.TextField(blank=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["option_year", "category", "sort_order", "id"]
+        indexes = [models.Index(fields=["plan", "category", "option_year"], name="priceitem_plan_cat_yr")]
+
+
+class PricingScenario(TimeStampedModel):
+    class ScenarioType(models.TextChoices):
+        COMPETITIVE = "competitive", "Competitive"
+        TARGET = "target", "Target"
+        PROTECTIVE = "protective", "Protective"
+
+    plan = models.ForeignKey(PricingPlan, on_delete=models.CASCADE, related_name="scenarios")
+    scenario_type = models.CharField(max_length=20, choices=ScenarioType.choices)
+    profit_percent = models.DecimalField(max_digits=7, decimal_places=3, default=12)
+    cost_adjustment_percent = models.DecimalField(max_digits=7, decimal_places=3, default=0)
+    price_adjustment_percent = models.DecimalField(max_digits=7, decimal_places=3, default=0)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("plan", "scenario_type"), name="uniq_pricescn_plan_type")]
+        ordering = ["scenario_type"]
+
+
 class PursuitDecisionSnapshot(TimeStampedModel):
     """Persistent, explainable decision record for a pursuit at a point in time."""
 

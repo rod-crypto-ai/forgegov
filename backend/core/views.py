@@ -123,6 +123,7 @@ from .pursuit_decision import build_pursuit_decision, record_pursuit_decision
 from .proposal_workspace import build_proposal_workspace
 from .proposal_execution import proposal_execution_payload, ensure_proposal_execution, update_plan, update_requirement, update_review, update_finding
 from .submission_control import build_submission_control, create_submission_snapshot, update_closeout, export_submission_control
+from .pricing_engine import ensure_pricing_plan, pricing_payload, mutate_pricing_plan, ensure_pricing_profile
 from .intelligence.services import connector_health, opportunity_intelligence
 from .intelligence.services.award_ingestion import award_intelligence_summary, connector_registry_payload, sync_usaspending_awards
 
@@ -134,7 +135,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.9.0-m5.2"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "3.0.0-m1"})
 
 
 @api_view(["GET", "POST"])
@@ -1774,6 +1775,69 @@ def opportunity_capture_command_center(request, source_id: str):
     payload = build_capture_command_center(organization=organization, opportunity=opportunity)
     payload["pursuit_decision"] = build_pursuit_decision(organization=organization, opportunity=opportunity)
     return Response(payload)
+
+
+@api_view(["GET", "PATCH", "POST"])
+@permission_classes([ReadOnlyOrContributor])
+def opportunity_pricing_workspace(request, source_id: str):
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(source_id)
+    if not opportunity:
+        return Response({"detail": "Opportunity not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    plan = ensure_pricing_plan(
+        organization=organization,
+        opportunity=opportunity,
+        user=request.user,
+    )
+    if request.method in {"PATCH", "POST"}:
+        try:
+            plan = mutate_pricing_plan(plan=plan, payload=request.data, user=request.user)
+        except (ValueError, KeyError, TypeError) as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    payload = pricing_payload(plan)
+    payload["opportunity"] = {
+        "source_id": opportunity.source_id,
+        "title": opportunity.title,
+        "solicitation_number": opportunity.solicitation_number,
+        "agency": opportunity.agency,
+    }
+    return Response(payload)
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([ReadOnlyOrContributor])
+def pricing_profile(request):
+    organization = _request_organization(request)
+    profile = ensure_pricing_profile(organization, request.user)
+    if request.method == "PATCH":
+        fields = {
+            "fringe_percent", "overhead_percent", "ga_percent",
+            "material_handling_percent", "subcontract_handling_percent",
+            "payroll_burden_percent", "default_profit_percent",
+            "minimum_margin_percent", "annual_escalation_percent",
+            "payment_lag_days",
+        }
+        for field in fields:
+            if field in request.data:
+                setattr(profile, field, request.data[field])
+        profile.updated_by = request.user
+        profile.save()
+
+    return Response({
+        "fringe_percent": profile.fringe_percent,
+        "overhead_percent": profile.overhead_percent,
+        "ga_percent": profile.ga_percent,
+        "material_handling_percent": profile.material_handling_percent,
+        "subcontract_handling_percent": profile.subcontract_handling_percent,
+        "payroll_burden_percent": profile.payroll_burden_percent,
+        "default_profit_percent": profile.default_profit_percent,
+        "minimum_margin_percent": profile.minimum_margin_percent,
+        "annual_escalation_percent": profile.annual_escalation_percent,
+        "payment_lag_days": profile.payment_lag_days,
+        "updated_at": profile.updated_at,
+    })
 
 
 @api_view(["GET", "POST"])
