@@ -771,3 +771,85 @@ body{background:radial-gradient(circle at 80% -10%,rgba(45,137,255,.08),transpar
 .compact-source-items a,.compact-source-items>div{display:inline-flex;align-items:center;gap:5px;max-width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:7px;background:#fff;color:var(--text);font-size:10px;text-decoration:none}
 .compact-source-items b{color:var(--accent)}
 .contextual-source-list.compact-source-disclosure{margin-top:10px;padding-top:8px}
+
+
+/* v2.9.0-M5.1 single-row opportunity workspace navigation */
+.workspace-tab-shell{
+  position:sticky;
+  top:72px;
+  z-index:5;
+  display:grid;
+  grid-template-columns:40px minmax(0,1fr) 40px;
+  align-items:center;
+  gap:6px;
+  margin:16px 0;
+  padding:8px;
+  border:1px solid var(--border);
+  border-radius:16px;
+  background:rgba(248,250,253,.96);
+  backdrop-filter:blur(14px);
+  box-shadow:0 8px 24px rgba(15,35,60,.05);
+}
+.workspace-tab-shell .workspace-tabs{
+  position:static;
+  top:auto;
+  z-index:auto;
+  display:flex;
+  flex-wrap:nowrap;
+  align-items:center;
+  gap:6px;
+  min-width:0;
+  margin:0;
+  padding:0;
+  border:0;
+  border-radius:0;
+  background:transparent;
+  backdrop-filter:none;
+  overflow-x:auto;
+  overflow-y:hidden;
+  scrollbar-width:none;
+  scroll-behavior:smooth;
+  overscroll-behavior-x:contain;
+}
+.workspace-tab-shell .workspace-tabs::-webkit-scrollbar{display:none}
+.workspace-tab-shell .workspace-tabs button{
+  flex:0 0 auto;
+  min-height:44px;
+  padding:10px 15px;
+  border:1px solid transparent;
+  border-radius:10px;
+  background:transparent;
+  box-shadow:none;
+  white-space:nowrap;
+  font-weight:760;
+}
+.workspace-tab-shell .workspace-tabs button:hover{
+  border-color:var(--border);
+  background:#fff;
+}
+.workspace-tab-shell .workspace-tabs button.active{
+  color:#fff;
+  background:var(--accent);
+  border-color:var(--accent);
+  box-shadow:0 7px 18px rgba(23,105,224,.18);
+}
+.workspace-tab-arrow{
+  display:grid;
+  place-items:center;
+  width:36px;
+  height:36px;
+  padding:0;
+  border:1px solid var(--border);
+  border-radius:10px;
+  background:#fff;
+  color:var(--text);
+  cursor:pointer;
+  box-shadow:0 3px 10px rgba(15,35,60,.04);
+}
+.workspace-tab-arrow:hover{border-color:var(--accent);color:var(--accent)}
+.workspace-tab-shell .tab-new-badge{margin-left:2px}
+@media(max-width:800px){
+  .workspace-tab-shell{top:64px;grid-template-columns:36px minmax(0,1fr) 36px;padding:6px}
+  .workspace-tab-arrow{width:32px;height:32px}
+  .workspace-tab-shell .workspace-tabs button{min-height:40px;padding:8px 12px}
+}
