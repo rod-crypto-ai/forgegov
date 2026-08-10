@@ -1,6 +1,6 @@
 {
   "name": "forgegov-frontend",
-  "version": "2.9.0-m4",
+  "version": "2.9.0-m5",
   "private": true,
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",

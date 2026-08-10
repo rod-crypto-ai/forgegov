@@ -41,6 +41,21 @@ def _text(value: Any, limit: int = 1200) -> str:
     return str(value).strip()[:limit]
 
 
+def _clean_source_text(value: Any, limit: int = 4000) -> str:
+    if value in (None, ""):
+        return ""
+    raw = str(value)
+    if "<" in raw and ">" in raw:
+        try:
+            from bs4 import BeautifulSoup
+            raw = BeautifulSoup(raw, "html.parser").get_text("\n", strip=True)
+        except Exception:
+            pass
+    import html as _html
+    text = "\n".join(line.strip() for line in _html.unescape(raw).splitlines() if line.strip())
+    return text[:limit]
+
+
 def _iso(value: Any) -> str:
     return value.isoformat() if value else ""
 
@@ -116,7 +131,7 @@ def build_grounding_context(organization) -> tuple[str, list[GroundingSource]]:
         label = f"[TASK-{index}]"
         lines.append(_record_line(label, {
             "title": _text(record.title, 255),
-            "description": _text(record.description),
+            "description": _clean_source_text(record.description),
             "due_at": _iso(record.due_at),
             "completed": record.completed,
         }))
@@ -133,7 +148,7 @@ def build_grounding_context(organization) -> tuple[str, list[GroundingSource]]:
             "funding_agency": record.funding_agency,
             "obligated_amount": record.obligated_amount,
             "potential_amount": record.potential_amount,
-            "description": _text(record.description),
+            "description": _clean_source_text(record.description),
             "start_date": _iso(record.start_date),
             "end_date": _iso(record.end_date),
             "naics": record.naics_code,
@@ -176,24 +191,48 @@ def build_grounding_context(organization) -> tuple[str, list[GroundingSource]]:
 
 
 def _extract_output_text(payload: dict[str, Any]) -> str:
+    """Extract usable text across Responses API payload variants."""
+    direct = payload.get("output_text")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+
     chunks: list[str] = []
     output = payload.get("output")
-    if not isinstance(output, list):
-        return ""
-    for item in output:
-        if not isinstance(item, dict) or item.get("type") != "message":
-            continue
-        content = item.get("content")
-        if not isinstance(content, list):
-            continue
-        for part in content:
-            if not isinstance(part, dict):
+    if isinstance(output, list):
+        for item in output:
+            if not isinstance(item, dict):
                 continue
-            if part.get("type") == "output_text" and part.get("text"):
-                chunks.append(str(part["text"]))
-            elif part.get("type") == "refusal" and part.get("refusal"):
-                chunks.append(str(part["refusal"]))
-    return "\n".join(chunk.strip() for chunk in chunks if chunk.strip()).strip()
+            content = item.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    part_type = str(part.get("type") or "")
+                    text = part.get("text")
+                    if part_type in {"output_text", "text"} and isinstance(text, str) and text.strip():
+                        chunks.append(text.strip())
+                    elif part_type == "refusal" and part.get("refusal"):
+                        chunks.append(str(part["refusal"]).strip())
+            elif isinstance(content, str) and content.strip():
+                chunks.append(content.strip())
+
+            # Some compatible gateways place text directly on the message object.
+            if isinstance(item.get("text"), str) and item["text"].strip():
+                chunks.append(item["text"].strip())
+
+    # Compatibility with chat-like payloads from proxies/gateways.
+    choices = payload.get("choices")
+    if isinstance(choices, list):
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            message = choice.get("message") or {}
+            if isinstance(message, dict):
+                content = message.get("content")
+                if isinstance(content, str) and content.strip():
+                    chunks.append(content.strip())
+
+    return "\n".join(chunk for chunk in chunks if chunk).strip()
 
 
 def ask_openai(*, message: str, history: list[dict[str, str]], organization) -> dict[str, Any]:
@@ -240,7 +279,8 @@ def ask_openai(*, message: str, history: list[dict[str, str]], organization) -> 
             "You may provide clearly labeled general GovCon guidance, but do not present it as a workspace fact. "
             "Write like a seasoned capture manager speaking to a colleague: natural, direct, calm, and specific. "
             "Lead with the answer. Use short paragraphs and concise bullets only when they improve readability. "
-            "Do not dump raw fields, repeat the request, or use robotic headings. "
+            "For opportunity-specific research, use clear practical headings when supported, such as Bottom Line, Agency / Office, Solicitation, Description / Scope, Location, Deadline, POC, Requirements, Risks, Unknowns, and Next Actions. "
+            "Do not dump raw fields, raw HTML, or repeat the request. "
             "Keep recommendations practical and distinguish verified facts, analysis, risks, and recommended next actions. Cite exact [WEB-*] labels for live-web findings."
         ),
         "input": prompt,
@@ -288,7 +328,41 @@ def ask_openai(*, message: str, history: list[dict[str, str]], organization) -> 
 
     answer = _extract_output_text(body if isinstance(body, dict) else {})
     if not answer:
-        raise OpenAIIntegrationError("OpenAI returned no usable text output.", status_code=502)
+        # A successful Responses API call can occasionally complete without a text
+        # message (for example after an incomplete reasoning/output turn). Retry once
+        # with a direct text-output instruction instead of exposing a dead-end error.
+        retry_payload = dict(payload)
+        retry_payload["instructions"] = (
+            str(payload.get("instructions") or "")
+            + " Return a complete plain-text answer in this response. Do not return an empty response."
+        )
+        try:
+            retry_response = requests.post(
+                f"{settings.OPENAI_API_BASE_URL.rstrip('/')}/responses",
+                headers={
+                    "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
+                    "Content-Type": "application/json",
+                    "X-Client-Request-Id": str(uuid4()),
+                },
+                json=retry_payload,
+                timeout=settings.OPENAI_TIMEOUT_SECONDS,
+            )
+            if retry_response.ok:
+                try:
+                    retry_body = retry_response.json()
+                except ValueError:
+                    retry_body = {}
+                answer = _extract_output_text(retry_body if isinstance(retry_body, dict) else {})
+                if answer:
+                    body = retry_body
+                    response = retry_response
+        except requests.RequestException:
+            pass
+    if not answer:
+        raise OpenAIIntegrationError(
+            "ForgeGov could not generate model prose from the available evidence. The source data remains available; retry the analysis.",
+            status_code=502,
+        )
 
     return {
         "answer": answer,

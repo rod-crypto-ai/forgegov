@@ -69,6 +69,22 @@ def _safe_text(value: Any, *, max_length: int | None = None) -> str:
     text = "" if value is None else str(value).strip()
     return text[:max_length] if max_length else text
 
+def _clean_public_text(value: Any, *, max_length: int | None = None) -> str:
+    """Convert public HTML/API text into readable plain text for UI and AI context."""
+    raw = "" if value is None else str(value)
+    if "<" in raw and ">" in raw:
+        try:
+            from bs4 import BeautifulSoup
+            raw = BeautifulSoup(raw, "html.parser").get_text("\n", strip=True)
+        except Exception:
+            pass
+    import html as _html
+    text = _html.unescape(raw)
+    text = "\n".join(line.strip() for line in text.splitlines() if line.strip())
+    return text[:max_length] if max_length else text
+
+
+
 
 def _safe_int(value: Any, default: int = 0) -> int:
     try:
@@ -865,6 +881,10 @@ def fetch_sam_opportunity_documents(notice_id: str) -> dict[str, Any]:
         if url:
             clean_name = _clean_attachment_name(name, url, fallback=f"Solicitation attachment {index + 1}")
             documents.append({"name": clean_name, "url": url, "source": "sam.gov", "preview_available": url.lower().split("?", 1)[0].endswith((".pdf", ".txt", ".html", ".htm"))})
+    description = _clean_public_text(description, max_length=200000)
+    if opportunity and description and opportunity.description != description:
+        opportunity.description = description
+        opportunity.save(update_fields=["description", "updated_at"])
     return {"notice_id": notice_id, "description": description, "documents": documents, "source_url": opportunity.source_url if opportunity else ""}
 
 

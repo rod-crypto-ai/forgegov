@@ -78,13 +78,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "2.9.0-m4")
+        self.assertEqual(response.json()["version"], "2.9.0-m5")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "2.9.0-m4")
+        self.assertEqual(response.json()["version"], "2.9.0-m5")
 
 
 class RouterRegressionTests(TestCase):
@@ -1557,3 +1557,76 @@ class PursuitDecisionIntelligenceTests(AuthenticatedApiTestCase):
         response = self.client.get("/api/ai/opportunities/decision-m4-2/command-center/")
         self.assertEqual(response.status_code, 200)
         self.assertIn("pursuit_decision", response.json())
+
+
+class AiResponseDocumentHardeningTests(AuthenticatedApiTestCase):
+    def test_public_html_description_is_cleaned_to_readable_text(self):
+        from .integrations import _clean_public_text
+        raw = "<p><strong>Road Reconstruction</strong></p><p>Response Period: August 9 through August 14</p>"
+        cleaned = _clean_public_text(raw)
+        self.assertIn("Road Reconstruction", cleaned)
+        self.assertIn("Response Period", cleaned)
+        self.assertNotIn("<p>", cleaned)
+        self.assertNotIn("<strong>", cleaned)
+
+    def test_ai_chat_accepts_more_than_old_8000_character_limit(self):
+        with patch("core.views.ask_ai") as mocked:
+            mocked.return_value = {
+                "answer": "Structured answer",
+                "model": "test-model",
+                "provider": "openai",
+                "sources": [],
+            }
+            response = self.client.post(
+                "/api/ai/chat/",
+                {"message": "A" * 12000, "history": []},
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["answer"], "Structured answer")
+
+    def test_opportunity_context_cleans_description_and_surfaces_poc(self):
+        from .views import _opportunity_context
+        opportunity = Opportunity.objects.create(
+            source_id="m5-context-1",
+            title="Road project",
+            description="<p>Reconstruct the access road.</p>",
+            agency="USDA Forest Service",
+            office="Santa Fe National Forest",
+            place_of_performance="New Mexico",
+            raw_data={
+                "pointOfContact": [
+                    {"fullName": "Jane Doe", "email": "jane@example.gov", "phone": "555-0100"}
+                ]
+            },
+        )
+        context, _ = _opportunity_context(opportunity)
+        self.assertIn("Description: Reconstruct the access road.", context)
+        self.assertIn("POC: Jane Doe", context)
+        self.assertIn("jane@example.gov", context)
+        self.assertNotIn("<p>", context)
+
+    def test_document_context_covers_multiple_indexed_documents(self):
+        from .models import OpportunityDocument, OpportunityDocumentChunk
+        from .views import _document_context
+        opportunity = Opportunity.objects.create(source_id="m5-doc-coverage", title="Coverage test")
+        first = OpportunityDocument.objects.create(
+            organization=self.organization,
+            opportunity=opportunity,
+            file_name="Section L.pdf",
+            source_url="https://example.gov/l.pdf",
+            status=OpportunityDocument.Status.READY,
+        )
+        second = OpportunityDocument.objects.create(
+            organization=self.organization,
+            opportunity=opportunity,
+            file_name="Section M.pdf",
+            source_url="https://example.gov/m.pdf",
+            status=OpportunityDocument.Status.READY,
+        )
+        OpportunityDocumentChunk.objects.create(document=first, ordinal=0, text="Submission instructions and volume requirements.")
+        OpportunityDocumentChunk.objects.create(document=second, ordinal=0, text="Evaluation factors and technical approach.")
+        context, sources = _document_context(self.organization, opportunity, query="evaluation submission")
+        self.assertIn("Section L.pdf", context)
+        self.assertIn("Section M.pdf", context)
+        self.assertGreaterEqual(len(sources), 2)

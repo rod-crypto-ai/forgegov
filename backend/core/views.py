@@ -134,7 +134,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.9.0-m4"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "2.9.0-m5"})
 
 
 @api_view(["GET", "POST"])
@@ -314,8 +314,8 @@ def ai_chat(request):
     message = str(request.data.get("message") or "").strip()
     if not message:
         return Response({"detail": "A message is required."}, status=status.HTTP_400_BAD_REQUEST)
-    if len(message) > 8000:
-        return Response({"detail": "The message is too long. Limit requests to 8,000 characters."}, status=status.HTTP_400_BAD_REQUEST)
+    if len(message) > 50000:
+        return Response({"detail": "The message is too long for a single chat turn. Limit requests to 50,000 characters; opportunity documents should be analyzed through the opportunity workspace."}, status=status.HTTP_400_BAD_REQUEST)
     history = request.data.get("history") or []
     if not isinstance(history, list):
         return Response({"detail": "history must be a list."}, status=status.HTTP_400_BAD_REQUEST)
@@ -1283,7 +1283,7 @@ class AIConversationViewSet(viewsets.ReadOnlyModelViewSet):
         return AIConversation.objects.filter(Q(organization=organization) | Q(project_room__in=shared_rooms, visibility=AIConversation.Visibility.SHARED)).select_related("project_room", "opportunity", "created_by").prefetch_related("messages").distinct()
 
 ANALYSIS_PROMPTS = {
-    "executive_summary": "Create an executive opportunity briefing. Cover buyer, scope, key dates, place of performance, contract vehicle/type if stated, set-aside, evaluation approach, mandatory deliverables, major unknowns, and immediate next actions.",
+    "executive_summary": "Create a clear executive opportunity briefing with these headings when supported: Bottom Line, Agency / Office, Solicitation, Notice Type, Description / Scope, Place of Performance, Response Deadline, POC, NAICS / PSC, Set-Aside, Contract Type / Vehicle, Submission Requirements, Evaluation Factors, Deliverables, Key Risks, Unknowns, and Recommended Next Actions. Do not omit a supported field merely because it is not central to the user's question.",
     "requirements": "Extract explicit requirements into categorized bullets. Separate submission instructions, technical requirements, staffing, past performance, certifications, security, insurance, deliverables, and deadlines. Do not infer unstated requirements.",
     "risks": "Identify capture, compliance, technical, staffing, schedule, pricing, security, and teaming risks. Separate confirmed risks from assumptions and recommend mitigations.",
     "bid_no_bid": "Prepare a transparent bid/no-bid brief. State verified facts, unknowns, strengths, gaps, likely teaming needs, resource burden, disqualifiers, and a recommendation. Do not invent a win probability.",
@@ -1297,18 +1297,140 @@ ANALYSIS_PROMPTS = {
 def _opportunity_for_source(source_id: str):
     return Opportunity.objects.filter(Q(source_id=source_id) | Q(solicitation_number=source_id)).order_by("-updated_at").first()
 
-def _document_context(organization, opportunity, *, query: str = "", limit: int = 18):
-    chunks = list(OpportunityDocumentChunk.objects.filter(document__organization=organization, document__opportunity=opportunity, document__status=OpportunityDocument.Status.READY).select_related("document").order_by("document__file_name", "ordinal"))
-    terms = [term.lower() for term in query.split() if len(term) > 3][:12]
-    if terms:
-        chunks.sort(key=lambda chunk: sum(chunk.text.lower().count(term) for term in terms), reverse=True)
-    selected = chunks[:limit]
+def _auto_index_opportunity_documents(organization, opportunity) -> int:
+    """Index currently available SAM attachments when an opportunity question needs them."""
+    ready = OpportunityDocument.objects.filter(
+        organization=organization,
+        opportunity=opportunity,
+        status=OpportunityDocument.Status.READY,
+    ).count()
+    if ready:
+        return ready
+    if opportunity.source != "sam.gov":
+        return ready
+    try:
+        public = fetch_sam_opportunity_documents(opportunity.source_id)
+    except IntegrationError:
+        return ready
+    for row in (public.get("documents") or [])[:40]:
+        name = _clean_attachment_name((row or {}).get("name"), (row or {}).get("url"), fallback="Government document")
+        url = str((row or {}).get("url") or "").strip()
+        if not url:
+            continue
+        record, _ = OpportunityDocument.objects.update_or_create(
+            organization=organization,
+            opportunity=opportunity,
+            source_url=url,
+            defaults={"file_name": name, "status": OpportunityDocument.Status.PENDING, "error_message": ""},
+        )
+        try:
+            data, content_type = download_document(url)
+            digest = sha256(data)
+            if record.checksum == digest and record.status == OpportunityDocument.Status.READY:
+                continue
+            sections = extract_document(data, name, content_type)
+            if not sections:
+                continue
+            OpportunityDocumentChunk.objects.filter(document=record).delete()
+            chunk_rows = [
+                OpportunityDocumentChunk(
+                    document=record,
+                    ordinal=ordinal,
+                    page_number=page,
+                    section=section or "",
+                    text=text,
+                )
+                for page, section, ordinal, text in chunk_sections(sections)
+            ]
+            OpportunityDocumentChunk.objects.bulk_create(chunk_rows, batch_size=250)
+            record.content_type = content_type
+            record.checksum = digest
+            record.status = OpportunityDocument.Status.READY
+            record.page_count = len({page for page, _, _ in sections if page})
+            record.character_count = sum(len(text) for _, _, text in sections)
+            record.error_message = ""
+            metadata = dict(record.metadata or {})
+            metadata["structured_intelligence"] = extract_structured_intelligence(sections)
+            metadata["ingestion"] = {
+                "checksum": digest,
+                "content_type": content_type,
+                "indexed_at": timezone.now().isoformat(),
+                "automatic": True,
+            }
+            record.metadata = metadata
+            record.save()
+        except (DocumentIngestionError, ValueError, OSError):
+            continue
+    return OpportunityDocument.objects.filter(
+        organization=organization,
+        opportunity=opportunity,
+        status=OpportunityDocument.Status.READY,
+    ).count()
+
+
+def _document_context(organization, opportunity, *, query: str = "", limit: int = 80, max_chars: int = 120000):
+    chunks = list(
+        OpportunityDocumentChunk.objects.filter(
+            document__organization=organization,
+            document__opportunity=opportunity,
+            document__status=OpportunityDocument.Status.READY,
+        )
+        .select_related("document")
+        .order_by("document__file_name", "ordinal")
+    )
+    if not chunks:
+        return "", []
+
+    terms = [term.lower().strip(".,:;()[]{}") for term in query.split() if len(term) > 3][:20]
+
+    # Guarantee broad corpus coverage first: up to two early passages from every document.
+    selected = []
+    selected_ids = set()
+    by_document = {}
+    for chunk in chunks:
+        by_document.setdefault(chunk.document_id, []).append(chunk)
+    for document_chunks in by_document.values():
+        for chunk in document_chunks[:2]:
+            if chunk.id not in selected_ids:
+                selected.append(chunk)
+                selected_ids.add(chunk.id)
+
+    # Then fill the remaining budget with the strongest query matches.
+    def relevance(chunk):
+        text = chunk.text.lower()
+        score = sum(text.count(term) for term in terms)
+        if chunk.section:
+            score += sum(chunk.section.lower().count(term) * 2 for term in terms)
+        return score
+
+    ranked = sorted(chunks, key=lambda chunk: (relevance(chunk), -chunk.ordinal), reverse=True)
+    for chunk in ranked:
+        if len(selected) >= max(1, min(limit, 120)):
+            break
+        if chunk.id not in selected_ids:
+            selected.append(chunk)
+            selected_ids.add(chunk.id)
+
     lines, sources = [], []
+    used_chars = 0
     for index, chunk in enumerate(selected, 1):
-        label = f"[DOC-{index}]"
         location = f"page {chunk.page_number}" if chunk.page_number else (chunk.section or "extracted text")
-        lines.append(f"{label} {chunk.document.file_name} — {location}\n{chunk.text}")
-        sources.append({"label": label, "type": "document", "title": f"{chunk.document.file_name} — {location}", "url": chunk.document.source_url})
+        label = f"[DOC-{index}]"
+        text = chunk.text.strip()
+        remaining = max_chars - used_chars
+        if remaining <= 500:
+            break
+        if len(text) > remaining:
+            text = text[:remaining]
+        block = f"{label} {chunk.document.file_name} — {location}\n{text}"
+        lines.append(block)
+        used_chars += len(block)
+        sources.append({
+            "label": label,
+            "type": "document",
+            "title": f"{chunk.document.file_name} — {location}",
+            "url": chunk.document.source_url,
+        })
     return "\n\n".join(lines), sources
 
 @api_view(["GET", "POST"])
@@ -1373,26 +1495,72 @@ def opportunity_documents(request, source_id: str):
         results.append(record)
     return Response(OpportunityDocumentSerializer(results, many=True).data, status=status.HTTP_201_CREATED)
 
+def _plain_text(value):
+    if value in (None, ""):
+        return ""
+    raw = str(value)
+    if "<" in raw and ">" in raw:
+        try:
+            from bs4 import BeautifulSoup
+            raw = BeautifulSoup(raw, "html.parser").get_text("\n", strip=True)
+        except Exception:
+            pass
+    import html as _html
+    return "\n".join(line.strip() for line in _html.unescape(raw).splitlines() if line.strip())
+
+
+def _opportunity_contacts(raw):
+    candidates = []
+    for key in ("pointOfContact", "pointOfContacts", "pointsOfContact", "contacts", "contact", "primaryContact", "secondaryContact"):
+        value = raw.get(key)
+        if value:
+            if isinstance(value, list):
+                candidates.extend(value)
+            else:
+                candidates.append(value)
+    rows = []
+    for row in candidates:
+        if not isinstance(row, dict):
+            text = _plain_text(row)
+            if text:
+                rows.append(text)
+            continue
+        name = row.get("fullName") or row.get("name") or " ".join(
+            part for part in [str(row.get("firstName") or "").strip(), str(row.get("lastName") or "").strip()] if part
+        )
+        email = row.get("email") or row.get("emailAddress") or ""
+        phone = row.get("phone") or row.get("phoneNumber") or ""
+        title = row.get("title") or row.get("type") or row.get("contactType") or ""
+        pieces = [str(value).strip() for value in (name, title, email, phone) if value]
+        if pieces:
+            rows.append(" · ".join(pieces))
+    return list(dict.fromkeys(rows))
+
+
 def _opportunity_context(opportunity):
     raw = opportunity.raw_data if isinstance(opportunity.raw_data, dict) else {}
+    description = _plain_text(opportunity.description or raw.get("description"))
+    contacts = _opportunity_contacts(raw)
     fields = [
         ("[OPP-1]", "Title", opportunity.title),
         ("[OPP-2]", "Solicitation", opportunity.solicitation_number),
         ("[OPP-3]", "Agency", opportunity.agency),
         ("[OPP-4]", "Office", opportunity.office),
-        ("[OPP-5]", "Description", opportunity.description or raw.get("description")),
+        ("[OPP-5]", "Description", description),
         ("[OPP-6]", "NAICS", opportunity.naics_code),
         ("[OPP-7]", "PSC", opportunity.psc_code),
         ("[OPP-8]", "Set-aside", opportunity.set_aside),
         ("[OPP-9]", "Place of performance", opportunity.place_of_performance),
         ("[OPP-10]", "Response deadline", opportunity.response_deadline.isoformat() if opportunity.response_deadline else ""),
         ("[OPP-11]", "Notice type", opportunity.notice_type_raw or opportunity.notice_type),
+        ("[OPP-12]", "Posted date", opportunity.posted_date.isoformat() if opportunity.posted_date else ""),
+        ("[OPP-13]", "POC", "; ".join(contacts)),
     ]
-    lines=[]; sources=[]
+    lines, sources = [], []
     for label, title, value in fields:
         if value:
             lines.append(f"{label} {title}: {value}")
-            sources.append({"label":label,"type":"opportunity","title":title,"url":opportunity.source_url})
+            sources.append({"label": label, "type": "opportunity", "title": title, "url": opportunity.source_url})
     return "\n".join(lines), sources
 
 
@@ -1426,7 +1594,7 @@ def opportunity_briefing(request, source_id: str):
     analysis_type = str(request.data.get("analysis_type") or "executive_summary")
     if analysis_type not in ANALYSIS_PROMPTS:
         return Response({"detail": "Unsupported analysis type."}, status=status.HTTP_400_BAD_REQUEST)
-    document_context, document_sources = _document_context(organization, opportunity, query=ANALYSIS_PROMPTS[analysis_type], limit=24)
+    document_context, document_sources = _document_context(organization, opportunity, query=ANALYSIS_PROMPTS[analysis_type], limit=100, max_chars=140000)
     opportunity_context, opportunity_sources = _opportunity_context(opportunity)
     context = "\n\n".join(part for part in (opportunity_context, document_context) if part)
     sources = opportunity_sources + document_sources
@@ -1450,12 +1618,86 @@ def opportunity_document_question(request, source_id: str):
         return Response({"detail": "Opportunity not found."}, status=status.HTTP_404_NOT_FOUND)
     if not question:
         return Response({"detail": "A question is required."}, status=status.HTTP_400_BAD_REQUEST)
-    document_context, document_sources = _document_context(organization, opportunity, query=question, limit=18)
+
+    # Pull the protected SAM description and automatically index public attachments
+    # the first time the opportunity AI needs them.
+    if opportunity.source == "sam.gov":
+        try:
+            fetch_sam_opportunity_documents(opportunity.source_id)
+            opportunity.refresh_from_db()
+        except IntegrationError:
+            pass
+    _auto_index_opportunity_documents(organization, opportunity)
+
+    document_context, document_sources = _document_context(
+        organization,
+        opportunity,
+        query=question,
+        limit=100,
+        max_chars=140000,
+    )
     opportunity_context, opportunity_sources = _opportunity_context(opportunity)
     context = "\n\n".join(part for part in (opportunity_context, document_context) if part)
     sources = opportunity_sources + document_sources
-    mode = "opportunity details plus ingested documents" if document_context else "opportunity details only"
-    result = ask_ai(message=f"Respond like an experienced capture manager speaking to a colleague. Lead with the direct answer, use short readable paragraphs, and avoid dumping raw fields. Use only the authorized {mode}. Cite exact [OPP-*] and [DOC-*] labels for factual claims. If the available context cannot answer something, say exactly what is missing.\n\nQUESTION\n{question}\n\nAUTHORIZED CONTEXT\n{context}", history=[], organization=organization)
+    mode = "opportunity details plus indexed solicitation documents" if document_context else "official opportunity details"
+
+    prompt = (
+        f"Opportunity: {opportunity.title}\n"
+        f"Solicitation: {opportunity.solicitation_number}\n"
+        f"Agency: {opportunity.agency}\n"
+        f"Question: {question}\n\n"
+        "You are analyzing one government opportunity inside ForgeGov. "
+        f"Use the authorized {mode} below before concluding that information is unavailable. "
+        "Do not say the opportunity could not be found when the authorized context contains it. "
+        "When the evidence supports the fields, organize the answer with concise headings such as "
+        "Bottom Line, Agency / Office, Solicitation, Notice Type, Description / Scope, Place of Performance, "
+        "Response Deadline, POC, NAICS / PSC, Set-Aside, Submission Requirements, Evaluation Factors, "
+        "Deliverables, Risks, Unknowns, and Recommended Next Actions. "
+        "Only include headings relevant to the request, but prefer structured readable sections over one long paragraph. "
+        "Cite exact [OPP-*] and [DOC-*] labels for factual claims. "
+        "If a requested fact is genuinely absent after checking the full authorized context, identify that specific fact as unavailable rather than claiming the whole solicitation is missing.\n\n"
+        f"QUESTION\n{question}\n\nAUTHORIZED OPPORTUNITY + DOCUMENT CONTEXT\n{context}"
+    )
+
+    try:
+        result = ask_ai(message=prompt, history=[], organization=organization)
+    except OpenAIIntegrationError as exc:
+        # Preserve useful evidence even if the hosted model fails to emit prose.
+        contacts = _opportunity_contacts(opportunity.raw_data if isinstance(opportunity.raw_data, dict) else {})
+        fallback = [
+            "## Opportunity",
+            f"**Title:** {opportunity.title or 'Not provided'}",
+            f"**Solicitation:** {opportunity.solicitation_number or 'Not provided'}",
+            f"**Agency / Office:** {' / '.join(x for x in [opportunity.agency, opportunity.office] if x) or 'Not provided'}",
+            f"**Notice Type:** {opportunity.notice_type_raw or opportunity.notice_type or 'Not provided'}",
+            "",
+            "## Description / Scope",
+            _plain_text(opportunity.description) or "Description not available in the current official record.",
+            "",
+            "## Location",
+            opportunity.place_of_performance or "Not provided.",
+            "",
+            "## Response Deadline",
+            opportunity.response_deadline.isoformat() if opportunity.response_deadline else "Not provided.",
+            "",
+            "## POC",
+            "; ".join(contacts) if contacts else "Not provided in the current official record.",
+            "",
+            "## Document Coverage",
+            f"{len(document_sources)} indexed solicitation passages were available for this request.",
+            "",
+            "## AI Status",
+            str(exc),
+        ]
+        result = {
+            "answer": "\n".join(fallback),
+            "model": "",
+            "provider": "fallback",
+            "sources": sources,
+            "web_enabled": False,
+            "web_configured": False,
+            "web_status": "fallback",
+        }
     result["sources"] = sources
     return Response(result)
 
