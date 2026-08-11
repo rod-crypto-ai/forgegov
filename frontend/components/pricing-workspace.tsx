@@ -5,7 +5,7 @@ import {
   BadgeDollarSign, BriefcaseBusiness, Calculator, CheckCircle2, CircleDollarSign,
   Layers3, LoaderCircle, Plus, RefreshCw, ShieldAlert, Trash2, TrendingUp,
 } from "lucide-react";
-import { apiGet, apiPatch } from "@/lib/api";
+import { apiGet, apiPatch, apiPost } from "@/lib/api";
 
 type Money = string | number;
 type Plan = {
@@ -25,6 +25,17 @@ type Item = {
 type Clin = {id:number;clin:string;description:string;option_year:number;quantity:Money;unit:string;cost:Money;target_price:Money};
 type Scenario = {id:number;scenario_type:string;profit_percent:Money;cost_adjustment_percent:Money;price_adjustment_percent:Money;cost:Money;price:Money;profit:Money;margin_percent:Money;notes:string};
 type Guardrail = {severity:string;title:string;detail:string};
+type PtwEvidence = {award_id:number;source_id:string;award_number:string;recipient_name:string;awarding_agency:string;naics_code:string;psc_code:string;raw_value:Money;adjusted_value:Money;start_date?:string|null;end_date?:string|null;match_score:number;source:string;source_url?:string};
+type PtwViability = {price:Money|null;profit:Money|null;margin_percent:Money|null;clears_margin_floor:boolean};
+type PriceToWin = {
+  range:{competitive_floor:Money|null;target:Money|null;protective_ceiling:Money|null};
+  confidence:number;evidence_count:number;strong_comparable_count:number;
+  current_pricing:{price:Money|null;cost:Money;margin_percent:Money|null;minimum_margin_percent:Money|null;revision:number|null;status:string;position:string};
+  viability:{competitive_floor:PtwViability;modeled_target:PtwViability;protective_ceiling:PtwViability};
+  evidence:PtwEvidence[];assumptions:string[];warnings:string[];
+  history:Array<{id:number;created_at:string;competitive_floor:Money|null;target_price:Money|null;protective_ceiling:Money|null;confidence:number;evidence_count:number}>;
+  classification:string;recorded_snapshot_id?:number;
+};
 type Payload = {
   plan:Plan;
   totals:Record<string,Money>;
@@ -46,18 +57,26 @@ export function PricingWorkspace({noticeId}:{noticeId:string}) {
   const[data,setData]=useState<Payload|null>(null);
   const[busy,setBusy]=useState("");
   const[message,setMessage]=useState("");
-  const[section,setSection]=useState<"summary"|"costs"|"clins"|"scenarios"|"rates">("summary");
+  const[ptw,setPtw]=useState<PriceToWin|null>(null);
+  const[section,setSection]=useState<"summary"|"costs"|"clins"|"scenarios"|"ptw"|"rates">("summary");
   const[item,setItem]=useState({category:"labor",name:"",quantity:"1",unit_cost:"",labor_hours:"",labor_rate:"",option_year:"0",clin_id:""});
   const[clin,setClin]=useState({clin:"",description:"",option_year:"0",quantity:"1",unit:"LOT"});
 
   const endpoint=`/pricing/opportunities/${encodeURIComponent(noticeId)}/`;
+  const ptwEndpoint=`/pricing/opportunities/${encodeURIComponent(noticeId)}/price-to-win/`;
 
   const load=useCallback(async()=>{
     setBusy("load");
-    try{setData(await apiGet<Payload>(endpoint));setMessage("")}
+    try{
+      const [pricing,priceToWin]=await Promise.all([
+        apiGet<Payload>(endpoint),
+        apiGet<PriceToWin>(ptwEndpoint).catch(()=>null),
+      ]);
+      setData(pricing);setPtw(priceToWin);setMessage("");
+    }
     catch(error){setMessage(error instanceof Error?error.message:"Pricing workspace could not be loaded.")}
     finally{setBusy("")}
-  },[endpoint]);
+  },[endpoint,ptwEndpoint]);
 
   useEffect(()=>{const timer=window.setTimeout(()=>void load(),0);return()=>window.clearTimeout(timer)},[load]);
 
@@ -65,6 +84,16 @@ export function PricingWorkspace({noticeId}:{noticeId:string}) {
     setBusy(statusKey);setMessage("");
     try{const next=await apiPatch<Payload>(endpoint,payload);setData(next);return next}
     catch(error){setMessage(error instanceof Error?error.message:"Pricing change could not be saved.");return null}
+    finally{setBusy("")}
+  }
+
+  async function refreshPtw(record=false){
+    setBusy(record?"ptw-record":"ptw");setMessage("");
+    try{
+      const result=record?await apiPost<PriceToWin>(ptwEndpoint,{}):await apiGet<PriceToWin>(ptwEndpoint);
+      setPtw(result);
+      if(record)setMessage("Price-to-win snapshot recorded.");
+    }catch(error){setMessage(error instanceof Error?error.message:"Price-to-win intelligence could not be refreshed.")}
     finally{setBusy("")}
   }
 
@@ -121,6 +150,7 @@ export function PricingWorkspace({noticeId}:{noticeId:string}) {
       <button className={section==="costs"?"active":""} onClick={()=>setSection("costs")}><BriefcaseBusiness size={15}/> Cost Build-Up</button>
       <button className={section==="clins"?"active":""} onClick={()=>setSection("clins")}><Layers3 size={15}/> CLINs</button>
       <button className={section==="scenarios"?"active":""} onClick={()=>setSection("scenarios")}><TrendingUp size={15}/> Scenarios</button>
+      <button className={section==="ptw"?"active":""} onClick={()=>setSection("ptw")}><BadgeDollarSign size={15}/> Price-to-Win <span className="tab-new-badge">M2</span></button>
       <button className={section==="rates"?"active":""} onClick={()=>setSection("rates")}><CircleDollarSign size={15}/> Indirect Rates</button>
     </nav>
 
@@ -184,6 +214,46 @@ export function PricingWorkspace({noticeId}:{noticeId:string}) {
 
     {section==="scenarios"&&<section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">BID SCENARIOS</span><h3>Stress-test the economics</h3></div></div>
       <div className="pricing-scenario-editor">{data.scenarios.map(row=><article key={row.id}><header><span>{row.scenario_type}</span><strong>{currency(row.price)}</strong></header><div><label>Profit / Markup %<input type="number" step="0.1" defaultValue={Number(row.profit_percent)} onBlur={e=>void mutate({action:"update_scenario",id:row.id,profit_percent:e.target.value},"scenario")}/></label><label>Cost Adjustment %<input type="number" step="0.1" defaultValue={Number(row.cost_adjustment_percent)} onBlur={e=>void mutate({action:"update_scenario",id:row.id,cost_adjustment_percent:e.target.value},"scenario")}/></label><label>Price Adjustment %<input type="number" step="0.1" defaultValue={Number(row.price_adjustment_percent)} onBlur={e=>void mutate({action:"update_scenario",id:row.id,price_adjustment_percent:e.target.value},"scenario")}/></label></div><footer><span>{currency(row.cost)} cost</span><b>{currency(row.profit)} profit</b><strong>{pct(row.margin_percent)} margin</strong></footer></article>)}</div>
+    </section>}
+
+    {section==="ptw"&&<section className="ptw-workspace">
+      <header className="ptw-header data-panel">
+        <div><span className="eyebrow">M2 COMPETITIVE PRICING</span><h3>Price-to-Win Intelligence</h3><p>ForgeGov models a competitive range from public historical awards and compares it against your actual delivery economics. This is decision support—not a prediction of a competitor&apos;s confidential bid.</p></div>
+        <div className="ptw-actions"><button className="secondary-button" onClick={()=>void refreshPtw(false)} disabled={busy==="ptw"}><RefreshCw size={15}/> Refresh evidence</button><button className="primary-button" onClick={()=>void refreshPtw(true)} disabled={busy==="ptw-record"}>Record snapshot</button></div>
+      </header>
+      {!ptw?<div className="data-panel table-state"><TrendingUp/><strong>No comparable award model available yet</strong><p>Sync USAspending award history or broaden the opportunity classification evidence.</p></div>:<>
+        <div className="ptw-range-grid">
+          <article><span>Competitive Floor</span><strong>{ptw.range.competitive_floor==null?"Insufficient evidence":currency(ptw.range.competitive_floor)}</strong><small>{ptw.viability.competitive_floor.margin_percent==null?"Margin unavailable":`${pct(ptw.viability.competitive_floor.margin_percent)} margin`}</small><b className={ptw.viability.competitive_floor.clears_margin_floor?"viable":"not-viable"}>{ptw.viability.competitive_floor.clears_margin_floor?"Economically viable":"Below margin floor"}</b></article>
+          <article className="target"><span>Modeled Target</span><strong>{ptw.range.target==null?"Insufficient evidence":currency(ptw.range.target)}</strong><small>{ptw.viability.modeled_target.margin_percent==null?"Margin unavailable":`${pct(ptw.viability.modeled_target.margin_percent)} margin · ${currency(ptw.viability.modeled_target.profit||0)} profit`}</small><b className={ptw.viability.modeled_target.clears_margin_floor?"viable":"not-viable"}>{ptw.viability.modeled_target.clears_margin_floor?"Clears margin floor":"Financially unattractive"}</b></article>
+          <article><span>Protective Ceiling</span><strong>{ptw.range.protective_ceiling==null?"Insufficient evidence":currency(ptw.range.protective_ceiling)}</strong><small>{ptw.viability.protective_ceiling.margin_percent==null?"Margin unavailable":`${pct(ptw.viability.protective_ceiling.margin_percent)} margin`}</small><b className={ptw.viability.protective_ceiling.clears_margin_floor?"viable":"not-viable"}>{ptw.viability.protective_ceiling.clears_margin_floor?"Economically viable":"Below margin floor"}</b></article>
+        </div>
+
+        <div className="ptw-intel-grid">
+          <section className="data-panel">
+            <div className="panel-title-row"><div><span className="eyebrow">POSITION</span><h3>Your price vs modeled market</h3></div><span className={`ptw-confidence ${ptw.confidence>=70?"high":ptw.confidence>=45?"medium":"low"}`}>{ptw.confidence}% confidence</span></div>
+            <div className="ptw-position">
+              <div><span>Current target bid</span><strong>{ptw.current_pricing.price==null?"Not priced":currency(ptw.current_pricing.price)}</strong></div>
+              <div><span>Delivery cost</span><strong>{currency(ptw.current_pricing.cost)}</strong></div>
+              <div><span>Configured margin floor</span><strong>{ptw.current_pricing.minimum_margin_percent==null?"—":pct(ptw.current_pricing.minimum_margin_percent)}</strong></div>
+              <div><span>Market position</span><strong className={`position-${ptw.current_pricing.position}`}>{ptw.current_pricing.position.replaceAll("_"," ")}</strong></div>
+            </div>
+            <div className="ptw-evidence-summary"><b>{ptw.evidence_count}</b><span>modeled comparable awards</span><b>{ptw.strong_comparable_count}</b><span>high-strength matches</span></div>
+          </section>
+
+          <section className="data-panel">
+            <div className="panel-title-row"><div><span className="eyebrow">MODEL WARNINGS</span><h3>What could invalidate the range</h3></div></div>
+            <div className="pricing-guardrails">{ptw.warnings.length?ptw.warnings.map((warning,index)=><article className="warning" key={index}><ShieldAlert/><div><strong>Pricing evidence caution</strong><p>{warning}</p></div></article>):<article className="success"><CheckCircle2/><div><strong>Evidence is usable</strong><p>No major price-to-win evidence warnings were detected.</p></div></article>}</div>
+            <details className="ptw-assumptions"><summary>Model assumptions ({ptw.assumptions.length})</summary>{ptw.assumptions.map((row,index)=><p key={index}>{row}</p>)}</details>
+          </section>
+        </div>
+
+        <section className="data-panel">
+          <div className="panel-title-row"><div><span className="eyebrow">OFFICIAL HISTORICAL EVIDENCE</span><h3>Comparable federal awards</h3></div><small>{ptw.classification.replaceAll("_"," ")}</small></div>
+          <div className="ptw-evidence-table">{ptw.evidence.length?ptw.evidence.map(row=><article key={row.award_id}><div><strong>{row.recipient_name||"Unknown recipient"}</strong><span>{row.award_number||row.source_id} · {row.awarding_agency||"Agency unavailable"}</span><small>{row.naics_code?`NAICS ${row.naics_code}`:""} {row.psc_code?`· PSC ${row.psc_code}`:""}</small></div><div><span>Historical value</span><b>{currency(row.raw_value)}</b></div><div><span>Normalized value</span><strong>{currency(row.adjusted_value)}</strong></div><div><span>Match</span><strong>{row.match_score}/100</strong></div>{row.source_url?<a href={row.source_url} target="_blank" rel="noreferrer">Source ↗</a>:<span/>}</article>):<div className="table-state compact-state"><BadgeDollarSign/><strong>No comparable awards stored</strong><p>Run USAspending ingestion for this agency/NAICS/PSC to strengthen the model.</p></div>}</div>
+        </section>
+
+        {ptw.history.length>0&&<section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">DECISION HISTORY</span><h3>Recorded price-to-win snapshots</h3></div></div><div className="ptw-history">{ptw.history.map(row=><article key={row.id}><time>{new Date(row.created_at).toLocaleString()}</time><span>{row.confidence}% confidence · {row.evidence_count} comparables</span><strong>{row.target_price==null?"No target":currency(row.target_price)}</strong></article>)}</div></section>}
+      </>}
     </section>}
 
     {section==="rates"&&<section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">INDIRECT RATE MODEL</span><h3>Opportunity-specific rates</h3></div></div>

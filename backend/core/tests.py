@@ -78,13 +78,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "3.0.0-m1")
+        self.assertEqual(response.json()["version"], "3.0.0-m2")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "3.0.0-m1")
+        self.assertEqual(response.json()["version"], "3.0.0-m2")
 
 
 class RouterRegressionTests(TestCase):
@@ -1720,3 +1720,116 @@ class PricingEngineTests(AuthenticatedApiTestCase):
         self.assertEqual(float(economics["estimated_value"]), float(pricing["totals"]["price"]))
         self.assertEqual(float(economics["target_margin_percent"]), float(pricing["totals"]["margin_percent"]))
         self.assertEqual(economics["pricing_revision"], 1)
+
+
+class PriceToWinIntelligenceTests(AuthenticatedApiTestCase):
+    def _seed_awards(self):
+        from datetime import date
+        from .models import Award
+        values = [800000, 900000, 1000000, 1100000, 1200000]
+        for index, value in enumerate(values, 1):
+            Award.objects.create(
+                source="usaspending.gov",
+                source_id=f"ptw-award-{index}",
+                award_number=f"W91PTW{index}",
+                award_type=Award.AwardType.CONTRACT,
+                recipient_name=f"Comparable Contractor {index}",
+                awarding_agency="Department of the Army",
+                obligated_amount=value,
+                potential_amount=value,
+                naics_code="541330",
+                psc_code="R425",
+                start_date=date(2025, index, 1),
+                source_url=f"https://example.gov/awards/{index}",
+            )
+
+    def test_price_to_win_builds_evidence_backed_range(self):
+        opportunity = Opportunity.objects.create(
+            source_id="ptw-m2-1",
+            title="Engineering support",
+            agency="Department of the Army",
+            naics_code="541330",
+            psc_code="R425",
+        )
+        self._seed_awards()
+        response = self.client.get("/api/pricing/opportunities/ptw-m2-1/price-to-win/")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["classification"], "derived_from_official_historical_awards")
+        self.assertGreaterEqual(body["evidence_count"], 5)
+        self.assertGreater(body["confidence"], 0)
+        self.assertIsNotNone(body["range"]["competitive_floor"])
+        self.assertIsNotNone(body["range"]["target"])
+        self.assertIsNotNone(body["range"]["protective_ceiling"])
+        self.assertLessEqual(float(body["range"]["competitive_floor"]), float(body["range"]["target"]))
+        self.assertLessEqual(float(body["range"]["target"]), float(body["range"]["protective_ceiling"]))
+
+    def test_price_to_win_compares_market_range_to_real_cost_model(self):
+        opportunity = Opportunity.objects.create(
+            source_id="ptw-m2-2",
+            title="Engineering support economics",
+            agency="Department of the Army",
+            naics_code="541330",
+            psc_code="R425",
+        )
+        self._seed_awards()
+        self.client.patch(
+            "/api/pricing/opportunities/ptw-m2-2/",
+            {"action": "add_item", "category": "subcontract", "name": "Delivery subcontract", "quantity": "1", "unit_cost": "750000"},
+            format="json",
+        )
+        response = self.client.get("/api/pricing/opportunities/ptw-m2-2/price-to-win/")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIsNotNone(body["current_pricing"]["price"])
+        self.assertIsNotNone(body["viability"]["modeled_target"]["margin_percent"])
+        self.assertIn(
+            body["current_pricing"]["position"],
+            ["below_competitive_floor", "competitive", "above_target_within_range", "above_modeled_range"],
+        )
+
+    def test_price_to_win_snapshot_is_persistent(self):
+        from .models import PriceToWinSnapshot
+        opportunity = Opportunity.objects.create(
+            source_id="ptw-m2-3",
+            title="Snapshot test",
+            agency="Department of the Army",
+            naics_code="541330",
+            psc_code="R425",
+        )
+        self._seed_awards()
+        response = self.client.post("/api/pricing/opportunities/ptw-m2-3/price-to-win/", {}, format="json")
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.json().get("recorded_snapshot_id"))
+        self.assertEqual(
+            PriceToWinSnapshot.objects.filter(organization=self.organization, opportunity=opportunity).count(),
+            1,
+        )
+
+    def test_pursuit_decision_surfaces_price_to_win_economics(self):
+        opportunity = Opportunity.objects.create(
+            source_id="ptw-m2-4",
+            title="Decision PTW integration",
+            agency="Department of the Army",
+            naics_code="541330",
+            psc_code="R425",
+        )
+        self._seed_awards()
+        PipelineItem.objects.create(
+            organization=self.organization,
+            opportunity=opportunity,
+            stage=PipelineItem.Stage.CAPTURE,
+            estimated_value=1000000,
+            probability_of_win=50,
+        )
+        self.client.patch(
+            "/api/pricing/opportunities/ptw-m2-4/",
+            {"action": "add_item", "category": "material", "name": "Delivery inputs", "quantity": "1", "unit_cost": "700000"},
+            format="json",
+        )
+        response = self.client.get("/api/ai/opportunities/ptw-m2-4/pursuit-decision/")
+        self.assertEqual(response.status_code, 200)
+        economics = response.json()["economics"]
+        self.assertIsNotNone(economics["price_to_win_target"])
+        self.assertGreater(economics["price_to_win_confidence"], 0)
+        self.assertIn("price_position", economics)

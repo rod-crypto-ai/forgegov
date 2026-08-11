@@ -730,6 +730,28 @@ class PricingScenario(TimeStampedModel):
         ordering = ["scenario_type"]
 
 
+class PriceToWinSnapshot(TimeStampedModel):
+    """Evidence-backed competitive price range captured at a point in time."""
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="price_to_win_snapshots")
+    opportunity = models.ForeignKey(Opportunity, on_delete=models.CASCADE, related_name="price_to_win_snapshots")
+    pricing_plan = models.ForeignKey(PricingPlan, null=True, blank=True, on_delete=models.SET_NULL, related_name="price_to_win_snapshots")
+    competitive_floor = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    target_price = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    protective_ceiling = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    confidence = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    evidence_count = models.PositiveIntegerField(default=0)
+    comparable_award_ids = models.JSONField(default=list, blank=True)
+    assumptions = models.JSONField(default=list, blank=True)
+    warnings = models.JSONField(default=list, blank=True)
+    model_inputs = models.JSONField(default=dict, blank=True)
+    recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="recorded_price_to_win_snapshots")
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["organization", "opportunity", "-created_at"], name="ptw_org_opp_time_idx")]
+
+
 class PursuitDecisionSnapshot(TimeStampedModel):
     """Persistent, explainable decision record for a pursuit at a point in time."""
 

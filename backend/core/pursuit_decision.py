@@ -6,6 +6,7 @@ from typing import Any
 from .capture_intelligence import build_capture_assessment
 from .models import PipelineItem, PricingPlan, ProposalCloseout, PursuitDecisionSnapshot
 from .pricing_engine import calculate_plan
+from .price_to_win import build_price_to_win
 from .win_strategy import build_win_strategy
 
 
@@ -43,6 +44,7 @@ def build_pursuit_decision(*, organization, opportunity) -> dict[str, Any]:
         opportunity=opportunity,
     ).prefetch_related("cost_items", "clins", "scenarios").order_by("-revision").first()
     pricing_calc = calculate_plan(pricing_plan) if pricing_plan else None
+    price_to_win = build_price_to_win(organization=organization, opportunity=opportunity)
     if pricing_plan and pricing_plan.cost_items.exists():
         margin = _decimal(pricing_calc["totals"]["margin_percent"], Decimal("0")) or Decimal("0")
         minimum = _decimal(pricing_plan.minimum_margin_percent, Decimal("0")) or Decimal("0")
@@ -89,6 +91,14 @@ def build_pursuit_decision(*, organization, opportunity) -> dict[str, Any]:
     if evidence_coverage < 40:
         conditions.append("Increase evidence coverage; the current decision has too many unknowns.")
 
+    ptw_target = _decimal(price_to_win.get("range", {}).get("target"))
+    ptw_target_viability = price_to_win.get("viability", {}).get("modeled_target", {})
+    if ptw_target is not None and pricing_plan and pricing_plan.cost_items.exists():
+        if ptw_target_viability.get("clears_margin_floor") is False:
+            conditions.append("Modeled price-to-win target falls below the configured minimum margin; reduce delivery cost or obtain executive approval.")
+    if int(price_to_win.get("confidence") or 0) < 45:
+        conditions.append("Price-to-win evidence is weak; strengthen comparable award evidence before treating competitive pricing as decision-grade.")
+
     recommendation = _recommendation(decision_score, hard_blockers, conditions)
     win_probability = _bounded(decision_score * 0.72 + int(scores.get("competition", 0)) * 0.12 + int(scores.get("past_performance", 0)) * 0.16, 5, 95)
 
@@ -111,6 +121,7 @@ def build_pursuit_decision(*, organization, opportunity) -> dict[str, Any]:
         {"label": "Pipeline assumptions", "classification": "workspace", "available": bool(pipeline), "detail": "Value and user-entered pursuit data" if pipeline else "Opportunity has not been fully qualified in pipeline"},
         {"label": "Competitive posture", "classification": "derived", "available": True, "detail": f"Competition score {scores.get('competition', 0)}/100; historical inference, not an official bidder list"},
         {"label": "Pricing model", "classification": "workspace_financial", "available": bool(pricing_plan and pricing_plan.cost_items.exists()), "detail": f"Revision {pricing_plan.revision} · {pricing_plan.cost_items.count()} cost items" if pricing_plan else "No ForgeGov pricing model has been created"},
+        {"label": "Price-to-win evidence", "classification": "derived_from_official_historical_awards", "available": bool(price_to_win.get("evidence_count")), "detail": f"{price_to_win.get('evidence_count', 0)} comparable awards · confidence {price_to_win.get('confidence', 0)}%"},
     ]
 
     history = PursuitDecisionSnapshot.objects.filter(organization=organization, opportunity=opportunity)[:12]
@@ -138,6 +149,12 @@ def build_pursuit_decision(*, organization, opportunity) -> dict[str, Any]:
             "projected_profit": _decimal(pricing_calc["totals"]["profit"]) if pricing_calc else None,
             "pricing_revision": pricing_plan.revision if pricing_plan else None,
             "pricing_status": pricing_plan.status if pricing_plan else "not_started",
+            "price_to_win_floor": price_to_win.get("range", {}).get("competitive_floor"),
+            "price_to_win_target": price_to_win.get("range", {}).get("target"),
+            "price_to_win_ceiling": price_to_win.get("range", {}).get("protective_ceiling"),
+            "price_to_win_confidence": price_to_win.get("confidence"),
+            "price_position": price_to_win.get("current_pricing", {}).get("position"),
+            "target_price_clears_margin_floor": price_to_win.get("viability", {}).get("modeled_target", {}).get("clears_margin_floor"),
         },
         "competitive_position": {
             "incumbent": win.get("incumbent", {}),

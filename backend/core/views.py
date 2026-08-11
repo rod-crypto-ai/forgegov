@@ -124,6 +124,7 @@ from .proposal_workspace import build_proposal_workspace
 from .proposal_execution import proposal_execution_payload, ensure_proposal_execution, update_plan, update_requirement, update_review, update_finding
 from .submission_control import build_submission_control, create_submission_snapshot, update_closeout, export_submission_control
 from .pricing_engine import ensure_pricing_plan, pricing_payload, mutate_pricing_plan, ensure_pricing_profile
+from .price_to_win import build_price_to_win, record_price_to_win
 from .intelligence.services import connector_health, opportunity_intelligence
 from .intelligence.services.award_ingestion import award_intelligence_summary, connector_registry_payload, sync_usaspending_awards
 
@@ -135,7 +136,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "3.0.0-m1"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "3.0.0-m2"})
 
 
 @api_view(["GET", "POST"])
@@ -1804,6 +1805,27 @@ def opportunity_pricing_workspace(request, source_id: str):
         "agency": opportunity.agency,
     }
     return Response(payload)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([ReadOnlyOrContributor])
+def opportunity_price_to_win(request, source_id: str):
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(source_id)
+    if not opportunity:
+        return Response({"detail": "Opportunity not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "POST":
+        snapshot = record_price_to_win(
+            organization=organization,
+            opportunity=opportunity,
+            user=request.user,
+        )
+        result = build_price_to_win(organization=organization, opportunity=opportunity)
+        result["recorded_snapshot_id"] = snapshot.id
+        return Response(result, status=status.HTTP_201_CREATED)
+
+    return Response(build_price_to_win(organization=organization, opportunity=opportunity))
 
 
 @api_view(["GET", "PATCH"])
