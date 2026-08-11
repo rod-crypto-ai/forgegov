@@ -75,6 +75,7 @@ from .models import (
     ProposalFinding,
     ProposalSubmissionSnapshot,
     ProposalCloseout,
+    PricingPlan,
 )
 from .serializers import (
     AgencySerializer,
@@ -138,7 +139,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "3.0.0-m4"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "3.0.1"})
 
 
 @api_view(["GET", "POST"])
@@ -811,6 +812,63 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
         if search:
             queryset = queryset.filter(Q(code__icontains=search) | Q(title__icontains=search) | Q(description__icontains=search))
         return queryset
+
+
+@api_view(["GET"])
+def opportunity_command_summary(request, notice_id: str):
+    """Compact cross-module state for the opportunity Overview command page."""
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(notice_id)
+    if not opportunity:
+        return Response({"detail": "Opportunity not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    pipeline = PipelineItem.objects.filter(organization=organization, opportunity=opportunity).order_by("-updated_at").first()
+    workspace = OpportunityWorkspace.objects.filter(organization=organization, opportunity=opportunity).first()
+    documents = OpportunityDocument.objects.filter(organization=organization, opportunity=opportunity)
+    ready_documents = documents.filter(status=OpportunityDocument.Status.READY).count()
+    total_documents = documents.count()
+
+    pricing_plan = PricingPlan.objects.filter(organization=organization, opportunity=opportunity).order_by("-revision").first()
+    pricing = pricing_payload(pricing_plan) if pricing_plan else None
+    decision = build_pursuit_decision(organization=organization, opportunity=opportunity)
+
+    proposal_plan = ProposalPlan.objects.filter(organization=organization, opportunity=opportunity).first()
+    proposal = proposal_execution_payload(organization=organization, opportunity=opportunity, user=request.user) if proposal_plan else None
+    compliance_items = list((workspace.compliance_items if workspace else []) or [])
+    compliance_total = len(compliance_items)
+    compliance_complete = sum(1 for row in compliance_items if row.get("complete"))
+
+    return Response({
+        "pipeline": {
+            "active": bool(pipeline),
+            "stage": pipeline.stage if pipeline else "not_added",
+            "probability_of_win": pipeline.probability_of_win if pipeline else 0,
+            "estimated_value": pipeline.estimated_value if pipeline else None,
+            "next_action": pipeline.next_action if pipeline else "Add to pipeline to activate pursuit workflow.",
+        },
+        "documents": {"ready": ready_documents, "total": total_documents},
+        "decision": decision.get("decision", {}),
+        "pricing": {
+            "status": pricing["plan"]["status"] if pricing else "not_started",
+            "revision": pricing["plan"]["revision"] if pricing else None,
+            "price": pricing["totals"]["price"] if pricing else None,
+            "profit": pricing["totals"]["profit"] if pricing else None,
+            "margin_percent": pricing["totals"]["margin_percent"] if pricing else None,
+            "guardrails": pricing.get("guardrails", []) if pricing else [],
+        },
+        "compliance": {
+            "complete": compliance_complete,
+            "total": compliance_total,
+            "percent": round(compliance_complete / compliance_total * 100) if compliance_total else 0,
+        },
+        "proposal": {
+            "status": proposal["plan"]["status"] if proposal else "not_started",
+            "readiness_score": proposal["plan"]["readiness_score"] if proposal else 0,
+            "submission_ready": proposal["plan"]["submission_ready"] if proposal else False,
+            "open_findings": proposal["counts"]["open_findings"] if proposal else 0,
+            "critical_open_findings": proposal["counts"]["critical_open_findings"] if proposal else 0,
+        },
+    })
 
 
 @api_view(["GET"])

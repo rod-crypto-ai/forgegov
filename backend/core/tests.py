@@ -78,13 +78,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "3.0.0-m4")
+        self.assertEqual(response.json()["version"], "3.0.1")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "3.0.0-m4")
+        self.assertEqual(response.json()["version"], "3.0.1")
 
 
 class RouterRegressionTests(TestCase):
@@ -2083,3 +2083,45 @@ class PortfolioIntelligenceTests(AuthenticatedApiTestCase):
         self.assertEqual(response.status_code, 200)
         risks = response.json()["risks"]
         self.assertTrue(any(row["title"] == "Customer concentration" for row in risks))
+
+class WorkspaceConsolidationTests(AuthenticatedApiTestCase):
+    def test_command_summary_returns_cross_module_state_without_requiring_pricing(self):
+        opportunity = Opportunity.objects.create(
+            source_id="v301-command-summary",
+            title="Workspace consolidation test",
+            agency="Department of the Army",
+        )
+        PipelineItem.objects.create(
+            organization=self.organization,
+            opportunity=opportunity,
+            stage=PipelineItem.Stage.CAPTURE,
+            probability_of_win=55,
+            next_action="Validate customer hot buttons",
+        )
+        response = self.client.get("/api/workflow/opportunities/v301-command-summary/command-summary/")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["pipeline"]["active"])
+        self.assertEqual(body["pipeline"]["stage"], PipelineItem.Stage.CAPTURE)
+        self.assertEqual(body["pricing"]["status"], "not_started")
+        self.assertIn(body["proposal"]["status"], {"not_started", "planning"})
+        self.assertIn("decision", body)
+        self.assertIn("documents", body)
+
+    def test_command_summary_reflects_workspace_compliance_progress(self):
+        opportunity = Opportunity.objects.create(
+            source_id="v301-compliance-summary",
+            title="Compliance command summary",
+            agency="Department of the Navy",
+        )
+        OpportunityWorkspace.objects.create(
+            organization=self.organization,
+            opportunity=opportunity,
+            compliance_items=[
+                {"id": "one", "label": "First", "complete": True},
+                {"id": "two", "label": "Second", "complete": False},
+            ],
+        )
+        response = self.client.get("/api/workflow/opportunities/v301-compliance-summary/command-summary/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["compliance"], {"complete": 1, "total": 2, "percent": 50})
