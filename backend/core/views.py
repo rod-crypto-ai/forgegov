@@ -126,6 +126,7 @@ from .submission_control import build_submission_control, create_submission_snap
 from .pricing_engine import ensure_pricing_plan, pricing_payload, mutate_pricing_plan, ensure_pricing_profile
 from .price_to_win import build_price_to_win, record_price_to_win
 from .prime_sub_cashflow import prime_sub_payload, mutate_prime_sub
+from .portfolio_intelligence import build_portfolio_intelligence, record_portfolio_snapshot
 from .intelligence.services import connector_health, opportunity_intelligence
 from .intelligence.services.award_ingestion import award_intelligence_summary, connector_registry_payload, sync_usaspending_awards
 
@@ -137,7 +138,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "3.0.0-m3"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "3.0.0-m4"})
 
 
 @api_view(["GET", "POST"])
@@ -252,6 +253,18 @@ def intelligence_connectors(request):
 def opportunity_intelligence_view(request, source_id):
     refresh = _truthy(request.query_params.get("refresh"))
     return Response(opportunity_intelligence(source_id, refresh=refresh))
+
+
+@api_view(["GET", "POST"])
+@permission_classes([ReadOnlyOrContributor])
+def portfolio_intelligence_view(request):
+    organization = _request_organization(request)
+    if request.method == "POST":
+        snapshot = record_portfolio_snapshot(organization=organization, user=request.user)
+        result = build_portfolio_intelligence(organization=organization)
+        result["recorded_snapshot_id"] = snapshot.id
+        return Response(result, status=status.HTTP_201_CREATED)
+    return Response(build_portfolio_intelligence(organization=organization))
 
 
 @api_view(["GET"])

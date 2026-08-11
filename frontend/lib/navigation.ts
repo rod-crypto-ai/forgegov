@@ -87,6 +87,7 @@ export const navigationGroups: NavGroup[] = [
     label: "Reports",
     icon: BarChart3,
     items: [
+      { href: "/reports/executive", label: "Executive Portfolio", icon: BarChart3, description: "Weighted pipeline, modeled profit, backlog, concentration, working-capital demand, and portfolio risk." },
       { href: "/reports/funding", label: "Funding", icon: BadgeDollarSign, description: "Analyze obligated dollars, ceiling values, agency concentration, and spending movement." },
       { href: "/reports/new-entrants", label: "New Entrants", icon: ChartNoAxesCombined, description: "Identify vendors entering agencies, categories, and markets for the first time." },
       { href: "/intelligence/connectors", label: "Connector Manager", icon: Database, description: "Monitor official data-source configuration, reachability, and evidence readiness." },

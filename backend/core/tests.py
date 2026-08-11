@@ -78,13 +78,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "3.0.0-m3")
+        self.assertEqual(response.json()["version"], "3.0.0-m4")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "3.0.0-m3")
+        self.assertEqual(response.json()["version"], "3.0.0-m4")
 
 
 class RouterRegressionTests(TestCase):
@@ -1964,3 +1964,122 @@ class PrimeSubCashFlowTests(AuthenticatedApiTestCase):
         self.assertIn(economics["working_capital_risk"], ["high", "critical"])
         self.assertGreater(float(economics["recommended_working_capital"]), 0.0)
         self.assertGreaterEqual(float(economics["working_capital_gap"]), 0.0)
+
+
+class PortfolioIntelligenceTests(AuthenticatedApiTestCase):
+    def test_portfolio_rolls_up_pipeline_pricing_profit_and_working_capital(self):
+        opportunity = Opportunity.objects.create(
+            source_id="m4-portfolio-1",
+            title="Portfolio economics test",
+            agency="Department of the Navy",
+        )
+        PipelineItem.objects.create(
+            organization=self.organization,
+            opportunity=opportunity,
+            stage=PipelineItem.Stage.PROPOSAL,
+            estimated_value=1000000,
+            probability_of_win=60,
+        )
+        self.client.patch(
+            "/api/pricing/opportunities/m4-portfolio-1/",
+            {
+                "action": "add_item",
+                "category": "labor",
+                "name": "Delivery labor",
+                "labor_hours": "10000",
+                "labor_rate": "50",
+            },
+            format="json",
+        )
+        self.client.patch(
+            "/api/pricing/opportunities/m4-portfolio-1/prime-sub-cashflow/",
+            {
+                "action": "update_cashflow",
+                "performance_months": "12",
+                "payment_lag_days": 45,
+                "available_working_capital": "10000",
+            },
+            format="json",
+        )
+
+        response = self.client.get("/api/reports/portfolio-intelligence/")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["summary"]["active_opportunity_count"], 1)
+        self.assertEqual(body["summary"]["priced_opportunity_count"], 1)
+        self.assertGreater(float(body["summary"]["pipeline_value"]), 0.0)
+        self.assertGreater(float(body["summary"]["weighted_pipeline_value"]), 0.0)
+        self.assertGreater(float(body["summary"]["projected_profit"]), 0.0)
+        self.assertGreater(float(body["summary"]["recommended_working_capital"]), 0.0)
+        self.assertEqual(body["agency_concentration"][0]["agency"], "Department of the Navy")
+
+    def test_portfolio_excludes_lost_and_no_bid_pipeline(self):
+        active = Opportunity.objects.create(source_id="m4-active", title="Active", agency="Army")
+        lost = Opportunity.objects.create(source_id="m4-lost", title="Lost", agency="Army")
+        no_bid = Opportunity.objects.create(source_id="m4-nobid", title="No Bid", agency="Army")
+        PipelineItem.objects.create(
+            organization=self.organization,
+            opportunity=active,
+            stage=PipelineItem.Stage.CAPTURE,
+            estimated_value=500000,
+            probability_of_win=50,
+        )
+        PipelineItem.objects.create(
+            organization=self.organization,
+            opportunity=lost,
+            stage=PipelineItem.Stage.LOST,
+            estimated_value=900000,
+            probability_of_win=0,
+        )
+        PipelineItem.objects.create(
+            organization=self.organization,
+            opportunity=no_bid,
+            stage=PipelineItem.Stage.NO_BID,
+            estimated_value=700000,
+            probability_of_win=0,
+        )
+
+        response = self.client.get("/api/reports/portfolio-intelligence/")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["summary"]["active_opportunity_count"], 1)
+        self.assertEqual(float(body["summary"]["pipeline_value"]), 500000.0)
+
+    def test_portfolio_snapshot_persists_executive_history(self):
+        from .models import PortfolioSnapshot
+
+        opportunity = Opportunity.objects.create(source_id="m4-snapshot", title="Snapshot", agency="Air Force")
+        PipelineItem.objects.create(
+            organization=self.organization,
+            opportunity=opportunity,
+            stage=PipelineItem.Stage.QUALIFIED,
+            estimated_value=250000,
+            probability_of_win=25,
+        )
+        response = self.client.post("/api/reports/portfolio-intelligence/", {}, format="json")
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.json().get("recorded_snapshot_id"))
+        self.assertEqual(PortfolioSnapshot.objects.filter(organization=self.organization).count(), 1)
+
+        history = self.client.get("/api/reports/portfolio-intelligence/").json()["history"]
+        self.assertEqual(len(history), 1)
+
+    def test_portfolio_customer_concentration_creates_risk_signal(self):
+        for index, value in enumerate([800000, 100000], 1):
+            opportunity = Opportunity.objects.create(
+                source_id=f"m4-concentration-{index}",
+                title=f"Concentration {index}",
+                agency="Department of the Army" if index == 1 else "Department of Energy",
+            )
+            PipelineItem.objects.create(
+                organization=self.organization,
+                opportunity=opportunity,
+                stage=PipelineItem.Stage.CAPTURE,
+                estimated_value=value,
+                probability_of_win=50,
+            )
+
+        response = self.client.get("/api/reports/portfolio-intelligence/")
+        self.assertEqual(response.status_code, 200)
+        risks = response.json()["risks"]
+        self.assertTrue(any(row["title"] == "Customer concentration" for row in risks))

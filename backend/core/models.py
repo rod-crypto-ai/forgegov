@@ -777,6 +777,28 @@ class PriceToWinSnapshot(TimeStampedModel):
         indexes = [models.Index(fields=["organization", "opportunity", "-created_at"], name="ptw_org_opp_time_idx")]
 
 
+class PortfolioSnapshot(TimeStampedModel):
+    """Persistent executive portfolio rollup for trend and governance review."""
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="portfolio_snapshots")
+    pipeline_value = models.DecimalField(max_digits=22, decimal_places=2, default=0)
+    weighted_pipeline_value = models.DecimalField(max_digits=22, decimal_places=2, default=0)
+    modeled_revenue = models.DecimalField(max_digits=22, decimal_places=2, default=0)
+    projected_profit = models.DecimalField(max_digits=22, decimal_places=2, default=0)
+    backlog_value = models.DecimalField(max_digits=22, decimal_places=2, default=0)
+    recommended_working_capital = models.DecimalField(max_digits=22, decimal_places=2, default=0)
+    working_capital_gap = models.DecimalField(max_digits=22, decimal_places=2, default=0)
+    portfolio_margin_percent = models.DecimalField(max_digits=7, decimal_places=2, default=0)
+    opportunity_count = models.PositiveIntegerField(default=0)
+    risk_summary = models.JSONField(default=dict, blank=True)
+    agency_concentration = models.JSONField(default=list, blank=True)
+    recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="recorded_portfolio_snapshots")
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["organization", "-created_at"], name="portfolio_org_time_idx")]
+
+
 class PursuitDecisionSnapshot(TimeStampedModel):
     """Persistent, explainable decision record for a pursuit at a point in time."""
 
