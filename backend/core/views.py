@@ -125,6 +125,7 @@ from .proposal_execution import proposal_execution_payload, ensure_proposal_exec
 from .submission_control import build_submission_control, create_submission_snapshot, update_closeout, export_submission_control
 from .pricing_engine import ensure_pricing_plan, pricing_payload, mutate_pricing_plan, ensure_pricing_profile
 from .price_to_win import build_price_to_win, record_price_to_win
+from .prime_sub_cashflow import prime_sub_payload, mutate_prime_sub
 from .intelligence.services import connector_health, opportunity_intelligence
 from .intelligence.services.award_ingestion import award_intelligence_summary, connector_registry_payload, sync_usaspending_awards
 
@@ -136,7 +137,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "3.0.0-m2"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "3.0.0-m3"})
 
 
 @api_view(["GET", "POST"])
@@ -1798,6 +1799,7 @@ def opportunity_pricing_workspace(request, source_id: str):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     payload = pricing_payload(plan)
+    payload["prime_sub"] = prime_sub_payload(plan)
     payload["opportunity"] = {
         "source_id": opportunity.source_id,
         "title": opportunity.title,
@@ -1805,6 +1807,27 @@ def opportunity_pricing_workspace(request, source_id: str):
         "agency": opportunity.agency,
     }
     return Response(payload)
+
+
+@api_view(["GET", "PATCH", "POST"])
+@permission_classes([ReadOnlyOrContributor])
+def opportunity_prime_sub_cashflow(request, source_id: str):
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(source_id)
+    if not opportunity:
+        return Response({"detail": "Opportunity not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    plan = ensure_pricing_plan(
+        organization=organization,
+        opportunity=opportunity,
+        user=request.user,
+    )
+    if request.method in {"PATCH", "POST"}:
+        try:
+            plan = mutate_prime_sub(plan, request.data)
+        except (ValueError, KeyError, TypeError) as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(prime_sub_payload(plan))
 
 
 @api_view(["GET", "POST"])

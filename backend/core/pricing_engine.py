@@ -66,6 +66,7 @@ def ensure_pricing_plan(*, organization, opportunity: Opportunity, user=None) ->
         target_profit_percent=profile.default_profit_percent,
         minimum_margin_percent=profile.minimum_margin_percent,
         annual_escalation_percent=profile.annual_escalation_percent,
+        payment_lag_days=profile.payment_lag_days,
         created_by=user,
     )
     ensure_default_scenarios(plan)
@@ -272,6 +273,10 @@ def pricing_payload(plan: PricingPlan) -> dict[str, Any]:
             "minimum_margin_percent": plan.minimum_margin_percent,
             "annual_escalation_percent": plan.annual_escalation_percent,
             "pursuit_cost": plan.pursuit_cost,
+            "performance_months": plan.performance_months,
+            "payment_lag_days": plan.payment_lag_days,
+            "mobilization_cost": plan.mobilization_cost,
+            "available_working_capital": plan.available_working_capital,
             "notes": plan.notes,
             "approved_at": plan.approved_at,
             "updated_at": plan.updated_at,
@@ -303,7 +308,8 @@ EDITABLE_PLAN_FIELDS = {
     "name", "status", "fringe_percent", "overhead_percent", "ga_percent",
     "material_handling_percent", "subcontract_handling_percent", "payroll_burden_percent",
     "target_profit_percent", "minimum_margin_percent", "annual_escalation_percent",
-    "pursuit_cost", "notes",
+    "pursuit_cost", "performance_months", "payment_lag_days",
+    "mobilization_cost", "available_working_capital", "notes",
 }
 
 
@@ -398,6 +404,10 @@ def mutate_pricing_plan(*, plan: PricingPlan, payload: dict[str, Any], user=None
             minimum_margin_percent=plan.minimum_margin_percent,
             annual_escalation_percent=plan.annual_escalation_percent,
             pursuit_cost=plan.pursuit_cost,
+            performance_months=plan.performance_months,
+            payment_lag_days=plan.payment_lag_days,
+            mobilization_cost=plan.mobilization_cost,
+            available_working_capital=plan.available_working_capital,
             notes=plan.notes,
             created_by=user,
         )
@@ -425,6 +435,22 @@ def mutate_pricing_plan(*, plan: PricingPlan, payload: dict[str, Any], user=None
                 source_kind=item.source_kind,
                 notes=item.notes,
                 sort_order=item.sort_order,
+            )
+        for sub in plan.subcontractors.all():
+            from .models import PricingSubcontractor
+            PricingSubcontractor.objects.create(
+                plan=new_plan,
+                name=sub.name,
+                quoted_cost=sub.quoted_cost,
+                prime_markup_percent=sub.prime_markup_percent,
+                management_burden=sub.management_burden,
+                insurance_cost=sub.insurance_cost,
+                contingency=sub.contingency,
+                deposit_percent=sub.deposit_percent,
+                payment_terms_days=sub.payment_terms_days,
+                monthly_burn=sub.monthly_burn,
+                source=sub.source,
+                notes=sub.notes,
             )
         for scenario in plan.scenarios.all():
             PricingScenario.objects.create(

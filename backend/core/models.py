@@ -654,6 +654,10 @@ class PricingPlan(TimeStampedModel):
     minimum_margin_percent = models.DecimalField(max_digits=7, decimal_places=3, default=8)
     annual_escalation_percent = models.DecimalField(max_digits=7, decimal_places=3, default=3)
     pursuit_cost = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    performance_months = models.DecimalField(max_digits=7, decimal_places=2, default=12)
+    payment_lag_days = models.PositiveIntegerField(default=30)
+    mobilization_cost = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    available_working_capital = models.DecimalField(max_digits=20, decimal_places=2, default=0)
     notes = models.TextField(blank=True)
     approved_at = models.DateTimeField(null=True, blank=True)
     approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="approved_pricing_plans")
@@ -710,6 +714,27 @@ class PricingCostItem(TimeStampedModel):
     class Meta:
         ordering = ["option_year", "category", "sort_order", "id"]
         indexes = [models.Index(fields=["plan", "category", "option_year"], name="priceitem_plan_cat_yr")]
+
+
+class PricingSubcontractor(TimeStampedModel):
+    """Prime/subcontractor economics kept separate from raw direct-cost line items."""
+
+    plan = models.ForeignKey(PricingPlan, on_delete=models.CASCADE, related_name="subcontractors")
+    name = models.CharField(max_length=500)
+    quoted_cost = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    prime_markup_percent = models.DecimalField(max_digits=7, decimal_places=3, default=0)
+    management_burden = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    insurance_cost = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    contingency = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    deposit_percent = models.DecimalField(max_digits=7, decimal_places=3, default=0)
+    payment_terms_days = models.PositiveIntegerField(default=30)
+    monthly_burn = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    source = models.CharField(max_length=500, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["name", "id"]
+        indexes = [models.Index(fields=["plan", "name"], name="pricesub_plan_name_idx")]
 
 
 class PricingScenario(TimeStampedModel):

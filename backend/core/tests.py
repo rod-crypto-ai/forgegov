@@ -78,13 +78,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "3.0.0-m2")
+        self.assertEqual(response.json()["version"], "3.0.0-m3")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "3.0.0-m2")
+        self.assertEqual(response.json()["version"], "3.0.0-m3")
 
 
 class RouterRegressionTests(TestCase):
@@ -1833,3 +1833,134 @@ class PriceToWinIntelligenceTests(AuthenticatedApiTestCase):
         self.assertIsNotNone(economics["price_to_win_target"])
         self.assertGreater(economics["price_to_win_confidence"], 0)
         self.assertIn("price_position", economics)
+
+
+class PrimeSubCashFlowTests(AuthenticatedApiTestCase):
+    def test_subcontractor_economics_calculate_prime_contribution(self):
+        opportunity = Opportunity.objects.create(source_id="m3-sub-1", title="Prime sub economics")
+        response = self.client.patch(
+            "/api/pricing/opportunities/m3-sub-1/prime-sub-cashflow/",
+            {
+                "action": "add_subcontractor",
+                "name": "ABC Construction",
+                "quoted_cost": "100000",
+                "prime_markup_percent": "12",
+                "management_burden": "3000",
+                "insurance_cost": "1000",
+                "contingency": "2000",
+                "deposit_percent": "10",
+                "payment_terms_days": 15,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(len(body["subcontractors"]), 1)
+        row = body["subcontractors"][0]
+        self.assertEqual(float(row["prime_revenue"]), 112000.0)
+        self.assertEqual(float(row["net_contribution"]), 6000.0)
+        self.assertEqual(float(row["deposit_required"]), 10000.0)
+        self.assertGreater(float(row["effective_margin_percent"]), 5.0)
+
+    def test_cashflow_model_flags_working_capital_gap(self):
+        opportunity = Opportunity.objects.create(source_id="m3-cash-1", title="Cash flow economics")
+        self.client.patch(
+            "/api/pricing/opportunities/m3-cash-1/",
+            {
+                "action": "add_item",
+                "category": "labor",
+                "name": "Delivery team",
+                "labor_hours": "12000",
+                "labor_rate": "50",
+            },
+            format="json",
+        )
+        response = self.client.patch(
+            "/api/pricing/opportunities/m3-cash-1/prime-sub-cashflow/",
+            {
+                "action": "update_cashflow",
+                "performance_months": "12",
+                "payment_lag_days": 60,
+                "mobilization_cost": "50000",
+                "available_working_capital": "10000",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        cashflow = response.json()["cashflow"]
+        self.assertGreater(float(cashflow["recommended_working_capital"]), 10000.0)
+        self.assertGreater(float(cashflow["working_capital_gap"]), 0.0)
+        self.assertIn(cashflow["risk"], ["high", "critical"])
+        self.assertTrue(cashflow["warnings"])
+
+    def test_pricing_revision_preserves_subcontractor_and_cashflow_assumptions(self):
+        from .models import PricingPlan
+        opportunity = Opportunity.objects.create(source_id="m3-rev-1", title="M3 revision")
+        self.client.patch(
+            "/api/pricing/opportunities/m3-rev-1/prime-sub-cashflow/",
+            {
+                "action": "add_subcontractor",
+                "name": "Specialty Vendor",
+                "quoted_cost": "250000",
+                "prime_markup_percent": "10",
+            },
+            format="json",
+        )
+        self.client.patch(
+            "/api/pricing/opportunities/m3-rev-1/prime-sub-cashflow/",
+            {
+                "action": "update_cashflow",
+                "performance_months": "18",
+                "payment_lag_days": 45,
+                "available_working_capital": "300000",
+            },
+            format="json",
+        )
+        response = self.client.patch(
+            "/api/pricing/opportunities/m3-rev-1/",
+            {"action": "new_revision"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["plan"]["revision"], 2)
+        newest = PricingPlan.objects.filter(organization=self.organization, opportunity=opportunity).order_by("-revision").first()
+        self.assertEqual(newest.payment_lag_days, 45)
+        self.assertEqual(float(newest.performance_months), 18.0)
+        self.assertEqual(newest.subcontractors.count(), 1)
+
+    def test_pursuit_decision_surfaces_liquidity_risk(self):
+        opportunity = Opportunity.objects.create(source_id="m3-decision-1", title="M3 decision economics")
+        PipelineItem.objects.create(
+            organization=self.organization,
+            opportunity=opportunity,
+            stage=PipelineItem.Stage.CAPTURE,
+            estimated_value=900000,
+            probability_of_win=50,
+        )
+        self.client.patch(
+            "/api/pricing/opportunities/m3-decision-1/",
+            {
+                "action": "add_item",
+                "category": "labor",
+                "name": "Labor",
+                "labor_hours": "10000",
+                "labor_rate": "50",
+            },
+            format="json",
+        )
+        self.client.patch(
+            "/api/pricing/opportunities/m3-decision-1/prime-sub-cashflow/",
+            {
+                "action": "update_cashflow",
+                "performance_months": "12",
+                "payment_lag_days": 60,
+                "available_working_capital": "0",
+            },
+            format="json",
+        )
+        response = self.client.get("/api/ai/opportunities/m3-decision-1/pursuit-decision/")
+        self.assertEqual(response.status_code, 200)
+        economics = response.json()["economics"]
+        self.assertIn(economics["working_capital_risk"], ["high", "critical"])
+        self.assertGreater(float(economics["recommended_working_capital"]), 0.0)
+        self.assertGreaterEqual(float(economics["working_capital_gap"]), 0.0)

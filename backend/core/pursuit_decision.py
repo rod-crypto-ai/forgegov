@@ -7,6 +7,7 @@ from .capture_intelligence import build_capture_assessment
 from .models import PipelineItem, PricingPlan, ProposalCloseout, PursuitDecisionSnapshot
 from .pricing_engine import calculate_plan
 from .price_to_win import build_price_to_win
+from .prime_sub_cashflow import prime_sub_payload
 from .win_strategy import build_win_strategy
 
 
@@ -45,6 +46,7 @@ def build_pursuit_decision(*, organization, opportunity) -> dict[str, Any]:
     ).prefetch_related("cost_items", "clins", "scenarios").order_by("-revision").first()
     pricing_calc = calculate_plan(pricing_plan) if pricing_plan else None
     price_to_win = build_price_to_win(organization=organization, opportunity=opportunity)
+    prime_sub = prime_sub_payload(pricing_plan) if pricing_plan else None
     if pricing_plan and pricing_plan.cost_items.exists():
         margin = _decimal(pricing_calc["totals"]["margin_percent"], Decimal("0")) or Decimal("0")
         minimum = _decimal(pricing_plan.minimum_margin_percent, Decimal("0")) or Decimal("0")
@@ -98,6 +100,13 @@ def build_pursuit_decision(*, organization, opportunity) -> dict[str, Any]:
             conditions.append("Modeled price-to-win target falls below the configured minimum margin; reduce delivery cost or obtain executive approval.")
     if int(price_to_win.get("confidence") or 0) < 45:
         conditions.append("Price-to-win evidence is weak; strengthen comparable award evidence before treating competitive pricing as decision-grade.")
+    if prime_sub:
+        cashflow = prime_sub.get("cashflow", {})
+        if cashflow.get("risk") in {"high", "critical"}:
+            conditions.append("Working-capital exposure is high under current payment timing; secure financing or restructure performance cash flow before bid authorization.")
+        sub_margin = _decimal(prime_sub.get("totals", {}).get("effective_margin_percent"), Decimal("0")) or Decimal("0")
+        if prime_sub.get("subcontractors") and sub_margin < Decimal("5"):
+            conditions.append("Prime/subcontractor structure produces less than 5% effective contribution margin after management burden.")
 
     recommendation = _recommendation(decision_score, hard_blockers, conditions)
     win_probability = _bounded(decision_score * 0.72 + int(scores.get("competition", 0)) * 0.12 + int(scores.get("past_performance", 0)) * 0.16, 5, 95)
@@ -122,6 +131,8 @@ def build_pursuit_decision(*, organization, opportunity) -> dict[str, Any]:
         {"label": "Competitive posture", "classification": "derived", "available": True, "detail": f"Competition score {scores.get('competition', 0)}/100; historical inference, not an official bidder list"},
         {"label": "Pricing model", "classification": "workspace_financial", "available": bool(pricing_plan and pricing_plan.cost_items.exists()), "detail": f"Revision {pricing_plan.revision} · {pricing_plan.cost_items.count()} cost items" if pricing_plan else "No ForgeGov pricing model has been created"},
         {"label": "Price-to-win evidence", "classification": "derived_from_official_historical_awards", "available": bool(price_to_win.get("evidence_count")), "detail": f"{price_to_win.get('evidence_count', 0)} comparable awards · confidence {price_to_win.get('confidence', 0)}%"},
+        {"label": "Prime/sub economics", "classification": "workspace_financial", "available": bool(prime_sub and prime_sub.get("subcontractors")), "detail": f"{len(prime_sub.get('subcontractors', []))} subcontractor model(s)" if prime_sub else "No subcontractor economics modeled"},
+        {"label": "Cash-flow model", "classification": "workspace_financial", "available": bool(prime_sub), "detail": f"Working-capital risk: {prime_sub.get('cashflow', {}).get('risk', 'not modeled')}" if prime_sub else "No cash-flow assumptions modeled"},
     ]
 
     history = PursuitDecisionSnapshot.objects.filter(organization=organization, opportunity=opportunity)[:12]
@@ -155,6 +166,11 @@ def build_pursuit_decision(*, organization, opportunity) -> dict[str, Any]:
             "price_to_win_confidence": price_to_win.get("confidence"),
             "price_position": price_to_win.get("current_pricing", {}).get("position"),
             "target_price_clears_margin_floor": price_to_win.get("viability", {}).get("modeled_target", {}).get("clears_margin_floor"),
+            "prime_sub_effective_margin_percent": prime_sub.get("totals", {}).get("effective_margin_percent") if prime_sub else None,
+            "recommended_working_capital": prime_sub.get("cashflow", {}).get("recommended_working_capital") if prime_sub else None,
+            "available_working_capital": prime_sub.get("cashflow", {}).get("available_working_capital") if prime_sub else None,
+            "working_capital_gap": prime_sub.get("cashflow", {}).get("working_capital_gap") if prime_sub else None,
+            "working_capital_risk": prime_sub.get("cashflow", {}).get("risk") if prime_sub else "not_modeled",
         },
         "competitive_position": {
             "incumbent": win.get("incumbent", {}),

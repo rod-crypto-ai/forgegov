@@ -14,7 +14,9 @@ type Plan = {
   material_handling_percent:Money; subcontract_handling_percent:Money;
   payroll_burden_percent:Money; target_profit_percent:Money;
   minimum_margin_percent:Money; annual_escalation_percent:Money;
-  pursuit_cost:Money; notes:string; updated_at:string;
+  pursuit_cost:Money; performance_months:Money; payment_lag_days:number;
+  mobilization_cost:Money; available_working_capital:Money;
+  notes:string; updated_at:string;
 };
 type Item = {
   id:number; category:string; name:string; clin_id?:number|null; clin?:string;
@@ -25,6 +27,24 @@ type Item = {
 type Clin = {id:number;clin:string;description:string;option_year:number;quantity:Money;unit:string;cost:Money;target_price:Money};
 type Scenario = {id:number;scenario_type:string;profit_percent:Money;cost_adjustment_percent:Money;price_adjustment_percent:Money;cost:Money;price:Money;profit:Money;margin_percent:Money;notes:string};
 type Guardrail = {severity:string;title:string;detail:string};
+type SubcontractorEconomics = {
+  id:number;name:string;quoted_cost:Money;prime_markup_percent:Money;prime_revenue:Money;
+  management_burden:Money;insurance_cost:Money;contingency:Money;net_contribution:Money;
+  effective_margin_percent:Money;deposit_percent:Money;deposit_required:Money;
+  payment_terms_days:number;monthly_burn:Money;source:string;notes:string;
+};
+type CashflowEconomics = {
+  performance_months:Money;payment_lag_days:number;mobilization_cost:Money;
+  available_working_capital:Money;monthly_delivery_burn:Money;delivery_lag_exposure:Money;
+  subcontract_deposits:Money;subcontract_timing_exposure:Money;
+  recommended_working_capital:Money;working_capital_gap:Money;coverage_percent:Money;
+  risk:string;warnings:string[];subcontractors:SubcontractorEconomics[];
+};
+type PrimeSubEconomics = {
+  subcontractors:SubcontractorEconomics[];
+  totals:{quoted_cost:Money;prime_revenue:Money;net_contribution:Money;effective_margin_percent:Money};
+  cashflow:CashflowEconomics;
+};
 type PtwEvidence = {award_id:number;source_id:string;award_number:string;recipient_name:string;awarding_agency:string;naics_code:string;psc_code:string;raw_value:Money;adjusted_value:Money;start_date?:string|null;end_date?:string|null;match_score:number;source:string;source_url?:string};
 type PtwViability = {price:Money|null;profit:Money|null;margin_percent:Money|null;clears_margin_floor:boolean};
 type PriceToWin = {
@@ -43,6 +63,7 @@ type Payload = {
   clins:Clin[];
   scenarios:Scenario[];
   guardrails:Guardrail[];
+  prime_sub:PrimeSubEconomics;
   opportunity:{source_id:string;title:string;solicitation_number:string;agency:string};
 };
 
@@ -58,12 +79,14 @@ export function PricingWorkspace({noticeId}:{noticeId:string}) {
   const[busy,setBusy]=useState("");
   const[message,setMessage]=useState("");
   const[ptw,setPtw]=useState<PriceToWin|null>(null);
-  const[section,setSection]=useState<"summary"|"costs"|"clins"|"scenarios"|"ptw"|"rates">("summary");
+  const[section,setSection]=useState<"summary"|"costs"|"clins"|"scenarios"|"ptw"|"prime_sub"|"cashflow"|"rates">("summary");
   const[item,setItem]=useState({category:"labor",name:"",quantity:"1",unit_cost:"",labor_hours:"",labor_rate:"",option_year:"0",clin_id:""});
   const[clin,setClin]=useState({clin:"",description:"",option_year:"0",quantity:"1",unit:"LOT"});
+  const[sub,setSub]=useState({name:"",quoted_cost:"",prime_markup_percent:"12",management_burden:"",insurance_cost:"",contingency:"",deposit_percent:"0",payment_terms_days:"30",monthly_burn:"",source:""});
 
   const endpoint=`/pricing/opportunities/${encodeURIComponent(noticeId)}/`;
   const ptwEndpoint=`/pricing/opportunities/${encodeURIComponent(noticeId)}/price-to-win/`;
+  const primeSubEndpoint=`/pricing/opportunities/${encodeURIComponent(noticeId)}/prime-sub-cashflow/`;
 
   const load=useCallback(async()=>{
     setBusy("load");
@@ -95,6 +118,23 @@ export function PricingWorkspace({noticeId}:{noticeId:string}) {
       if(record)setMessage("Price-to-win snapshot recorded.");
     }catch(error){setMessage(error instanceof Error?error.message:"Price-to-win intelligence could not be refreshed.")}
     finally{setBusy("")}
+  }
+
+  async function mutatePrimeSub(payload:Record<string,unknown>,statusKey="prime-sub"){
+    setBusy(statusKey);setMessage("");
+    try{
+      const next=await apiPatch<PrimeSubEconomics>(primeSubEndpoint,payload);
+      setData(current=>current?{...current,prime_sub:next}:current);
+      return next;
+    }catch(error){setMessage(error instanceof Error?error.message:"Prime/sub economics could not be saved.");return null}
+    finally{setBusy("")}
+  }
+
+  async function addSubcontractor(event:FormEvent){
+    event.preventDefault();
+    if(!sub.name.trim())return;
+    const result=await mutatePrimeSub({action:"add_subcontractor",...sub},"add-sub");
+    if(result)setSub({...sub,name:"",quoted_cost:"",management_burden:"",insurance_cost:"",contingency:"",monthly_burn:"",source:""});
   }
 
   async function addItem(event:FormEvent){
@@ -151,6 +191,8 @@ export function PricingWorkspace({noticeId}:{noticeId:string}) {
       <button className={section==="clins"?"active":""} onClick={()=>setSection("clins")}><Layers3 size={15}/> CLINs</button>
       <button className={section==="scenarios"?"active":""} onClick={()=>setSection("scenarios")}><TrendingUp size={15}/> Scenarios</button>
       <button className={section==="ptw"?"active":""} onClick={()=>setSection("ptw")}><BadgeDollarSign size={15}/> Price-to-Win <span className="tab-new-badge">M2</span></button>
+      <button className={section==="prime_sub"?"active":""} onClick={()=>setSection("prime_sub")}><BriefcaseBusiness size={15}/> Prime / Sub <span className="tab-new-badge">M3</span></button>
+      <button className={section==="cashflow"?"active":""} onClick={()=>setSection("cashflow")}><CircleDollarSign size={15}/> Cash Flow <span className="tab-new-badge">M3</span></button>
       <button className={section==="rates"?"active":""} onClick={()=>setSection("rates")}><CircleDollarSign size={15}/> Indirect Rates</button>
     </nav>
 
@@ -254,6 +296,62 @@ export function PricingWorkspace({noticeId}:{noticeId:string}) {
 
         {ptw.history.length>0&&<section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">DECISION HISTORY</span><h3>Recorded price-to-win snapshots</h3></div></div><div className="ptw-history">{ptw.history.map(row=><article key={row.id}><time>{new Date(row.created_at).toLocaleString()}</time><span>{row.confidence}% confidence · {row.evidence_count} comparables</span><strong>{row.target_price==null?"No target":currency(row.target_price)}</strong></article>)}</div></section>}
       </>}
+    </section>}
+
+    {section==="prime_sub"&&<section className="prime-sub-workspace">
+      <header className="data-panel m3-explainer"><div><span className="eyebrow">M3 PRIME / SUB ECONOMICS</span><h3>Prime / Subcontractor Economics</h3><p>Model what the subcontractor costs you, what you charge as prime, and what remains after management burden, insurance, and contingency. A large subcontract can look profitable until the real prime burden is included.</p></div></header>
+      <div className="m3-kpis">
+        <article><span>Subcontract Quotes</span><strong>{currency(data.prime_sub.totals.quoted_cost)}</strong><small>{data.prime_sub.subcontractors.length} modeled subcontractor{data.prime_sub.subcontractors.length===1?"":"s"}</small></article>
+        <article><span>Prime Revenue</span><strong>{currency(data.prime_sub.totals.prime_revenue)}</strong><small>Quote + prime markup</small></article>
+        <article><span>Net Contribution</span><strong>{currency(data.prime_sub.totals.net_contribution)}</strong><small>After modeled prime burden</small></article>
+        <article className={Number(data.prime_sub.totals.effective_margin_percent)>=5?"healthy":"risk"}><span>Effective Margin</span><strong>{pct(data.prime_sub.totals.effective_margin_percent)}</strong><small>Prime/sub contribution margin</small></article>
+      </div>
+      <div className="pricing-work-grid">
+        <section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">ADD SUBCONTRACTOR</span><h3>Economic Structure</h3></div></div>
+          <form className="pricing-form" onSubmit={addSubcontractor}>
+            <label className="wide">Company / Work Package<input value={sub.name} onChange={e=>setSub({...sub,name:e.target.value})} placeholder="ABC Construction — site work"/></label>
+            <label>Quoted Cost<input type="number" step="0.01" value={sub.quoted_cost} onChange={e=>setSub({...sub,quoted_cost:e.target.value})}/></label>
+            <label>Prime Markup %<input type="number" step="0.1" value={sub.prime_markup_percent} onChange={e=>setSub({...sub,prime_markup_percent:e.target.value})}/></label>
+            <label>Management Burden<input type="number" step="0.01" value={sub.management_burden} onChange={e=>setSub({...sub,management_burden:e.target.value})}/></label>
+            <label>Insurance Cost<input type="number" step="0.01" value={sub.insurance_cost} onChange={e=>setSub({...sub,insurance_cost:e.target.value})}/></label>
+            <label>Contingency<input type="number" step="0.01" value={sub.contingency} onChange={e=>setSub({...sub,contingency:e.target.value})}/></label>
+            <label>Deposit %<input type="number" step="0.1" value={sub.deposit_percent} onChange={e=>setSub({...sub,deposit_percent:e.target.value})}/></label>
+            <label>Sub Payment Terms<input type="number" min="0" value={sub.payment_terms_days} onChange={e=>setSub({...sub,payment_terms_days:e.target.value})}/></label>
+            <label>Monthly Burn<input type="number" step="0.01" value={sub.monthly_burn} onChange={e=>setSub({...sub,monthly_burn:e.target.value})} placeholder="Optional"/></label>
+            <label className="wide">Quote / Source<input value={sub.source} onChange={e=>setSub({...sub,source:e.target.value})} placeholder="Vendor quote dated..."/></label>
+            <button className="primary-button wide" disabled={busy==="add-sub"}><Plus size={16}/>{busy==="add-sub"?"Adding…":"Add Subcontractor"}</button>
+          </form>
+        </section>
+        <section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">SUBCONTRACT STRUCTURE</span><h3>Contribution by subcontractor</h3></div></div>
+          <div className="prime-sub-list">{data.prime_sub.subcontractors.length?data.prime_sub.subcontractors.map(row=><article key={row.id}><div className="prime-sub-main"><strong>{row.name}</strong><span>{currency(row.quoted_cost)} quote · {pct(row.prime_markup_percent)} markup · Net {currency(row.net_contribution)}</span>{row.source&&<small>{row.source}</small>}</div><div><small>Prime Revenue</small><b>{currency(row.prime_revenue)}</b></div><div><small>Effective Margin</small><strong className={Number(row.effective_margin_percent)>=5?"good":"bad"}>{pct(row.effective_margin_percent)}</strong></div><div><small>Deposit</small><b>{currency(row.deposit_required)}</b></div><button className="icon-button danger-button" onClick={()=>void mutatePrimeSub({action:"delete_subcontractor",id:row.id},"delete-sub")}><Trash2 size={15}/></button></article>):<div className="table-state compact-state"><BriefcaseBusiness/><strong>No subcontractor economics modeled</strong><p>Add a subcontractor quote to calculate prime contribution and liquidity exposure.</p></div>}</div>
+        </section>
+      </div>
+    </section>}
+
+    {section==="cashflow"&&<section className="cashflow-workspace">
+      <header className="data-panel m3-explainer"><div><span className="eyebrow">M3 LIQUIDITY MODEL</span><h3>Cash-Flow & Working-Capital Exposure</h3><p>Winning a profitable contract can still create a cash crisis. ForgeGov estimates how much capital may be tied up while payroll, vendors, mobilization, and subcontractors are paid before government reimbursement catches up.</p></div></header>
+      <div className="cashflow-risk-banner" data-risk={data.prime_sub.cashflow.risk}><div><span>Working Capital Risk</span><strong>{data.prime_sub.cashflow.risk.replaceAll("_"," ")}</strong></div><div><span>Recommended Capital</span><strong>{currency(data.prime_sub.cashflow.recommended_working_capital)}</strong></div><div><span>Available Capital</span><strong>{currency(data.prime_sub.cashflow.available_working_capital)}</strong></div><div><span>Funding Gap</span><strong>{currency(data.prime_sub.cashflow.working_capital_gap)}</strong></div></div>
+      <div className="pricing-summary-grid">
+        <section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">ASSUMPTIONS</span><h3>Performance & payment timing</h3></div></div>
+          <div className="cashflow-assumption-grid">
+            <label><span>Performance Months</span><input type="number" step="0.5" defaultValue={Number(data.plan.performance_months||12)} onBlur={e=>void mutatePrimeSub({action:"update_cashflow",performance_months:e.target.value},"cashflow")}/></label>
+            <label><span>Government Payment Lag (days)</span><input type="number" min="0" defaultValue={data.plan.payment_lag_days||30} onBlur={e=>void mutatePrimeSub({action:"update_cashflow",payment_lag_days:e.target.value},"cashflow")}/></label>
+            <label><span>Mobilization Cost</span><input type="number" step="100" defaultValue={Number(data.plan.mobilization_cost||0)} onBlur={e=>void mutatePrimeSub({action:"update_cashflow",mobilization_cost:e.target.value},"cashflow")}/></label>
+            <label><span>Available Working Capital</span><input type="number" step="100" defaultValue={Number(data.plan.available_working_capital||0)} onBlur={e=>void mutatePrimeSub({action:"update_cashflow",available_working_capital:e.target.value},"cashflow")}/></label>
+          </div>
+        </section>
+        <section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">EXPOSURE BUILD-UP</span><h3>What consumes capital</h3></div></div>
+          <div className="pricing-cost-breakdown">
+            <div><span>Monthly Delivery Burn</span><strong>{currency(data.prime_sub.cashflow.monthly_delivery_burn)}</strong></div>
+            <div><span>Payment-Lag Exposure</span><strong>{currency(data.prime_sub.cashflow.delivery_lag_exposure)}</strong></div>
+            <div><span>Subcontract Deposits</span><strong>{currency(data.prime_sub.cashflow.subcontract_deposits)}</strong></div>
+            <div><span>Sub Timing Exposure</span><strong>{currency(data.prime_sub.cashflow.subcontract_timing_exposure)}</strong></div>
+            <div><span>Mobilization</span><strong>{currency(data.prime_sub.cashflow.mobilization_cost)}</strong></div>
+            <div><span>Capital Coverage</span><strong>{pct(data.prime_sub.cashflow.coverage_percent)}</strong></div>
+          </div>
+        </section>
+      </div>
+      <section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">LIQUIDITY WARNINGS</span><h3>What could hurt performance</h3></div></div><div className="pricing-guardrails">{data.prime_sub.cashflow.warnings.length?data.prime_sub.cashflow.warnings.map((warning,index)=><article className="warning" key={index}><ShieldAlert/><div><strong>Cash-flow exposure</strong><p>{warning}</p></div></article>):<article className="success"><CheckCircle2/><div><strong>Capital coverage is adequate</strong><p>The current working-capital assumptions do not show a modeled liquidity shortfall.</p></div></article>}</div></section>
     </section>}
 
     {section==="rates"&&<section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">INDIRECT RATE MODEL</span><h3>Opportunity-specific rates</h3></div></div>

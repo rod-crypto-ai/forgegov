@@ -943,3 +943,27 @@ body{background:radial-gradient(circle at 80% -10%,rgba(45,137,255,.08),transpar
 .ptw-history{display:grid;gap:7px}.ptw-history article{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;align-items:center;padding:10px;border:1px solid var(--border);border-radius:10px}.ptw-history time,.ptw-history span{font-size:11px;color:var(--muted)}
 @media(max-width:1050px){.ptw-range-grid{grid-template-columns:1fr}.ptw-intel-grid{grid-template-columns:1fr}.ptw-evidence-table article{grid-template-columns:minmax(0,1fr) auto auto}.ptw-evidence-table article>div:first-child{grid-column:1/-1}}
 @media(max-width:700px){.ptw-header{flex-direction:column}.ptw-actions{justify-content:flex-start}.ptw-position{grid-template-columns:1fr}.ptw-evidence-summary{grid-template-columns:auto 1fr}.ptw-evidence-table article{grid-template-columns:1fr 1fr}.ptw-history article{grid-template-columns:1fr}}
+
+
+/* ForgeGov v3.0-M3 Prime/Subcontractor + Cash-Flow Economics */
+.prime-sub-workspace,.cashflow-workspace{display:grid;gap:14px}
+.m3-explainer{display:flex;justify-content:space-between;gap:18px;align-items:flex-start}
+.m3-explainer h3{margin:4px 0 6px;font-size:22px}.m3-explainer p{max-width:900px;margin:0;color:var(--muted);line-height:1.55}
+.m3-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.m3-kpis article{display:grid;gap:5px;padding:16px;border:1px solid var(--border);border-radius:15px;background:#fff}
+.m3-kpis article.healthy{border-color:#bbf7d0;background:#f8fffa}.m3-kpis article.risk{border-color:#fecaca;background:#fff8f8}
+.m3-kpis span{font-size:10px;font-weight:900;text-transform:uppercase;color:var(--muted);letter-spacing:.04em}.m3-kpis strong{font-size:23px}.m3-kpis small{color:var(--muted)}
+.prime-sub-list{display:grid;gap:8px;max-height:560px;overflow:auto}
+.prime-sub-list article{display:grid;grid-template-columns:minmax(0,1.4fr) auto auto auto auto;gap:14px;align-items:center;padding:12px;border:1px solid var(--border);border-radius:12px}
+.prime-sub-list article>div{display:grid;gap:3px}.prime-sub-list small,.prime-sub-list span{font-size:10px;color:var(--muted)}
+.prime-sub-list .good{color:#166534}.prime-sub-list .bad{color:#9f1239}
+.cashflow-risk-banner{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;border:1px solid var(--border);border-radius:16px;overflow:hidden;background:var(--border)}
+.cashflow-risk-banner>div{display:grid;gap:4px;padding:16px;background:#fff}.cashflow-risk-banner span{font-size:10px;font-weight:900;text-transform:uppercase;color:var(--muted)}.cashflow-risk-banner strong{font-size:19px;text-transform:capitalize}
+.cashflow-risk-banner[data-risk="low"]{border-color:#bbf7d0}.cashflow-risk-banner[data-risk="moderate"]{border-color:#fde68a}.cashflow-risk-banner[data-risk="high"],.cashflow-risk-banner[data-risk="critical"]{border-color:#fecaca}
+.cashflow-risk-banner[data-risk="critical"]>div:first-child,.cashflow-risk-banner[data-risk="high"]>div:first-child{background:#fff1f2;color:#9f1239}
+.cashflow-assumption-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.cashflow-assumption-grid label{display:grid;gap:5px;padding:11px;border:1px solid var(--border);border-radius:11px}
+.cashflow-assumption-grid label span{font-size:11px;font-weight:800;color:var(--muted)}
+.cashflow-assumption-grid input{width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:8px;padding:9px}
+@media(max-width:1100px){.m3-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.cashflow-risk-banner{grid-template-columns:repeat(2,minmax(0,1fr))}.prime-sub-list article{grid-template-columns:minmax(0,1fr) auto auto}.prime-sub-list .prime-sub-main{grid-column:1/-1}}
+@media(max-width:700px){.m3-kpis,.cashflow-risk-banner,.cashflow-assumption-grid{grid-template-columns:1fr}.prime-sub-list article{grid-template-columns:1fr auto}.prime-sub-list article>div:first-child{grid-column:1/-1}}
