@@ -22,7 +22,7 @@ type AuthContextValue = {
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
-const publicPaths = ["/sign-in", "/register", "/forgot-password"];
+const publicPaths = ["/sign-in", "/register", "/forgot-password", "/reset-password", "/verify-email", "/terms", "/privacy"];
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);

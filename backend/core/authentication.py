@@ -1,7 +1,9 @@
 from django.conf import settings
 from django.middleware.csrf import CsrfViewMiddleware
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework_simplejwt.authentication import JWTAuthentication
+
+from .models import UserSecurityProfile
 
 
 class CSRFCheck(CsrfViewMiddleware):
@@ -31,11 +33,20 @@ def enforce_csrf(request) -> None:
 class CookieJWTAuthentication(JWTAuthentication):
     """Authenticate using an Authorization header or secure HttpOnly cookie."""
 
+    def _enforce_account_state(self, user):
+        try:
+            profile = user.forgegov_security
+        except UserSecurityProfile.DoesNotExist:
+            return
+        if profile.account_status != UserSecurityProfile.AccountStatus.ACTIVE:
+            raise AuthenticationFailed("Account access is unavailable.")
+
     def authenticate(self, request):
         header_result = super().authenticate(request)
 
         if header_result is not None:
             user, token = header_result
+            self._enforce_account_state(user)
             raw_org = request.headers.get("X-ForgeGov-Organization") or request.COOKIES.get("forgegov_workspace")
             if raw_org and str(raw_org).isdigit():
                 user._forgegov_organization_id = int(raw_org)
@@ -50,6 +61,7 @@ class CookieJWTAuthentication(JWTAuthentication):
         enforce_csrf(request)
 
         user = self.get_user(validated_token)
+        self._enforce_account_state(user)
         raw_org = request.headers.get("X-ForgeGov-Organization") or request.COOKIES.get("forgegov_workspace")
         if raw_org and str(raw_org).isdigit():
             user._forgegov_organization_id = int(raw_org)

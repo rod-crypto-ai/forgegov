@@ -27,7 +27,7 @@ from .integrations import (
 from .ai import live_web_status
 from .capture_intelligence import build_capture_assessment
 from .win_strategy import build_win_strategy
-from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Task, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, ProjectRoomActivity, OrganizationProfile, NetworkConnection, ProjectRoomInvitation, OrganizationJoinRequest, AwardSyncRun, ConnectorSource
+from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Task, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, ProjectRoomActivity, OrganizationProfile, NetworkConnection, ProjectRoomInvitation, OrganizationJoinRequest, AwardSyncRun, ConnectorSource, AccountActionToken, UserSecurityProfile
 
 User = get_user_model()
 
@@ -78,13 +78,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "3.0.1")
+        self.assertEqual(response.json()["version"], "3.0.2")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "3.0.1")
+        self.assertEqual(response.json()["version"], "3.0.2")
 
 
 class RouterRegressionTests(TestCase):
@@ -2125,3 +2125,225 @@ class WorkspaceConsolidationTests(AuthenticatedApiTestCase):
         response = self.client.get("/api/workflow/opportunities/v301-compliance-summary/command-summary/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["compliance"], {"complete": 1, "total": 2, "percent": 50})
+
+
+@override_settings(
+    REGISTRATION_MODE="public",
+    BUSINESS_EMAIL_REQUIRED=False,
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    FRONTEND_URL="http://localhost:3000",
+    AXES_ENABLED=False,
+)
+class IdentityFoundationTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+
+    def tearDown(self):
+        cache.clear()
+        super().tearDown()
+
+    def test_registration_requires_terms_and_privacy_acceptance(self):
+        response = self.client.post(
+            "/api/auth/register/",
+            {
+                "first_name": "Jane",
+                "last_name": "Doe",
+                "email": "jane@acme.test",
+                "password": "LongSecurePassphrase123",
+                "organization_name": "Acme Federal",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Terms", response.json()["detail"])
+
+    def test_public_registration_requires_email_verification_before_login(self):
+        response = self.client.post(
+            "/api/auth/register/",
+            {
+                "first_name": "Jane",
+                "last_name": "Doe",
+                "email": "jane@acme.test",
+                "password": "LongSecurePassphrase123",
+                "organization_name": "Acme Federal",
+                "accept_terms": True,
+                "accept_privacy": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertFalse(response.json()["email_verified"])
+        user = User.objects.get(email="jane@acme.test")
+        self.assertFalse(user.is_active)
+        self.assertIsNone(user.forgegov_security.email_verified_at)
+        self.assertEqual(len(mail.outbox), 1)
+
+        blocked = self.client.post(
+            "/api/auth/login/",
+            {"email": "jane@acme.test", "password": "LongSecurePassphrase123"},
+            format="json",
+        )
+        self.assertEqual(blocked.status_code, 403)
+        self.assertEqual(blocked.json()["code"], "email_unverified")
+
+    def test_email_verification_activates_identity(self):
+        self.client.post(
+            "/api/auth/register/",
+            {
+                "first_name": "Jane",
+                "last_name": "Doe",
+                "email": "jane@acme.test",
+                "password": "LongSecurePassphrase123",
+                "organization_name": "Acme Federal",
+                "accept_terms": True,
+                "accept_privacy": True,
+            },
+            format="json",
+        )
+        body = mail.outbox[0].body
+        token = body.split("token=", 1)[1].strip()
+        verified = self.client.post("/api/auth/verify-email/", {"token": token}, format="json")
+        self.assertEqual(verified.status_code, 200)
+        self.assertTrue(verified.json()["verified"])
+        user = User.objects.get(email="jane@acme.test")
+        user.refresh_from_db()
+        self.assertTrue(user.is_active)
+        self.assertIsNotNone(user.forgegov_security.email_verified_at)
+        self.assertEqual(user.forgegov_security.lifecycle_status, UserSecurityProfile.LifecycleStatus.ACTIVE)
+
+    def test_same_business_domain_routes_to_join_request_instead_of_duplicate_org(self):
+        existing = Organization.objects.create(name="Acme Federal", slug="acme-federal", business_domain="acme.test")
+        owner = User.objects.create_user(username="owner@acme.test", email="owner@acme.test", password="LongSecurePassphrase123")
+        Membership.objects.create(organization=existing, user=owner, role=Membership.Role.OWNER)
+
+        response = self.client.post(
+            "/api/auth/register/",
+            {
+                "first_name": "Jane",
+                "last_name": "Doe",
+                "email": "jane@acme.test",
+                "password": "AnotherSecurePassphrase123",
+                "organization_name": "Duplicate Acme",
+                "accept_terms": True,
+                "accept_privacy": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(Organization.objects.filter(business_domain="acme.test").count(), 1)
+        user = User.objects.get(email="jane@acme.test")
+        self.assertEqual(user.forgegov_security.pending_organization_id, existing.id)
+        self.assertFalse(OrganizationJoinRequest.objects.filter(organization=existing, user=user, status="pending").exists())
+        self.assertFalse(Membership.objects.filter(organization=existing, user=user).exists())
+
+        token = mail.outbox[0].body.split("token=", 1)[1].strip()
+        verified = self.client.post("/api/auth/verify-email/", {"token": token}, format="json")
+        self.assertEqual(verified.status_code, 200)
+        self.assertEqual(verified.json()["next_step"], "pending_organization_approval")
+        self.assertTrue(OrganizationJoinRequest.objects.filter(organization=existing, user=user, status="pending").exists())
+
+    @override_settings(REGISTRATION_MODE="private_beta")
+    def test_private_beta_requires_company_invitation(self):
+        response = self.client.post(
+            "/api/auth/register/",
+            {
+                "first_name": "Jane",
+                "last_name": "Doe",
+                "email": "jane@acme.test",
+                "password": "LongSecurePassphrase123",
+                "organization_name": "Acme Federal",
+                "accept_terms": True,
+                "accept_privacy": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["registration_mode"], "private_beta")
+
+    @override_settings(REGISTRATION_MODE="private_beta")
+    def test_invitation_registration_is_email_verified_and_enters_workspace(self):
+        organization = Organization.objects.create(name="Prime Co", slug="prime-co", business_domain="prime.test")
+        owner = User.objects.create_user(username="owner@prime.test", email="owner@prime.test", password="LongSecurePassphrase123")
+        Membership.objects.create(organization=organization, user=owner, role=Membership.Role.OWNER)
+        invitation = Invitation.objects.create(
+            organization=organization,
+            email="new@prime.test",
+            role=Membership.Role.CAPTURE,
+            token="secure-invite-token",
+            expires_at=timezone.now() + timedelta(days=7),
+        )
+        response = self.client.post(
+            "/api/auth/register/",
+            {
+                "first_name": "New",
+                "last_name": "User",
+                "email": "new@prime.test",
+                "password": "LongSecurePassphrase123",
+                "invitation_token": invitation.token,
+                "accept_terms": True,
+                "accept_privacy": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.json()["email_verified"])
+        user = User.objects.get(email="new@prime.test")
+        self.assertTrue(user.is_active)
+        self.assertTrue(Membership.objects.filter(user=user, organization=organization, role=Membership.Role.CAPTURE).exists())
+
+    def test_password_reset_request_is_generic_and_reset_is_one_time(self):
+        user = User.objects.create_user(
+            username="reset@acme.test",
+            email="reset@acme.test",
+            password="OriginalSecurePassphrase123",
+            is_active=True,
+        )
+        UserSecurityProfile.objects.create(
+            user=user,
+            lifecycle_status=UserSecurityProfile.LifecycleStatus.ACTIVE,
+            email_verified_at=timezone.now(),
+        )
+        missing = self.client.post("/api/auth/password-reset/request/", {"email": "nobody@acme.test"}, format="json")
+        existing = self.client.post("/api/auth/password-reset/request/", {"email": "reset@acme.test"}, format="json")
+        self.assertEqual(missing.status_code, 200)
+        self.assertEqual(existing.status_code, 200)
+        self.assertEqual(missing.json()["detail"], existing.json()["detail"])
+        self.assertEqual(len(mail.outbox), 1)
+
+        token = mail.outbox[0].body.split("token=", 1)[1].strip()
+        changed = self.client.post(
+            "/api/auth/password-reset/confirm/",
+            {"token": token, "password": "ReplacementSecurePassphrase123"},
+            format="json",
+        )
+        self.assertEqual(changed.status_code, 200)
+        user.refresh_from_db()
+        self.assertTrue(user.check_password("ReplacementSecurePassphrase123"))
+
+        replay = self.client.post(
+            "/api/auth/password-reset/confirm/",
+            {"token": token, "password": "ThirdSecurePassphrase123"},
+            format="json",
+        )
+        self.assertEqual(replay.status_code, 400)
+
+    def test_security_overview_reports_identity_state(self):
+        user = User.objects.create_user(username="secure@acme.test", email="secure@acme.test", password="LongSecurePassphrase123")
+        organization = Organization.objects.create(name="Secure Co", slug="secure-co")
+        Membership.objects.create(organization=organization, user=user, role=Membership.Role.OWNER)
+        UserSecurityProfile.objects.create(
+            user=user,
+            lifecycle_status=UserSecurityProfile.LifecycleStatus.ACTIVE,
+            email_verified_at=timezone.now(),
+            terms_accepted_at=timezone.now(),
+            terms_version="2026-08-12",
+            privacy_accepted_at=timezone.now(),
+            privacy_version="2026-08-12",
+        )
+        client = APIClient()
+        client.force_authenticate(user)
+        response = client.get("/api/auth/security/")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["email_verified"])
+        self.assertEqual(response.json()["account_status"], "active")

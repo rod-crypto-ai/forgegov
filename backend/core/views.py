@@ -139,7 +139,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "3.0.1"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "3.0.2"})
 
 
 @api_view(["GET", "POST"])
@@ -2537,6 +2537,13 @@ def organization_join_request_response(request, request_id: int):
     action = str(request.data.get("action") or "decline")
     if action == "approve":
         Membership.objects.update_or_create(organization=row.organization, user=row.user, defaults={"role": row.requested_role, "active": True})
+        try:
+            security = row.user.forgegov_security
+            security.lifecycle_status = "active"
+            security.pending_organization = None
+            security.save(update_fields=["lifecycle_status", "pending_organization", "updated_at"])
+        except Exception:
+            pass
         row.status = OrganizationJoinRequest.Status.APPROVED
     else:
         row.status = OrganizationJoinRequest.Status.DECLINED

@@ -1,11 +1,15 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
-from .models import Membership
+from .models import Membership, Organization
 
 
 def active_membership(user):
     if not user or not user.is_authenticated:
         return None
-    queryset = user.organization_memberships.filter(active=True).select_related("organization")
+    queryset = user.organization_memberships.filter(
+        active=True,
+    ).exclude(
+        organization__status__in=[Organization.Status.SUSPENDED, Organization.Status.CANCELLED],
+    ).select_related("organization")
     preferred = getattr(user, "_forgegov_organization_id", None)
     if preferred:
         selected = queryset.filter(organization_id=preferred).first()

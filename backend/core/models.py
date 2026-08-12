@@ -13,10 +13,19 @@ class TimeStampedModel(models.Model):
 
 
 class Organization(TimeStampedModel):
+    class Status(models.TextChoices):
+        TRIAL = "trial", "Trial"
+        ACTIVE = "active", "Active"
+        PAST_DUE = "past_due", "Past Due"
+        SUSPENDED = "suspended", "Suspended"
+        CANCELLED = "cancelled", "Cancelled"
+
     name = models.CharField(max_length=255)
     slug = models.SlugField(unique=True)
     uei = models.CharField(max_length=32, blank=True)
     cage_code = models.CharField(max_length=16, blank=True)
+    business_domain = models.CharField(max_length=255, blank=True, null=True, unique=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
 
     def __str__(self):
         return self.name
@@ -28,7 +37,9 @@ class Membership(TimeStampedModel):
         ADMIN = "admin", "Administrator"
         CAPTURE = "capture", "Capture Manager"
         BD = "bd", "Business Development"
-        PROPOSAL = "proposal", "Proposal Writer"
+        PROPOSAL = "proposal", "Proposal Manager"
+        PRICING = "pricing", "Pricing Manager"
+        CONTRIBUTOR = "contributor", "Contributor"
         VIEWER = "viewer", "Read Only"
 
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="memberships")
@@ -41,6 +52,58 @@ class Membership(TimeStampedModel):
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=("organization", "user"), name="unique_organization_membership"),
+        ]
+
+
+class UserSecurityProfile(TimeStampedModel):
+    class LifecycleStatus(models.TextChoices):
+        PENDING_EMAIL = "pending_email_verification", "Pending Email Verification"
+        EMAIL_VERIFIED = "email_verified", "Email Verified"
+        ONBOARDING = "onboarding", "Onboarding"
+        PENDING_ORGANIZATION = "pending_organization", "Pending Organization Approval"
+        ACTIVE = "active", "Active"
+
+    class AccountStatus(models.TextChoices):
+        ACTIVE = "active", "Active"
+        SUSPENDED = "suspended", "Suspended"
+        LOCKED = "locked", "Locked"
+        DISABLED = "disabled", "Disabled"
+        DELETION_PENDING = "deletion_pending", "Deletion Pending"
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="forgegov_security")
+    lifecycle_status = models.CharField(max_length=40, choices=LifecycleStatus.choices, default=LifecycleStatus.PENDING_EMAIL)
+    account_status = models.CharField(max_length=30, choices=AccountStatus.choices, default=AccountStatus.ACTIVE)
+    email_verified_at = models.DateTimeField(null=True, blank=True)
+    terms_accepted_at = models.DateTimeField(null=True, blank=True)
+    terms_version = models.CharField(max_length=40, blank=True)
+    privacy_accepted_at = models.DateTimeField(null=True, blank=True)
+    privacy_version = models.CharField(max_length=40, blank=True)
+    registration_email_domain = models.CharField(max_length=255, blank=True)
+    pending_organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.SET_NULL, related_name="pending_identity_profiles")
+    last_password_change_at = models.DateTimeField(null=True, blank=True)
+    last_login_ip = models.GenericIPAddressField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["user_id"]
+
+
+class AccountActionToken(TimeStampedModel):
+    class Purpose(models.TextChoices):
+        EMAIL_VERIFICATION = "email_verification", "Email Verification"
+        PASSWORD_RESET = "password_reset", "Password Reset"
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="forgegov_account_tokens")
+    purpose = models.CharField(max_length=30, choices=Purpose.choices)
+    token_hash = models.CharField(max_length=64, unique=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+    requested_ip = models.GenericIPAddressField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "purpose", "-created_at"], name="accttoken_user_purp_idx"),
+            models.Index(fields=["purpose", "expires_at"], name="accttoken_purp_exp_idx"),
         ]
 
 

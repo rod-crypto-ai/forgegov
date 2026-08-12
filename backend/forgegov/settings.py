@@ -1,6 +1,7 @@
 from pathlib import Path
 from datetime import timedelta
 import os
+import sys
 from urllib.parse import urlparse
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
@@ -42,6 +43,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",
+    "axes",
     "core",
 ]
 
@@ -56,6 +58,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "axes.middleware.AxesMiddleware",
 ]
 
 ROOT_URLCONF = "forgegov.urls"
@@ -81,10 +84,28 @@ DATABASES = {
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 15}},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
+
+
+AUTHENTICATION_BACKENDS = [
+    "axes.backends.AxesStandaloneBackend",
+    "django.contrib.auth.backends.ModelBackend",
+]
+
+# Login abuse protection uses the existing shared Redis cache for throughput.
+# Disabled automatically during Django test runs so security counters cannot
+# leak between isolated test cases.
+AXES_ENABLED = os.getenv("AXES_ENABLED", "false" if "test" in sys.argv else "true").lower() == "true"
+AXES_HANDLER = "axes.handlers.cache.AxesCacheHandler"
+AXES_CACHE = "default"
+AXES_FAILURE_LIMIT = int(os.getenv("AXES_FAILURE_LIMIT", "5"))
+AXES_COOLOFF_TIME = timedelta(minutes=int(os.getenv("AXES_COOLOFF_MINUTES", "15")))
+AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]
+AXES_HTTP_RESPONSE_CODE = 429
+AXES_RESET_ON_SUCCESS = True
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
@@ -178,12 +199,26 @@ OPENAI_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "1800"))
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 PUBLIC_REGISTRATION_ENABLED = os.getenv("PUBLIC_REGISTRATION_ENABLED", "true").lower() == "true"
+REGISTRATION_MODE = os.getenv(
+    "REGISTRATION_MODE",
+    "public" if PUBLIC_REGISTRATION_ENABLED else "private_beta",
+).strip().lower()
+if REGISTRATION_MODE not in {"public", "private_beta", "invite_only", "closed"}:
+    raise ImproperlyConfigured("REGISTRATION_MODE must be public, private_beta, invite_only, or closed.")
+BUSINESS_EMAIL_REQUIRED = os.getenv("BUSINESS_EMAIL_REQUIRED", "false").lower() == "true"
+TERMS_VERSION = os.getenv("TERMS_VERSION", "2026-08-12")
+PRIVACY_VERSION = os.getenv("PRIVACY_VERSION", "2026-08-12")
+EMAIL_VERIFICATION_TOKEN_MINUTES = int(os.getenv("EMAIL_VERIFICATION_TOKEN_MINUTES", "60"))
+PASSWORD_RESET_TOKEN_MINUTES = int(os.getenv("PASSWORD_RESET_TOKEN_MINUTES", "30"))
 CSRF_TRUSTED_ORIGINS = [x.strip() for x in os.getenv("CSRF_TRUSTED_ORIGINS", FRONTEND_URL).split(",") if x.strip()]
 CORS_ALLOW_CREDENTIALS = True
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
-SESSION_COOKIE_SAMESITE = "None" if not DEBUG else "Lax"
-CSRF_COOKIE_SAMESITE = "None" if not DEBUG else "Lax"
+AUTH_COOKIE_SAMESITE = os.getenv("AUTH_COOKIE_SAMESITE", "Lax")
+SESSION_COOKIE_SAMESITE = AUTH_COOKIE_SAMESITE
+CSRF_COOKIE_SAMESITE = AUTH_COOKIE_SAMESITE
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = False
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "false").lower() == "true"
 SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "0"))

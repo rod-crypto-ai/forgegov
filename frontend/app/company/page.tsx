@@ -13,7 +13,7 @@ type Partner={id:number;requester:number;requester_name:string;recipient:number;
 type IntegrationStatus={email?:{configured:boolean;backend:string;from_email:string}};
 type JoinRequest={id:number;organization_name:string;user_email:string;email_domain:string;requested_role:string;status:string;created_at:string};
 const split=(value:string)=>value.split(",").map(v=>v.trim()).filter(Boolean);
-const roles=["admin","capture","bd","proposal","viewer"];
+const roles=["admin","capture","bd","proposal","pricing","contributor","viewer"];
 
 export default function CompanyHubPage(){
  const {session}=useAuth(); const admin=["owner","admin"].includes(session?.role||"");

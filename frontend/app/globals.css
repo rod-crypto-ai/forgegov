@@ -994,3 +994,15 @@ body{background:radial-gradient(circle at 80% -10%,rgba(45,137,255,.08),transpar
 .consolidated-capture-tab{display:grid;gap:14px}.compact-capture-notes{margin-top:0}
 @media(max-width:980px){.opportunity-command-heading{flex-direction:column}.opportunity-command-actions{justify-content:flex-start}.opportunity-command-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:620px){.opportunity-command-grid{grid-template-columns:1fr}}
+
+
+/* ForgeGov v3.0.2 — identity & account foundation */
+.identity-heading{display:flex;align-items:flex-start;gap:12px;margin:4px 0 14px}.identity-heading h1{margin:0 0 5px}.identity-heading p{margin:0;color:var(--muted);line-height:1.5}
+.auth-card form label small{display:block;margin-top:4px;color:var(--muted);font-size:10px;line-height:1.4}
+.auth-consent-box{display:grid;gap:8px;padding:12px;border:1px solid var(--border);border-radius:12px;background:#f8fafc}.auth-consent-box label{display:flex!important;grid-template-columns:none!important;align-items:flex-start;gap:8px;font-size:11px;font-weight:600!important;color:var(--text)!important}.auth-consent-box input{width:auto!important;margin-top:2px}.auth-consent-box a{font-weight:800;text-decoration:none}
+.identity-trust-row{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}.identity-trust-row span{display:inline-flex;align-items:center;gap:5px;font-size:10px;color:var(--muted)}.identity-trust-row svg{color:#166534}
+.identity-feature-list{display:grid;gap:8px;margin:14px 0}.identity-feature-list span{display:flex;align-items:center;gap:8px;padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:#f8fafc;font-size:12px;font-weight:750}
+.auth-link-button{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}.auth-password-row{display:flex;justify-content:flex-end;margin-top:-4px}.auth-password-row a{font-size:11px;font-weight:800;text-decoration:none}
+.identity-security-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.identity-security-list{display:grid;gap:7px;margin-bottom:12px}.identity-security-list>div{display:flex;justify-content:space-between;gap:14px;padding:10px;border:1px solid var(--border);border-radius:10px}.identity-security-list span{font-size:11px;color:var(--muted)}.identity-security-list strong{text-transform:capitalize;font-size:12px}.identity-security-list .security-good{color:#166534}
+.policy-page{max-width:860px;margin:0 auto;padding:48px 20px}.policy-page article{padding:28px;border:1px solid var(--border);border-radius:18px;background:#fff;box-shadow:var(--shadow)}.policy-page h1{margin:5px 0 10px}.policy-page p,.policy-page li{color:var(--muted);line-height:1.6}.policy-page li+li{margin-top:8px}
+@media(max-width:780px){.identity-security-grid{grid-template-columns:1fr}.identity-heading{flex-direction:column}.identity-trust-row{display:grid}}

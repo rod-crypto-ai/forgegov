@@ -16,7 +16,27 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 
 from .authentication import enforce_csrf
-from .models import AuditLog, CollaborationNotification, Invitation, Membership, Organization
+from .identity import (
+    consume_action_token,
+    email_domain,
+    finalize_email_verification,
+    is_public_email_domain,
+    normalize_email,
+    organization_for_domain,
+    security_profile,
+    send_password_reset_email,
+    send_verification_email,
+)
+from .models import (
+    AccountActionToken,
+    AuditLog,
+    CollaborationNotification,
+    Invitation,
+    Membership,
+    Organization,
+    OrganizationJoinRequest,
+    UserSecurityProfile,
+)
 from .permissions import IsOrganizationAdmin, active_membership
 from .serializers import AuditLogSerializer, InvitationSerializer, MembershipSerializer, UserSerializer
 from .throttles import LoginThrottle, RegistrationThrottle
@@ -30,7 +50,7 @@ def _cookie_settings():
     return {
         "httponly": True,
         "secure": secure,
-        "samesite": "None" if secure else "Lax",
+        "samesite": settings.AUTH_COOKIE_SAMESITE,
         "path": "/",
     }
 
@@ -45,14 +65,22 @@ def _set_auth_cookies(response, user, refresh_token=None):
 
 
 def _clear_auth_cookies(response):
-    response.delete_cookie(settings.AUTH_ACCESS_COOKIE_NAME, path="/", samesite="None" if not settings.DEBUG else "Lax")
-    response.delete_cookie(settings.AUTH_REFRESH_COOKIE_NAME, path="/", samesite="None" if not settings.DEBUG else "Lax")
+    response.delete_cookie(settings.AUTH_ACCESS_COOKIE_NAME, path="/", samesite=settings.AUTH_COOKIE_SAMESITE)
+    response.delete_cookie(settings.AUTH_REFRESH_COOKIE_NAME, path="/", samesite=settings.AUTH_COOKIE_SAMESITE)
     return response
 
 
 def _client_ip(request):
     forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
     return (forwarded.split(",")[0].strip() if forwarded else request.META.get("REMOTE_ADDR")) or None
+
+
+def _masked_identifier(email: str) -> str:
+    value = normalize_email(email)
+    if "@" not in value:
+        return "***"
+    local, domain = value.split("@", 1)
+    return f"{local[:2]}***@{domain}"
 
 
 def audit(request, action, organization=None, object_type="", object_id="", metadata=None):
@@ -73,22 +101,44 @@ def csrf_token(request):
     return Response({"csrfToken": get_token(request)})
 
 
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def registration_config(request):
+    return Response({
+        "mode": settings.REGISTRATION_MODE,
+        "public_registration": settings.REGISTRATION_MODE == "public",
+        "business_email_required": settings.BUSINESS_EMAIL_REQUIRED,
+        "terms_version": settings.TERMS_VERSION,
+        "privacy_version": settings.PRIVACY_VERSION,
+        "password_min_length": 15,
+    })
+
+
 @api_view(["POST"])
 @permission_classes([AllowAny])
 @throttle_classes([RegistrationThrottle])
 def register(request):
     enforce_csrf(request)
-    email = str(request.data.get("email") or "").strip().lower()
+    email = normalize_email(request.data.get("email"))
     password = str(request.data.get("password") or "")
     first_name = str(request.data.get("first_name") or "").strip()
     last_name = str(request.data.get("last_name") or "").strip()
     organization_name = str(request.data.get("organization_name") or "").strip()
     invitation_token = str(request.data.get("invitation_token") or "").strip()
+    accepted_terms = bool(request.data.get("accept_terms"))
+    accepted_privacy = bool(request.data.get("accept_privacy"))
 
-    if not email or not password:
-        return Response({"detail": "Email and password are required."}, status=status.HTTP_400_BAD_REQUEST)
+    if not first_name or not last_name or not email or not password:
+        return Response({"detail": "Full name, email, and password are required."}, status=status.HTTP_400_BAD_REQUEST)
+    if not accepted_terms or not accepted_privacy:
+        return Response({"detail": "You must accept the ForgeGov Terms of Use and Privacy Policy."}, status=status.HTTP_400_BAD_REQUEST)
     if User.objects.filter(email__iexact=email).exists():
         return Response({"detail": "An account already exists for this email."}, status=status.HTTP_400_BAD_REQUEST)
+
+    domain = email_domain(email)
+    if settings.BUSINESS_EMAIL_REQUIRED and is_public_email_domain(domain) and not invitation_token:
+        return Response({"detail": "Use a business email address or register through a company invitation."}, status=status.HTTP_400_BAD_REQUEST)
+
     try:
         validate_password(password)
     except ValidationError as exc:
@@ -108,41 +158,228 @@ def register(request):
             if invitation.role == Membership.Role.OWNER:
                 return Response({"detail": "Owner access cannot be granted through a team invitation."}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not invitation and not settings.PUBLIC_REGISTRATION_ENABLED:
-            return Response({"detail": "Registration requires a valid team invitation."}, status=status.HTTP_403_FORBIDDEN)
+        if not invitation and settings.REGISTRATION_MODE in {"private_beta", "invite_only", "closed"}:
+            return Response({
+                "detail": "ForgeGov registration is currently controlled. A valid company invitation is required.",
+                "registration_mode": settings.REGISTRATION_MODE,
+            }, status=status.HTTP_403_FORBIDDEN)
 
-        username = email
-        user = User.objects.create_user(username=username, email=email, password=password, first_name=first_name, last_name=last_name)
+        existing_organization = None if invitation else organization_for_domain(domain)
+        if not invitation and not existing_organization:
+            if not organization_name:
+                organization_name = f"{first_name}'s Workspace"
+            if Organization.objects.filter(name__iexact=organization_name).exists():
+                return Response(
+                    {"detail": "That company already has a ForgeGov workspace. Use your company email to request access."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+        now = timezone.now()
+        # A valid email-bound invitation proves possession of the mailbox, while
+        # public self-registration still requires a separate email verification.
+        email_verified_by_invite = bool(invitation)
+        user = User.objects.create_user(
+            username=email,
+            email=email,
+            password=password,
+            first_name=first_name,
+            last_name=last_name,
+            is_active=email_verified_by_invite,
+        )
+        security = UserSecurityProfile.objects.create(
+            user=user,
+            lifecycle_status=(
+                UserSecurityProfile.LifecycleStatus.ACTIVE
+                if email_verified_by_invite
+                else UserSecurityProfile.LifecycleStatus.PENDING_EMAIL
+            ),
+            account_status=UserSecurityProfile.AccountStatus.ACTIVE,
+            email_verified_at=now if email_verified_by_invite else None,
+            terms_accepted_at=now,
+            terms_version=settings.TERMS_VERSION,
+            privacy_accepted_at=now,
+            privacy_version=settings.PRIVACY_VERSION,
+            registration_email_domain=domain,
+            pending_organization=None,
+            last_password_change_at=now,
+        )
+
+        organization = None
+        role = None
+        pending_organization = None
+
         if invitation:
             organization = invitation.organization
             role = invitation.role
             invitation.status = Invitation.Status.ACCEPTED
             invitation.accepted_by = user
-            invitation.responded_at = timezone.now()
+            invitation.responded_at = now
             invitation.save(update_fields=["status", "accepted_by", "responded_at", "updated_at"])
+            Membership.objects.create(
+                organization=organization,
+                user=user,
+                role=role,
+                job_title=invitation.job_title,
+                department=invitation.department,
+            )
         else:
-            if not organization_name:
-                organization_name = f"{first_name or email.split('@')[0]}'s Workspace"
-            if Organization.objects.filter(name__iexact=organization_name).exists():
-                return Response({"detail": "That company already has a ForgeGov workspace. Ask its owner for an invitation."}, status=status.HTTP_409_CONFLICT)
-            base_slug = slugify(organization_name) or "workspace"
-            slug = base_slug
-            suffix = 2
-            while Organization.objects.filter(slug=slug).exists():
-                slug = f"{base_slug}-{suffix}"
-                suffix += 1
-            organization = Organization.objects.create(name=organization_name, slug=slug)
-            role = Membership.Role.OWNER
-        Membership.objects.create(organization=organization, user=user, role=role, job_title=invitation.job_title if invitation else "", department=invitation.department if invitation else "")
+            if existing_organization:
+                pending_organization = existing_organization
+                security.pending_organization = existing_organization
+                security.save(update_fields=["pending_organization", "updated_at"])
+            else:
+                base_slug = slugify(organization_name) or "workspace"
+                slug = base_slug
+                suffix = 2
+                while Organization.objects.filter(slug=slug).exists():
+                    slug = f"{base_slug}-{suffix}"
+                    suffix += 1
+                organization = Organization.objects.create(
+                    name=organization_name,
+                    slug=slug,
+                    business_domain=None if is_public_email_domain(domain) else domain or None,
+                    status=Organization.Status.TRIAL,
+                )
+                role = Membership.Role.OWNER
+                Membership.objects.create(organization=organization, user=user, role=role)
 
-    response = Response({
-        "user": UserSerializer(user).data,
-        "organization": {"id": organization.id, "name": organization.name, "slug": organization.slug},
-        "role": role,
+    audit(
+        request,
+        "security.registration_created",
+        organization or pending_organization,
+        "user",
+        user.id,
+        {
+            "identifier": _masked_identifier(email),
+            "registration_mode": settings.REGISTRATION_MODE,
+            "invitation": bool(invitation),
+            "pending_organization": pending_organization.id if pending_organization else None,
+            "terms_version": settings.TERMS_VERSION,
+            "privacy_version": settings.PRIVACY_VERSION,
+        },
+    )
+
+    if invitation:
+        create_notification(
+            organization=organization,
+            user=user,
+            title="Welcome to ForgeGov",
+            message=f"You joined {organization.name}.",
+            kind="membership",
+            link="/company",
+        )
+        response = Response({
+            "user": UserSerializer(user).data,
+            "organization": {"id": organization.id, "name": organization.name, "slug": organization.slug},
+            "role": role,
+            "email_verified": True,
+            "next_step": "workspace",
+        }, status=status.HTTP_201_CREATED)
+        return _set_auth_cookies(response, user)
+
+    delivered = send_verification_email(user=user, request_ip=_client_ip(request))
+    return Response({
+        "email": email,
+        "email_verified": False,
+        "verification_email_sent": delivered,
+        "next_step": "verify_email",
+        "pending_organization": (
+            {"id": pending_organization.id, "name": pending_organization.name}
+            if pending_organization else None
+        ),
     }, status=status.HTTP_201_CREATED)
-    audit(request, "auth.register", organization, "user", user.id, {"email": email})
-    create_notification(organization=organization, user=user, title="Welcome to ForgeGov", message=f"You joined {organization.name}.", kind="membership", link="/company")
-    return _set_auth_cookies(response, user)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([RegistrationThrottle])
+def resend_verification(request):
+    enforce_csrf(request)
+    email = normalize_email(request.data.get("email"))
+    user = User.objects.filter(email__iexact=email).first()
+    # Generic response prevents account enumeration.
+    if user:
+        profile = security_profile(user)
+        if not profile.email_verified_at:
+            delivered = send_verification_email(user=user, request_ip=_client_ip(request))
+            audit(request, "security.email_verification_resent", None, "user", user.id, {"identifier": _masked_identifier(email), "delivered": delivered})
+    return Response({"detail": "If the account is eligible, a verification email has been sent."})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def verify_email(request):
+    enforce_csrf(request)
+    raw_token = str(request.data.get("token") or "").strip()
+    row = consume_action_token(raw_token, AccountActionToken.Purpose.EMAIL_VERIFICATION)
+    if not row:
+        return Response({"detail": "This verification link is invalid or expired."}, status=status.HTTP_400_BAD_REQUEST)
+    profile, next_step = finalize_email_verification(row.user)
+    membership = active_membership(row.user)
+    organization = membership.organization if membership else None
+    audit(request, "security.email_verified", organization, "user", row.user.id, {"next_step": next_step})
+    return Response({
+        "verified": True,
+        "next_step": next_step,
+        "organization": (
+            {"id": organization.id, "name": organization.name, "slug": organization.slug}
+            if organization else None
+        ),
+        "lifecycle_status": profile.lifecycle_status,
+    })
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([RegistrationThrottle])
+def password_reset_request(request):
+    enforce_csrf(request)
+    email = normalize_email(request.data.get("email"))
+    user = User.objects.filter(email__iexact=email).first()
+    if user:
+        profile = security_profile(user, legacy_verified=True)
+        if profile.email_verified_at and profile.account_status == UserSecurityProfile.AccountStatus.ACTIVE:
+            delivered = send_password_reset_email(user=user, request_ip=_client_ip(request))
+            audit(request, "security.password_reset_requested", None, "user", user.id, {"identifier": _masked_identifier(email), "delivered": delivered})
+    return Response({"detail": "If an eligible ForgeGov account exists, password reset instructions have been sent."})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([RegistrationThrottle])
+def password_reset_confirm(request):
+    enforce_csrf(request)
+    raw_token = str(request.data.get("token") or "").strip()
+    new_password = str(request.data.get("password") or "")
+    row = AccountActionToken.objects.select_related("user").filter(
+        token_hash=__import__("hashlib").sha256(raw_token.encode("utf-8")).hexdigest(),
+        purpose=AccountActionToken.Purpose.PASSWORD_RESET,
+        used_at__isnull=True,
+        expires_at__gt=timezone.now(),
+    ).first()
+    if not row:
+        return Response({"detail": "This password reset link is invalid or expired."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        validate_password(new_password, user=row.user)
+    except ValidationError as exc:
+        return Response({"detail": " ".join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
+    now = timezone.now()
+    row.user.set_password(new_password)
+    row.user.save(update_fields=["password"])
+    row.used_at = now
+    row.save(update_fields=["used_at", "updated_at"])
+    profile = security_profile(row.user, legacy_verified=True)
+    profile.last_password_change_at = now
+    profile.save(update_fields=["last_password_change_at", "updated_at"])
+    # Invalidate outstanding refresh tokens where possible.
+    try:
+        from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
+        for token in OutstandingToken.objects.filter(user=row.user):
+            BlacklistedToken.objects.get_or_create(token=token)
+    except Exception:
+        pass
+    audit(request, "security.password_changed_via_reset", None, "user", row.user.id)
+    return Response({"reset": True, "detail": "Password changed. Sign in with your new password."})
 
 
 @api_view(["POST"])
@@ -150,22 +387,57 @@ def register(request):
 @throttle_classes([LoginThrottle])
 def login(request):
     enforce_csrf(request)
-    email = str(request.data.get("email") or "").strip().lower()
+    email = normalize_email(request.data.get("email"))
     password = str(request.data.get("password") or "")
     user = authenticate(request, username=email, password=password)
+
     if not user:
-        return Response({"detail": "Invalid email or password."}, status=status.HTTP_401_UNAUTHORIZED)
-    if not user.is_active:
-        return Response({"detail": "This account is disabled."}, status=status.HTTP_403_FORBIDDEN)
+        candidate = User.objects.filter(email__iexact=email).first()
+        if candidate and candidate.check_password(password):
+            profile = security_profile(candidate, legacy_verified=False)
+            if not profile.email_verified_at:
+                audit(request, "security.login_blocked_unverified", None, "user", candidate.id, {"identifier": _masked_identifier(email)})
+                return Response({"detail": "Verify your email before signing in.", "code": "email_unverified"}, status=status.HTTP_403_FORBIDDEN)
+            if profile.account_status != UserSecurityProfile.AccountStatus.ACTIVE:
+                audit(request, "security.login_blocked_account_state", None, "user", candidate.id, {"state": profile.account_status})
+                return Response({"detail": "This account is not available. Contact your ForgeGov administrator.", "code": "account_unavailable"}, status=status.HTTP_403_FORBIDDEN)
+        audit(request, "security.login_failed", None, "user", "", {"identifier": _masked_identifier(email)})
+        return Response({"detail": "Email or password is incorrect."}, status=status.HTTP_401_UNAUTHORIZED)
+
+    profile = security_profile(user, legacy_verified=True)
+    if profile.account_status != UserSecurityProfile.AccountStatus.ACTIVE:
+        audit(request, "security.login_blocked_account_state", None, "user", user.id, {"state": profile.account_status})
+        return Response({"detail": "This account is not available. Contact your ForgeGov administrator.", "code": "account_unavailable"}, status=status.HTTP_403_FORBIDDEN)
+
     membership = active_membership(user)
     if not membership:
-        return Response({"detail": "This account does not belong to a ForgeGov workspace."}, status=status.HTTP_403_FORBIDDEN)
+        pending = OrganizationJoinRequest.objects.filter(user=user, status=OrganizationJoinRequest.Status.PENDING).select_related("organization").first()
+        if pending:
+            return Response({
+                "detail": f"Your request to join {pending.organization.name} is awaiting company approval.",
+                "code": "organization_pending",
+            }, status=status.HTTP_403_FORBIDDEN)
+        return Response({"detail": "This account does not belong to an active ForgeGov workspace.", "code": "no_workspace"}, status=status.HTTP_403_FORBIDDEN)
+
+    if membership.organization.status in {Organization.Status.SUSPENDED, Organization.Status.CANCELLED}:
+        audit(request, "security.login_blocked_organization", membership.organization, "user", user.id, {"state": membership.organization.status})
+        return Response({"detail": "This company workspace is not currently available.", "code": "organization_unavailable"}, status=status.HTTP_403_FORBIDDEN)
+
+    profile.last_login_ip = _client_ip(request)
+    profile.lifecycle_status = UserSecurityProfile.LifecycleStatus.ACTIVE
+    profile.save(update_fields=["last_login_ip", "lifecycle_status", "updated_at"])
+
     response = Response({
         "user": UserSerializer(user).data,
-        "organization": {"id": membership.organization_id, "name": membership.organization.name, "slug": membership.organization.slug},
+        "organization": {
+            "id": membership.organization_id,
+            "name": membership.organization.name,
+            "slug": membership.organization.slug,
+            "status": membership.organization.status,
+        },
         "role": membership.role,
     })
-    audit(request, "auth.login", membership.organization, "user", user.id)
+    audit(request, "security.login_success", membership.organization, "user", user.id)
     return _set_auth_cookies(response, user)
 
 
@@ -179,6 +451,9 @@ def refresh(request):
     try:
         refresh_token = RefreshToken(raw)
         user = User.objects.get(pk=refresh_token["user_id"], is_active=True)
+        profile = security_profile(user, legacy_verified=True)
+        if profile.account_status != UserSecurityProfile.AccountStatus.ACTIVE:
+            raise User.DoesNotExist
     except (TokenError, User.DoesNotExist, KeyError):
         response = Response({"detail": "Refresh token is invalid or expired."}, status=status.HTTP_401_UNAUTHORIZED)
         return _clear_auth_cookies(response)
@@ -194,13 +469,38 @@ def refresh(request):
 def logout(request):
     enforce_csrf(request)
     raw = request.COOKIES.get(settings.AUTH_REFRESH_COOKIE_NAME)
+    user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
+    organization = active_membership(user).organization if user and active_membership(user) else None
     if raw:
         try:
             RefreshToken(raw).blacklist()
         except Exception:
             pass
+    if user:
+        audit(request, "security.logout", organization, "user", user.id)
     response = Response({"signed_out": True})
     return _clear_auth_cookies(response)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def security_overview(request):
+    profile = security_profile(request.user, legacy_verified=True)
+    membership = active_membership(request.user)
+    return Response({
+        "email": request.user.email,
+        "email_verified": bool(profile.email_verified_at),
+        "email_verified_at": profile.email_verified_at,
+        "lifecycle_status": profile.lifecycle_status,
+        "account_status": profile.account_status,
+        "terms": {"accepted_at": profile.terms_accepted_at, "version": profile.terms_version},
+        "privacy": {"accepted_at": profile.privacy_accepted_at, "version": profile.privacy_version},
+        "last_password_change_at": profile.last_password_change_at,
+        "last_login_ip": profile.last_login_ip,
+        "organization_status": membership.organization.status if membership else None,
+        "registration_mode": settings.REGISTRATION_MODE,
+        "mfa": {"available": False, "status": "planned_v3.0.3"},
+    })
 
 
 @api_view(["GET", "PATCH"])
@@ -217,7 +517,12 @@ def me(request):
         audit(request, "account.profile_updated", membership.organization, "user", request.user.id)
     return Response({
         "user": UserSerializer(request.user).data,
-        "organization": {"id": membership.organization_id, "name": membership.organization.name, "slug": membership.organization.slug},
+        "organization": {
+            "id": membership.organization_id,
+            "name": membership.organization.name,
+            "slug": membership.organization.slug,
+            "status": membership.organization.status,
+        },
         "role": membership.role,
     })
 
@@ -427,7 +732,9 @@ def audit_logs(request):
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def workspaces(request):
-    memberships = Membership.objects.filter(user=request.user, active=True).select_related("organization").order_by("organization__name")
+    memberships = Membership.objects.filter(user=request.user, active=True).exclude(
+        organization__status__in=[Organization.Status.SUSPENDED, Organization.Status.CANCELLED]
+    ).select_related("organization").order_by("organization__name")
     if request.method == "POST":
         membership = memberships.filter(organization_id=request.data.get("organization")).first()
         if not membership:
