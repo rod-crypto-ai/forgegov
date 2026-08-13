@@ -11,6 +11,7 @@ from django.utils import timezone
 from django.utils.text import slugify
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
@@ -29,18 +30,49 @@ from .identity import (
 )
 from .models import (
     AccountActionToken,
+    AuthSession,
     AuditLog,
     CollaborationNotification,
     Invitation,
     Membership,
     Organization,
     OrganizationJoinRequest,
+    OrganizationSecurityPolicy,
+    PasskeyCredential,
+    RecoveryCode,
+    SecurityChallenge,
+    TOTPDevice,
     UserSecurityProfile,
 )
 from .permissions import IsOrganizationAdmin, active_membership
 from .serializers import AuditLogSerializer, InvitationSerializer, MembershipSerializer, UserSerializer
 from .throttles import LoginThrottle, RegistrationThrottle
 from .notifications import create_notification, notify_organization_members, send_system_email
+from .security_services import (
+    begin_passkey_auth,
+    begin_passkey_registration,
+    begin_totp_setup,
+    confirm_totp,
+    consume_security_challenge,
+    create_auth_session,
+    create_security_challenge,
+    disable_totp,
+    generate_recovery_codes,
+    get_security_challenge,
+    mark_step_up,
+    mfa_methods,
+    org_security_policy,
+    passkey_enabled,
+    recent_step_up,
+    revoke_session,
+    session_from_token,
+    totp_enabled,
+    user_has_mfa,
+    verify_passkey_auth,
+    verify_passkey_registration,
+    verify_recovery_code,
+    verify_totp,
+)
 
 User = get_user_model()
 
@@ -55,8 +87,18 @@ def _cookie_settings():
     }
 
 
-def _set_auth_cookies(response, user, refresh_token=None):
+def _set_auth_cookies(response, user, request=None, refresh_token=None, auth_session=None, organization=None):
     refresh_token = refresh_token or RefreshToken.for_user(user)
+    if auth_session is None and request is not None:
+        if organization is None:
+            membership = active_membership(user)
+            organization = membership.organization if membership else None
+        auth_session = create_auth_session(user=user, organization=organization, request=request)
+    if auth_session is not None:
+        refresh_token["fgsid"] = str(auth_session.session_id)
+        auth_session.refresh_jti = str(refresh_token.get("jti") or "")
+        auth_session.last_seen_at = timezone.now()
+        auth_session.save(update_fields=["refresh_jti", "last_seen_at", "updated_at"])
     access = str(refresh_token.access_token)
     cookie = _cookie_settings()
     response.set_cookie(settings.AUTH_ACCESS_COOKIE_NAME, access, max_age=settings.AUTH_ACCESS_COOKIE_MAX_AGE, **cookie)
@@ -268,6 +310,17 @@ def register(request):
             kind="membership",
             link="/company",
         )
+        policy = org_security_policy(organization)
+        privileged_mfa = policy.require_mfa_for_financial_roles and role in {Membership.Role.OWNER, Membership.Role.ADMIN, Membership.Role.PRICING}
+        if policy.require_mfa or privileged_mfa:
+            audit(request, "security.invited_user_requires_mfa_enrollment", organization, "user", user.id)
+            return Response({
+                "user": UserSerializer(user).data,
+                "organization": {"id": organization.id, "name": organization.name, "slug": organization.slug},
+                "role": role,
+                "email_verified": True,
+                "next_step": "sign_in_for_mfa",
+            }, status=status.HTTP_201_CREATED)
         response = Response({
             "user": UserSerializer(user).data,
             "organization": {"id": organization.id, "name": organization.name, "slug": organization.slug},
@@ -275,7 +328,7 @@ def register(request):
             "email_verified": True,
             "next_step": "workspace",
         }, status=status.HTTP_201_CREATED)
-        return _set_auth_cookies(response, user)
+        return _set_auth_cookies(response, user, request=request, organization=organization)
 
     delivered = send_verification_email(user=user, request_ip=_client_ip(request))
     return Response({
@@ -423,10 +476,48 @@ def login(request):
         audit(request, "security.login_blocked_organization", membership.organization, "user", user.id, {"state": membership.organization.status})
         return Response({"detail": "This company workspace is not currently available.", "code": "organization_unavailable"}, status=status.HTTP_403_FORBIDDEN)
 
+    policy = org_security_policy(membership.organization)
+    methods = mfa_methods(user)
+    privileged_mfa = policy.require_mfa_for_financial_roles and membership.role in {Membership.Role.OWNER, Membership.Role.ADMIN, Membership.Role.PRICING}
+    mfa_required = policy.require_mfa or privileged_mfa
+    if mfa_required and not methods:
+        challenge = create_security_challenge(
+            user=user,
+            purpose=SecurityChallenge.Purpose.MFA_ENROLLMENT,
+            payload={"organization_id": membership.organization_id, "role": membership.role},
+            minutes=10,
+        )
+        audit(request, "security.mfa_enrollment_required", membership.organization, "user", user.id)
+        return Response({
+            "mfa_enrollment_required": True,
+            "challenge_token": challenge,
+            "detail": "Your company security policy requires MFA. Enroll an authenticator app to continue.",
+        }, status=status.HTTP_202_ACCEPTED)
+
+    if methods:
+        challenge = create_security_challenge(
+            user=user,
+            purpose=SecurityChallenge.Purpose.MFA_LOGIN,
+            payload={"organization_id": membership.organization_id, "role": membership.role},
+            minutes=5,
+        )
+        audit(request, "security.mfa_challenge_created", membership.organization, "user", user.id, {"methods": methods})
+        return Response({
+            "mfa_required": True,
+            "challenge_token": challenge,
+            "methods": methods,
+            "detail": "Complete multi-factor authentication to continue.",
+        }, status=status.HTTP_202_ACCEPTED)
+
+    return _complete_login(request, user, membership)
+
+
+def _complete_login(request, user, membership, *, method="password"):
+    profile = security_profile(user, legacy_verified=True)
     profile.last_login_ip = _client_ip(request)
     profile.lifecycle_status = UserSecurityProfile.LifecycleStatus.ACTIVE
     profile.save(update_fields=["last_login_ip", "lifecycle_status", "updated_at"])
-
+    auth_session = create_auth_session(user=user, organization=membership.organization, request=request)
     response = Response({
         "user": UserSerializer(user).data,
         "organization": {
@@ -436,9 +527,117 @@ def login(request):
             "status": membership.organization.status,
         },
         "role": membership.role,
+        "mfa_method": method,
     })
-    audit(request, "security.login_success", membership.organization, "user", user.id)
-    return _set_auth_cookies(response, user)
+    audit(request, "security.login_success", membership.organization, "user", user.id, {"method": method, "session_id": str(auth_session.session_id)})
+    return _set_auth_cookies(response, user, request=request, auth_session=auth_session, organization=membership.organization)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([LoginThrottle])
+def mfa_enrollment_totp_setup(request):
+    enforce_csrf(request)
+    raw = str(request.data.get("challenge_token") or "")
+    challenge = get_security_challenge(raw, SecurityChallenge.Purpose.MFA_ENROLLMENT)
+    if not challenge:
+        return Response({"detail": "MFA enrollment challenge is invalid or expired."}, status=status.HTTP_400_BAD_REQUEST)
+    if totp_enabled(challenge.user):
+        return Response({"detail": "An authenticator app is already configured."}, status=status.HTTP_409_CONFLICT)
+    result = begin_totp_setup(challenge.user)
+    return Response(result)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([LoginThrottle])
+def mfa_enrollment_totp_confirm(request):
+    enforce_csrf(request)
+    raw = str(request.data.get("challenge_token") or "")
+    challenge = get_security_challenge(raw, SecurityChallenge.Purpose.MFA_ENROLLMENT)
+    if not challenge:
+        return Response({"detail": "MFA enrollment challenge is invalid or expired."}, status=status.HTTP_400_BAD_REQUEST)
+    ok, codes = confirm_totp(challenge.user, str(request.data.get("code") or ""))
+    if not ok:
+        return Response({"detail": "Authenticator code is invalid."}, status=status.HTTP_400_BAD_REQUEST)
+    consume_security_challenge(challenge)
+    membership = active_membership(challenge.user)
+    if not membership:
+        return Response({"detail": "Workspace access is unavailable."}, status=status.HTTP_403_FORBIDDEN)
+    audit(request, "security.mfa_enabled", membership.organization, "user", challenge.user_id, {"method": "totp", "enrollment": True})
+    _security_notice(challenge.user, membership.organization, "ForgeGov MFA enabled", "An authenticator app was enrolled to satisfy your company security policy.")
+    response = _complete_login(request, challenge.user, membership, method="totp_enrollment")
+    response.data["recovery_codes"] = codes
+    response.data["recovery_detail"] = "Save these recovery codes now. They are shown only once."
+    return response
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([LoginThrottle])
+def mfa_verify(request):
+    enforce_csrf(request)
+    raw = str(request.data.get("challenge_token") or "")
+    method = str(request.data.get("method") or "totp")
+    code = str(request.data.get("code") or "")
+    challenge = get_security_challenge(raw, SecurityChallenge.Purpose.MFA_LOGIN)
+    if not challenge:
+        return Response({"detail": "MFA challenge is invalid or expired."}, status=status.HTTP_400_BAD_REQUEST)
+    user = challenge.user
+    ok = verify_totp(user, code) if method == "totp" else verify_recovery_code(user, code) if method == "recovery_code" else False
+    if not ok:
+        audit(request, "security.mfa_failed", None, "user", user.id, {"method": method})
+        return Response({"detail": "The authentication code is invalid."}, status=status.HTTP_400_BAD_REQUEST)
+    consume_security_challenge(challenge)
+    membership = active_membership(user)
+    if not membership:
+        return Response({"detail": "Workspace access is unavailable."}, status=status.HTTP_403_FORBIDDEN)
+    audit(request, "security.mfa_succeeded", membership.organization, "user", user.id, {"method": method})
+    return _complete_login(request, user, membership, method=method)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([LoginThrottle])
+def mfa_passkey_options(request):
+    enforce_csrf(request)
+    preauth = str(request.data.get("challenge_token") or "")
+    challenge = get_security_challenge(preauth, SecurityChallenge.Purpose.MFA_LOGIN)
+    if not challenge or "passkey" not in mfa_methods(challenge.user):
+        return Response({"detail": "Passkey authentication is unavailable for this challenge."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        token, options = begin_passkey_auth(challenge.user, preauth_token=preauth)
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response({"challenge_token": token, "options": options})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([LoginThrottle])
+def mfa_passkey_verify(request):
+    enforce_csrf(request)
+    webauthn_token = str(request.data.get("challenge_token") or "")
+    webauthn_challenge = get_security_challenge(webauthn_token, SecurityChallenge.Purpose.WEBAUTHN_AUTH)
+    if not webauthn_challenge:
+        return Response({"detail": "Passkey challenge is invalid or expired."}, status=status.HTTP_400_BAD_REQUEST)
+    preauth = str(webauthn_challenge.payload.get("preauth_token") or "")
+    login_challenge = get_security_challenge(preauth, SecurityChallenge.Purpose.MFA_LOGIN)
+    if not login_challenge or login_challenge.user_id != webauthn_challenge.user_id:
+        return Response({"detail": "Login challenge is invalid or expired."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        ok = verify_passkey_auth(user=webauthn_challenge.user, challenge_token=webauthn_token, credential=request.data.get("credential") or {})
+    except Exception:
+        ok = False
+    if not ok:
+        audit(request, "security.mfa_failed", None, "user", webauthn_challenge.user_id, {"method": "passkey"})
+        return Response({"detail": "Passkey authentication failed."}, status=status.HTTP_400_BAD_REQUEST)
+    consume_security_challenge(login_challenge)
+    membership = active_membership(webauthn_challenge.user)
+    if not membership:
+        return Response({"detail": "Workspace access is unavailable."}, status=status.HTTP_403_FORBIDDEN)
+    audit(request, "security.mfa_succeeded", membership.organization, "user", webauthn_challenge.user_id, {"method": "passkey"})
+    return _complete_login(request, webauthn_challenge.user, membership, method="passkey")
 
 
 @api_view(["POST"])
@@ -454,14 +653,20 @@ def refresh(request):
         profile = security_profile(user, legacy_verified=True)
         if profile.account_status != UserSecurityProfile.AccountStatus.ACTIVE:
             raise User.DoesNotExist
+        auth_session = session_from_token(refresh_token, user=user)
+        if refresh_token.get("fgsid") and not auth_session:
+            raise User.DoesNotExist
     except (TokenError, User.DoesNotExist, KeyError):
-        response = Response({"detail": "Refresh token is invalid or expired."}, status=status.HTTP_401_UNAUTHORIZED)
+        response = Response({"detail": "Refresh token is invalid, expired, or revoked."}, status=status.HTTP_401_UNAUTHORIZED)
         return _clear_auth_cookies(response)
     try:
         refresh_token.blacklist()
     except Exception:
         pass
-    return _set_auth_cookies(Response({"refreshed": True}), user)
+    if auth_session:
+        auth_session.last_seen_at = timezone.now()
+        auth_session.save(update_fields=["last_seen_at", "updated_at"])
+    return _set_auth_cookies(Response({"refreshed": True}), user, request=request, auth_session=auth_session)
 
 
 @api_view(["POST"])
@@ -473,7 +678,11 @@ def logout(request):
     organization = active_membership(user).organization if user and active_membership(user) else None
     if raw:
         try:
-            RefreshToken(raw).blacklist()
+            token = RefreshToken(raw)
+            session = session_from_token(token, user=user) if user else None
+            if session:
+                revoke_session(session)
+            token.blacklist()
         except Exception:
             pass
     if user:
@@ -487,6 +696,11 @@ def logout(request):
 def security_overview(request):
     profile = security_profile(request.user, legacy_verified=True)
     membership = active_membership(request.user)
+    policy = org_security_policy(membership.organization) if membership else None
+    current_session = session_from_token(request.auth, user=request.user)
+    sessions = AuthSession.objects.filter(user=request.user, revoked_at__isnull=True, expires_at__gt=timezone.now()).order_by("-last_seen_at")[:20]
+    passkeys = PasskeyCredential.objects.filter(user=request.user, active=True)
+    security_events = AuditLog.objects.filter(actor=request.user, action__startswith="security.").order_by("-created_at")[:20]
     return Response({
         "email": request.user.email,
         "email_verified": bool(profile.email_verified_at),
@@ -499,7 +713,46 @@ def security_overview(request):
         "last_login_ip": profile.last_login_ip,
         "organization_status": membership.organization.status if membership else None,
         "registration_mode": settings.REGISTRATION_MODE,
-        "mfa": {"available": False, "status": "planned_v3.0.3"},
+        "mfa": {
+            "available": True,
+            "enabled": user_has_mfa(request.user),
+            "totp_enabled": totp_enabled(request.user),
+            "passkey_enabled": passkey_enabled(request.user),
+            "methods": mfa_methods(request.user),
+            "recovery_codes_remaining": RecoveryCode.objects.filter(user=request.user, used_at__isnull=True).count(),
+            "required_by_organization": bool(policy and policy.require_mfa),
+        },
+        "organization_security": {
+            "require_mfa": bool(policy and policy.require_mfa),
+            "require_mfa_for_financial_roles": bool(policy and policy.require_mfa_for_financial_roles),
+            "session_max_days": policy.session_max_days if policy else 7,
+            "can_manage": bool(membership and membership.role in {Membership.Role.OWNER, Membership.Role.ADMIN}),
+        },
+        "sessions": [{
+            "session_id": str(row.session_id),
+            "device_label": row.device_label,
+            "ip_address": row.ip_address,
+            "created_at": row.created_at,
+            "last_seen_at": row.last_seen_at,
+            "expires_at": row.expires_at,
+            "current": bool(current_session and row.session_id == current_session.session_id),
+            "step_up_at": row.step_up_at,
+        } for row in sessions],
+        "passkeys": [{
+            "id": row.id,
+            "name": row.name,
+            "created_at": row.created_at,
+            "last_used_at": row.last_used_at,
+            "device_type": row.device_type,
+            "backed_up": row.backed_up,
+        } for row in passkeys],
+        "recent_activity": [{
+            "id": row.id,
+            "action": row.action,
+            "created_at": row.created_at,
+            "ip_address": row.ip_address,
+            "metadata": row.metadata,
+        } for row in security_events],
     })
 
 
@@ -524,6 +777,225 @@ def me(request):
             "status": membership.organization.status,
         },
         "role": membership.role,
+    })
+
+
+
+def _current_auth_session(request):
+    return session_from_token(request.auth, user=request.user)
+
+
+def _require_step_up(request):
+    row = _current_auth_session(request)
+    if not recent_step_up(row):
+        raise PermissionDenied("Recent authentication is required for this security change.")
+    return row
+
+
+def _security_notice(user, organization, title, message):
+    create_notification(organization=organization, user=user, title=title, message=message, kind="security", link="/security")
+    try:
+        send_system_email(subject=title, message=message, recipient=user.email, html_message=f"<p>{message}</p>")
+    except Exception:
+        pass
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def step_up_authentication(request):
+    enforce_csrf(request)
+    password = str(request.data.get("password") or "")
+    method = str(request.data.get("method") or "")
+    code = str(request.data.get("code") or "")
+    if not request.user.check_password(password):
+        audit(request, "security.step_up_failed", active_membership(request.user).organization if active_membership(request.user) else None, "user", request.user.id, {"reason": "password"})
+        return Response({"detail": "Current password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
+    if totp_enabled(request.user):
+        ok = verify_totp(request.user, code) if method == "totp" else verify_recovery_code(request.user, code) if method == "recovery_code" else False
+        if not ok:
+            audit(request, "security.step_up_failed", active_membership(request.user).organization if active_membership(request.user) else None, "user", request.user.id, {"reason": "mfa", "method": method})
+            return Response({"detail": "A valid authenticator or recovery code is required."}, status=status.HTTP_400_BAD_REQUEST)
+    row = _current_auth_session(request)
+    if not row:
+        return Response({"detail": "Sign in again before changing security settings."}, status=status.HTTP_409_CONFLICT)
+    mark_step_up(row)
+    membership = active_membership(request.user)
+    audit(request, "security.step_up_succeeded", membership.organization if membership else None, "user", request.user.id, {"method": method or "password"})
+    return Response({"step_up": True, "valid_for_minutes": 10})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def totp_setup(request):
+    enforce_csrf(request)
+    password = str(request.data.get("password") or "")
+    if not request.user.check_password(password):
+        return Response({"detail": "Current password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
+    if totp_enabled(request.user):
+        return Response({"detail": "An authenticator app is already configured."}, status=status.HTTP_409_CONFLICT)
+    result = begin_totp_setup(request.user)
+    membership = active_membership(request.user)
+    audit(request, "security.totp_setup_started", membership.organization if membership else None, "user", request.user.id)
+    return Response(result)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def totp_confirm(request):
+    enforce_csrf(request)
+    ok, codes = confirm_totp(request.user, str(request.data.get("code") or ""))
+    if not ok:
+        return Response({"detail": "Authenticator code is invalid."}, status=status.HTTP_400_BAD_REQUEST)
+    membership = active_membership(request.user)
+    organization = membership.organization if membership else None
+    audit(request, "security.mfa_enabled", organization, "user", request.user.id, {"method": "totp"})
+    _security_notice(request.user, organization, "ForgeGov MFA enabled", "An authenticator app was enabled for your ForgeGov account.")
+    return Response({"enabled": True, "recovery_codes": codes, "detail": "Save these recovery codes now. They are shown only once."})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def totp_disable(request):
+    enforce_csrf(request)
+    _require_step_up(request)
+    membership = active_membership(request.user)
+    policy = org_security_policy(membership.organization) if membership else None
+    if policy and policy.require_mfa and not passkey_enabled(request.user):
+        return Response({"detail": "Your company requires MFA. Add a passkey before removing your authenticator app."}, status=status.HTTP_409_CONFLICT)
+    disable_totp(request.user)
+    organization = membership.organization if membership else None
+    audit(request, "security.mfa_disabled", organization, "user", request.user.id, {"method": "totp"})
+    _security_notice(request.user, organization, "ForgeGov authenticator removed", "The authenticator app and recovery codes were removed from your ForgeGov account.")
+    return Response({"disabled": True})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def recovery_codes_regenerate(request):
+    enforce_csrf(request)
+    _require_step_up(request)
+    if not totp_enabled(request.user):
+        return Response({"detail": "Enable an authenticator app before generating recovery codes."}, status=status.HTTP_409_CONFLICT)
+    codes = generate_recovery_codes(request.user)
+    membership = active_membership(request.user)
+    audit(request, "security.recovery_codes_regenerated", membership.organization if membership else None, "user", request.user.id)
+    return Response({"recovery_codes": codes, "detail": "Old recovery codes are invalid. Save these codes now; they are shown only once."})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def passkey_register_options(request):
+    enforce_csrf(request)
+    _require_step_up(request)
+    token, options = begin_passkey_registration(request.user)
+    return Response({"challenge_token": token, "options": options})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def passkey_register_verify(request):
+    enforce_csrf(request)
+    _require_step_up(request)
+    try:
+        row = verify_passkey_registration(
+            user=request.user,
+            challenge_token=str(request.data.get("challenge_token") or ""),
+            credential=request.data.get("credential") or {},
+            name=str(request.data.get("name") or "Passkey"),
+        )
+    except Exception as exc:
+        return Response({"detail": f"Passkey registration failed: {exc}"}, status=status.HTTP_400_BAD_REQUEST)
+    membership = active_membership(request.user)
+    organization = membership.organization if membership else None
+    audit(request, "security.passkey_added", organization, "passkey", row.id, {"name": row.name})
+    _security_notice(request.user, organization, "ForgeGov passkey added", f"A new passkey named '{row.name}' was added to your ForgeGov account.")
+    return Response({"registered": True, "id": row.id, "name": row.name})
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def passkey_delete(request, passkey_id):
+    enforce_csrf(request)
+    _require_step_up(request)
+    row = PasskeyCredential.objects.filter(pk=passkey_id, user=request.user, active=True).first()
+    if not row:
+        return Response({"detail": "Passkey not found."}, status=status.HTTP_404_NOT_FOUND)
+    membership = active_membership(request.user)
+    policy = org_security_policy(membership.organization) if membership else None
+    other_passkey = PasskeyCredential.objects.filter(user=request.user, active=True).exclude(pk=row.pk).exists()
+    if policy and policy.require_mfa and not totp_enabled(request.user) and not other_passkey:
+        return Response({"detail": "Your company requires MFA. Add another MFA method before removing this passkey."}, status=status.HTTP_409_CONFLICT)
+    name = row.name
+    row.active = False
+    row.save(update_fields=["active", "updated_at"])
+    organization = membership.organization if membership else None
+    audit(request, "security.passkey_removed", organization, "passkey", row.id, {"name": name})
+    _security_notice(request.user, organization, "ForgeGov passkey removed", f"The passkey named '{name}' was removed from your ForgeGov account.")
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def session_revoke(request, session_id):
+    enforce_csrf(request)
+    row = AuthSession.objects.filter(session_id=session_id, user=request.user, revoked_at__isnull=True).first()
+    if not row:
+        return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+    current = _current_auth_session(request)
+    revoke_session(row)
+    membership = active_membership(request.user)
+    audit(request, "security.session_revoked", membership.organization if membership else None, "auth_session", row.session_id, {"current": bool(current and current.session_id == row.session_id)})
+    response = Response({"revoked": True, "current": bool(current and current.session_id == row.session_id)})
+    if current and current.session_id == row.session_id:
+        return _clear_auth_cookies(response)
+    return response
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def sessions_revoke_others(request):
+    enforce_csrf(request)
+    _require_step_up(request)
+    current = _current_auth_session(request)
+    rows = AuthSession.objects.filter(user=request.user, revoked_at__isnull=True, expires_at__gt=timezone.now())
+    if current:
+        rows = rows.exclude(pk=current.pk)
+    now = timezone.now()
+    count = rows.update(revoked_at=now, updated_at=now)
+    membership = active_membership(request.user)
+    audit(request, "security.other_sessions_revoked", membership.organization if membership else None, "user", request.user.id, {"count": count})
+    return Response({"revoked_sessions": count})
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsOrganizationAdmin])
+def organization_security_policy(request):
+    enforce_csrf(request) if request.method == "PATCH" else None
+    membership = active_membership(request.user)
+    policy = org_security_policy(membership.organization)
+    if request.method == "PATCH":
+        _require_step_up(request)
+        desired_require_mfa = bool(request.data.get("require_mfa", policy.require_mfa))
+        if desired_require_mfa and not policy.require_mfa:
+            members = Membership.objects.filter(organization=membership.organization, active=True).select_related("user")
+            missing = [row.user.email for row in members if not user_has_mfa(row.user)]
+            if missing:
+                return Response({
+                    "detail": "MFA cannot be required until every active company member has enrolled at least one MFA method.",
+                    "members_without_mfa": missing,
+                }, status=status.HTTP_409_CONFLICT)
+        policy.require_mfa = desired_require_mfa
+        if "require_mfa_for_financial_roles" in request.data:
+            policy.require_mfa_for_financial_roles = bool(request.data.get("require_mfa_for_financial_roles"))
+        if "session_max_days" in request.data:
+            policy.session_max_days = max(1, min(int(request.data.get("session_max_days") or 7), 7))
+        policy.updated_by = request.user
+        policy.save()
+        audit(request, "security.organization_policy_updated", membership.organization, "organization_security_policy", policy.id, {"require_mfa": policy.require_mfa, "session_max_days": policy.session_max_days})
+    return Response({
+        "require_mfa": policy.require_mfa,
+        "require_mfa_for_financial_roles": policy.require_mfa_for_financial_roles,
+        "session_max_days": policy.session_max_days,
     })
 
 

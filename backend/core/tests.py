@@ -27,7 +27,7 @@ from .integrations import (
 from .ai import live_web_status
 from .capture_intelligence import build_capture_assessment
 from .win_strategy import build_win_strategy
-from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Task, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, ProjectRoomActivity, OrganizationProfile, NetworkConnection, ProjectRoomInvitation, OrganizationJoinRequest, AwardSyncRun, ConnectorSource, AccountActionToken, UserSecurityProfile
+from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Task, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, ProjectRoomActivity, OrganizationProfile, NetworkConnection, ProjectRoomInvitation, OrganizationJoinRequest, AwardSyncRun, ConnectorSource, AccountActionToken, OrganizationSecurityPolicy, UserSecurityProfile
 
 User = get_user_model()
 
@@ -78,13 +78,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "3.0.2")
+        self.assertEqual(response.json()["version"], "3.0.3")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "3.0.2")
+        self.assertEqual(response.json()["version"], "3.0.3")
 
 
 class RouterRegressionTests(TestCase):
@@ -2347,3 +2347,127 @@ class IdentityFoundationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["email_verified"])
         self.assertEqual(response.json()["account_status"], "active")
+
+@override_settings(AXES_ENABLED=False, EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+class MFAAndSessionSecurityTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.password = "LongSecurePassphrase123"
+        self.user = User.objects.create_user(username="secure@example.test", email="secure@example.test", password=self.password, is_active=True)
+        self.organization = Organization.objects.create(name="Secure Workspace", slug="secure-workspace")
+        Membership.objects.create(user=self.user, organization=self.organization, role=Membership.Role.OWNER)
+        UserSecurityProfile.objects.create(user=self.user, lifecycle_status=UserSecurityProfile.LifecycleStatus.ACTIVE, email_verified_at=timezone.now())
+        self.client = APIClient()
+
+    def tearDown(self):
+        cache.clear()
+        super().tearDown()
+
+    def _login(self):
+        return self.client.post("/api/auth/login/", {"email": self.user.email, "password": self.password}, format="json")
+
+    def _enable_totp(self):
+        import pyotp
+        from .security_services import begin_totp_setup, confirm_totp
+        setup = begin_totp_setup(self.user)
+        ok, codes = confirm_totp(self.user, pyotp.TOTP(setup["secret"]).now())
+        self.assertTrue(ok)
+        return setup["secret"], codes
+
+    def test_totp_setup_and_confirmation_generate_recovery_codes(self):
+        import pyotp
+        client = APIClient()
+        client.force_authenticate(self.user)
+        setup = client.post("/api/auth/security/totp/setup/", {"password": self.password}, format="json")
+        self.assertEqual(setup.status_code, 200)
+        self.assertIn("provisioning_uri", setup.json())
+        confirmed = client.post("/api/auth/security/totp/confirm/", {"code": pyotp.TOTP(setup.json()["secret"]).now()}, format="json")
+        self.assertEqual(confirmed.status_code, 200)
+        self.assertEqual(len(confirmed.json()["recovery_codes"]), 10)
+        from .models import TOTPDevice
+        device = TOTPDevice.objects.get(user=self.user)
+        self.assertTrue(device.active)
+        self.assertIsNotNone(device.confirmed_at)
+
+    def test_login_requires_totp_after_mfa_is_enabled(self):
+        import pyotp
+        secret, _ = self._enable_totp()
+        first = self._login()
+        self.assertEqual(first.status_code, 202)
+        self.assertTrue(first.json()["mfa_required"])
+        verified = self.client.post("/api/auth/mfa/verify/", {"challenge_token": first.json()["challenge_token"], "method": "totp", "code": pyotp.TOTP(secret).now()}, format="json")
+        self.assertEqual(verified.status_code, 200)
+        self.assertIn("forgegov_access", verified.cookies)
+        self.assertEqual(self.user.forgegov_auth_sessions.filter(revoked_at__isnull=True).count(), 1)
+
+    def test_recovery_code_is_single_use(self):
+        _, codes = self._enable_totp()
+        first = self._login()
+        verified = self.client.post("/api/auth/mfa/verify/", {"challenge_token": first.json()["challenge_token"], "method": "recovery_code", "code": codes[0]}, format="json")
+        self.assertEqual(verified.status_code, 200)
+        self.client.cookies.clear()
+        second = self._login()
+        replay = self.client.post("/api/auth/mfa/verify/", {"challenge_token": second.json()["challenge_token"], "method": "recovery_code", "code": codes[0]}, format="json")
+        self.assertEqual(replay.status_code, 400)
+
+    def test_revoked_tracked_session_cannot_continue_using_access_cookie(self):
+        from .security_services import revoke_session
+        logged_in = self._login()
+        self.assertEqual(logged_in.status_code, 200)
+        session = self.user.forgegov_auth_sessions.get(revoked_at__isnull=True)
+        revoke_session(session)
+        response = self.client.get("/api/auth/me/")
+        self.assertEqual(response.status_code, 401)
+
+    def test_step_up_marks_current_session(self):
+        logged_in = self._login()
+        self.assertEqual(logged_in.status_code, 200)
+        response = self.client.post("/api/auth/security/step-up/", {"password": self.password}, format="json")
+        self.assertEqual(response.status_code, 200)
+        session = self.user.forgegov_auth_sessions.get(revoked_at__isnull=True)
+        self.assertIsNotNone(session.step_up_at)
+
+    def test_passkey_registration_options_require_recent_step_up(self):
+        logged_in = self._login()
+        self.assertEqual(logged_in.status_code, 200)
+        blocked = self.client.post("/api/auth/security/passkeys/register/options/", {}, format="json")
+        self.assertEqual(blocked.status_code, 403)
+        self.client.post("/api/auth/security/step-up/", {"password": self.password}, format="json")
+        allowed = self.client.post("/api/auth/security/passkeys/register/options/", {}, format="json")
+        self.assertEqual(allowed.status_code, 200)
+        self.assertIn("challenge_token", allowed.json())
+        self.assertIn("options", allowed.json())
+
+    def test_company_cannot_require_mfa_until_all_members_enroll(self):
+        second = User.objects.create_user(username="member@example.test", email="member@example.test", password=self.password, is_active=True)
+        Membership.objects.create(user=second, organization=self.organization, role=Membership.Role.VIEWER)
+        UserSecurityProfile.objects.create(user=second, lifecycle_status=UserSecurityProfile.LifecycleStatus.ACTIVE, email_verified_at=timezone.now())
+        logged_in = self._login()
+        self.assertEqual(logged_in.status_code, 200)
+        self.client.post("/api/auth/security/step-up/", {"password": self.password}, format="json")
+        response = self.client.patch("/api/auth/security/organization-policy/", {"require_mfa": True}, format="json")
+        self.assertEqual(response.status_code, 409)
+        self.assertIn(second.email, response.json()["members_without_mfa"])
+
+    def test_security_overview_lists_current_session_and_mfa_state(self):
+        logged_in = self._login()
+        self.assertEqual(logged_in.status_code, 200)
+        response = self.client.get("/api/auth/security/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()["sessions"]), 1)
+        self.assertTrue(response.json()["sessions"][0]["current"])
+        self.assertFalse(response.json()["mfa"]["enabled"])
+
+    def test_company_required_mfa_enrollment_happens_before_workspace_session(self):
+        import pyotp
+        OrganizationSecurityPolicy.objects.create(organization=self.organization, require_mfa=True)
+        first = self._login()
+        self.assertEqual(first.status_code, 202)
+        self.assertTrue(first.json()["mfa_enrollment_required"])
+        self.assertEqual(self.user.forgegov_auth_sessions.count(), 0)
+        setup = self.client.post("/api/auth/mfa/enroll/totp/setup/", {"challenge_token": first.json()["challenge_token"]}, format="json")
+        self.assertEqual(setup.status_code, 200)
+        confirmed = self.client.post("/api/auth/mfa/enroll/totp/confirm/", {"challenge_token": first.json()["challenge_token"], "code": pyotp.TOTP(setup.json()["secret"]).now()}, format="json")
+        self.assertEqual(confirmed.status_code, 200)
+        self.assertIn("forgegov_access", confirmed.cookies)
+        self.assertEqual(len(confirmed.json()["recovery_codes"]), 10)

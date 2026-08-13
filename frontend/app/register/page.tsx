@@ -50,6 +50,10 @@ function RegisterForm() {
         router.replace("/");
         return;
       }
+      if(result.email_verified&&result.next_step==="sign_in_for_mfa"){
+        router.replace("/sign-in?security=enroll");
+        return;
+      }
       router.replace(`/verify-email?email=${encodeURIComponent(result.email||form.email)}`);
     }catch(error){
       setMessage(error instanceof Error?error.message:"Registration failed");

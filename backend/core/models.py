@@ -1,3 +1,5 @@
+import uuid
+
 from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
@@ -105,6 +107,92 @@ class AccountActionToken(TimeStampedModel):
             models.Index(fields=["user", "purpose", "-created_at"], name="accttoken_user_purp_idx"),
             models.Index(fields=["purpose", "expires_at"], name="accttoken_purp_exp_idx"),
         ]
+
+
+class OrganizationSecurityPolicy(TimeStampedModel):
+    organization = models.OneToOneField(Organization, on_delete=models.CASCADE, related_name="security_policy")
+    require_mfa = models.BooleanField(default=False)
+    require_mfa_for_financial_roles = models.BooleanField(default=False)
+    session_max_days = models.PositiveSmallIntegerField(default=7)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="updated_org_security_policies")
+
+
+class TOTPDevice(TimeStampedModel):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="totp_device")
+    name = models.CharField(max_length=120, default="Authenticator app")
+    secret_encrypted = models.TextField()
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    active = models.BooleanField(default=False)
+
+
+class RecoveryCode(TimeStampedModel):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="recovery_codes")
+    code_hash = models.CharField(max_length=64)
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["id"]
+        constraints = [models.UniqueConstraint(fields=("user", "code_hash"), name="uniq_recovery_user_hash")]
+        indexes = [models.Index(fields=["user", "used_at"], name="recovery_user_used_idx")]
+
+
+class PasskeyCredential(TimeStampedModel):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="passkey_credentials")
+    name = models.CharField(max_length=120, default="Passkey")
+    credential_id = models.TextField(unique=True)
+    public_key = models.TextField()
+    sign_count = models.PositiveBigIntegerField(default=0)
+    transports = models.JSONField(default=list, blank=True)
+    device_type = models.CharField(max_length=40, blank=True)
+    backed_up = models.BooleanField(default=False)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["user", "active"], name="passkey_user_active_idx")]
+
+
+class AuthSession(TimeStampedModel):
+    session_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="forgegov_auth_sessions")
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.SET_NULL, related_name="auth_sessions")
+    refresh_jti = models.CharField(max_length=255, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True)
+    device_label = models.CharField(max_length=255, blank=True)
+    expires_at = models.DateTimeField()
+    last_seen_at = models.DateTimeField(default=timezone.now)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    step_up_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-last_seen_at", "-created_at"]
+        indexes = [
+            models.Index(fields=["user", "revoked_at", "-last_seen_at"], name="authsess_user_rev_idx"),
+            models.Index(fields=["session_id"], name="authsess_sid_idx"),
+        ]
+
+
+class SecurityChallenge(TimeStampedModel):
+    class Purpose(models.TextChoices):
+        MFA_LOGIN = "mfa_login", "MFA Login"
+        MFA_ENROLLMENT = "mfa_enrollment", "MFA Enrollment"
+        WEBAUTHN_REGISTER = "webauthn_register", "WebAuthn Registration"
+        WEBAUTHN_AUTH = "webauthn_auth", "WebAuthn Authentication"
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="security_challenges")
+    purpose = models.CharField(max_length=30, choices=Purpose.choices)
+    token_hash = models.CharField(max_length=64, unique=True)
+    challenge = models.TextField(blank=True)
+    payload = models.JSONField(default=dict, blank=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["user", "purpose", "expires_at"], name="secchal_user_purp_idx")]
 
 
 class Opportunity(TimeStampedModel):

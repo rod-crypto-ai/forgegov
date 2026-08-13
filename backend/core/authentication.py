@@ -3,7 +3,7 @@ from django.middleware.csrf import CsrfViewMiddleware
 from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from .models import UserSecurityProfile
+from .models import AuthSession, UserSecurityProfile
 
 
 class CSRFCheck(CsrfViewMiddleware):
@@ -41,12 +41,26 @@ class CookieJWTAuthentication(JWTAuthentication):
         if profile.account_status != UserSecurityProfile.AccountStatus.ACTIVE:
             raise AuthenticationFailed("Account access is unavailable.")
 
+    def _enforce_session_state(self, user, token):
+        sid = token.get("fgsid") if token is not None else None
+        if not sid:
+            return
+        exists = AuthSession.objects.filter(
+            session_id=sid,
+            user=user,
+            revoked_at__isnull=True,
+            expires_at__gt=__import__("django.utils.timezone", fromlist=["now"]).now(),
+        ).exists()
+        if not exists:
+            raise AuthenticationFailed("Session has been revoked or expired.")
+
     def authenticate(self, request):
         header_result = super().authenticate(request)
 
         if header_result is not None:
             user, token = header_result
             self._enforce_account_state(user)
+            self._enforce_session_state(user, token)
             raw_org = request.headers.get("X-ForgeGov-Organization") or request.COOKIES.get("forgegov_workspace")
             if raw_org and str(raw_org).isdigit():
                 user._forgegov_organization_id = int(raw_org)
@@ -62,6 +76,7 @@ class CookieJWTAuthentication(JWTAuthentication):
 
         user = self.get_user(validated_token)
         self._enforce_account_state(user)
+        self._enforce_session_state(user, validated_token)
         raw_org = request.headers.get("X-ForgeGov-Organization") or request.COOKIES.get("forgegov_workspace")
         if raw_org and str(raw_org).isdigit():
             user._forgegov_organization_id = int(raw_org)
