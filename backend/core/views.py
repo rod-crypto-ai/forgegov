@@ -9,6 +9,17 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from .notifications import notify_organization_members, send_system_email
 from .permissions import ReadOnlyOrContributor, active_membership
+from .tenant_security import (
+    IsExecutiveFinancialMember,
+    IsFinancialMember,
+    IsProposalMember,
+    IsSubmissionController,
+    accessible_project_rooms,
+    audit_denied,
+    filter_project_room_visibility,
+    membership_capabilities,
+    project_room_access,
+)
 from .ai import OpenAIIntegrationError, ask_ai, live_web_status
 
 from .integrations import (
@@ -139,7 +150,7 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "3.0.3"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "3.0.4"})
 
 
 @api_view(["GET", "POST"])
@@ -257,7 +268,7 @@ def opportunity_intelligence_view(request, source_id):
 
 
 @api_view(["GET", "POST"])
-@permission_classes([ReadOnlyOrContributor])
+@permission_classes([IsExecutiveFinancialMember])
 def portfolio_intelligence_view(request):
     organization = _request_organization(request)
     if request.method == "POST":
@@ -269,6 +280,7 @@ def portfolio_intelligence_view(request):
 
 
 @api_view(["GET"])
+@permission_classes([ReadOnlyOrContributor])
 def dashboard_summary(request):
     organization = _request_organization(request)
     pipeline_base = PipelineItem.objects.filter(organization=organization)
@@ -348,7 +360,7 @@ def ai_chat(request):
             project_room = None
             project_room_id = request.data.get("project_room_id")
             if project_room_id:
-                project_room = ProjectRoom.objects.filter(Q(owner_organization=organization) | Q(partners__organization=organization), pk=project_room_id).distinct().first()
+                project_room = accessible_project_rooms(request).filter(pk=project_room_id).first()
                 if not project_room:
                     return Response({"detail": "Project Room not found or not accessible."}, status=status.HTTP_404_NOT_FOUND)
             conversation = AIConversation.objects.create(organization=organization, project_room=project_room, title=message[:120], created_by=request.user)
@@ -449,6 +461,38 @@ def _request_organization(request) -> Organization:
     if not membership:
         raise Organization.DoesNotExist
     return membership.organization
+
+
+def _request_capabilities(request):
+    return membership_capabilities(active_membership(request.user))
+
+
+def _redact_pursuit_financials(request, payload):
+    if _request_capabilities(request).get("financial_read"):
+        return payload
+    redacted = dict(payload)
+    economics = dict(redacted.get("economics") or {})
+    allowed = {
+        "estimated_value",
+        "expected_value",
+        "pricing_status",
+        "price_to_win_confidence",
+        "working_capital_risk",
+    }
+    redacted["economics"] = {key: value for key, value in economics.items() if key in allowed}
+    redacted["evidence"] = [
+        row for row in (redacted.get("evidence") or [])
+        if str(row.get("classification") or "") != "workspace_financial"
+    ]
+    redacted["history"] = [
+        {key: value for key, value in row.items() if key != "expected_value"}
+        for row in (redacted.get("history") or [])
+    ]
+    redacted["financial_access"] = {
+        "restricted": True,
+        "detail": "Detailed pricing, cost, profit, margin, cash-flow, and price-to-win values require Financial Sensitive access.",
+    }
+    return redacted
 
 
 @api_view(["POST"])
@@ -828,11 +872,12 @@ def opportunity_command_summary(request, notice_id: str):
     ready_documents = documents.filter(status=OpportunityDocument.Status.READY).count()
     total_documents = documents.count()
 
-    pricing_plan = PricingPlan.objects.filter(organization=organization, opportunity=opportunity).order_by("-revision").first()
+    capabilities = _request_capabilities(request)
+    pricing_plan = PricingPlan.objects.filter(organization=organization, opportunity=opportunity).order_by("-revision").first() if capabilities.get("financial_read") else None
     pricing = pricing_payload(pricing_plan) if pricing_plan else None
-    decision = build_pursuit_decision(organization=organization, opportunity=opportunity)
+    decision = _redact_pursuit_financials(request, build_pursuit_decision(organization=organization, opportunity=opportunity))
 
-    proposal_plan = ProposalPlan.objects.filter(organization=organization, opportunity=opportunity).first()
+    proposal_plan = ProposalPlan.objects.filter(organization=organization, opportunity=opportunity).first() if capabilities.get("proposal_read") else None
     proposal = proposal_execution_payload(organization=organization, opportunity=opportunity, user=request.user) if proposal_plan else None
     compliance_items = list((workspace.compliance_items if workspace else []) or [])
     compliance_total = len(compliance_items)
@@ -848,14 +893,23 @@ def opportunity_command_summary(request, notice_id: str):
         },
         "documents": {"ready": ready_documents, "total": total_documents},
         "decision": decision.get("decision", {}),
-        "pricing": {
+        "pricing": ({
             "status": pricing["plan"]["status"] if pricing else "not_started",
             "revision": pricing["plan"]["revision"] if pricing else None,
             "price": pricing["totals"]["price"] if pricing else None,
             "profit": pricing["totals"]["profit"] if pricing else None,
             "margin_percent": pricing["totals"]["margin_percent"] if pricing else None,
             "guardrails": pricing.get("guardrails", []) if pricing else [],
-        },
+            "restricted": False,
+        } if capabilities.get("financial_read") else {
+            "status": "restricted",
+            "revision": None,
+            "price": None,
+            "profit": None,
+            "margin_percent": None,
+            "guardrails": [],
+            "restricted": True,
+        }),
         "compliance": {
             "complete": compliance_complete,
             "total": compliance_total,
@@ -983,8 +1037,7 @@ def global_search(request):
     for item in Task.objects.filter(organization=organization).filter(Q(title__icontains=query) | Q(description__icontains=query))[:limit]:
         add("task", item.id, item.title, "Completed" if item.completed else "Open task", "/capture/tasks", group="Work")
 
-    room_filter = Q(owner_organization=organization) | Q(partners__organization=organization)
-    for item in ProjectRoom.objects.filter(room_filter).filter(Q(name__icontains=query) | Q(description__icontains=query)).distinct()[:limit]:
+    for item in accessible_project_rooms(request).filter(Q(name__icontains=query) | Q(description__icontains=query)).distinct()[:limit]:
         add("project_room", item.id, item.name, item.get_status_display(), f"/project-rooms/{item.id}", group="Collaboration")
 
     for item in OpportunityDocument.objects.filter(organization=organization).filter(Q(file_name__icontains=query) | Q(chunks__text__icontains=query)).distinct()[:limit]:
@@ -1016,18 +1069,23 @@ def command_center(request):
     organization = _request_organization(request)
     now = timezone.now()
     today = now.date()
-    room_filter = Q(owner_organization=organization) | Q(partners__organization=organization)
-    rooms = ProjectRoom.objects.filter(room_filter).distinct()
+    rooms = accessible_project_rooms(request)
+    room_ids = rooms.values_list("id", flat=True)
 
     deadlines = []
     for task in Task.objects.filter(organization=organization, completed=False, due_at__isnull=False).order_by("due_at")[:8]:
         deadlines.append({"type":"task","title":task.title,"due_at":task.due_at.isoformat(),"href":"/capture/tasks","overdue":task.due_at < now})
-    for task in ProjectRoomTask.objects.filter(Q(project_room__owner_organization=organization) | Q(project_room__partners__organization=organization, visibility=ProjectRoomTask.Visibility.SHARED)).distinct().exclude(status=ProjectRoomTask.Status.DONE).filter(due_date__isnull=False).select_related("project_room").order_by("due_date")[:8]:
+    owner_room_ids = rooms.filter(owner_organization=organization).values_list("id", flat=True)
+    for task in ProjectRoomTask.objects.filter(
+        Q(project_room_id__in=owner_room_ids) | Q(project_room_id__in=room_ids, visibility=ProjectRoomTask.Visibility.SHARED)
+    ).distinct().exclude(status=ProjectRoomTask.Status.DONE).filter(due_date__isnull=False).select_related("project_room").order_by("due_date")[:8]:
         deadlines.append({"type":"project_task","title":task.title,"subtitle":task.project_room.name,"due_at":task.due_date.isoformat(),"href":f"/project-rooms/{task.project_room_id}","overdue":task.due_date < today})
     deadlines = sorted(deadlines, key=lambda row: row["due_at"])[:10]
 
     activity = []
-    for row in ProjectRoomActivity.objects.filter(Q(project_room__owner_organization=organization) | Q(project_room__partners__organization=organization, visibility=ProjectRoomNote.Visibility.SHARED)).distinct().select_related("project_room", "actor").order_by("-created_at")[:10]:
+    for row in ProjectRoomActivity.objects.filter(
+        Q(project_room_id__in=owner_room_ids) | Q(project_room_id__in=room_ids, visibility=ProjectRoomNote.Visibility.SHARED)
+    ).distinct().select_related("project_room", "actor").order_by("-created_at")[:10]:
         activity.append({"type":"project_room","title":row.summary,"subtitle":row.project_room.name,"created_at":row.created_at.isoformat(),"href":f"/project-rooms/{row.project_room_id}"})
     for row in IntelligenceAlert.objects.filter(organization=organization, dismissed=False).order_by("-created_at")[:8]:
         activity.append({"type":"alert","title":row.title,"subtitle":row.summary[:180],"created_at":row.created_at.isoformat(),"href":"/capture/alerts"})
@@ -1297,23 +1355,42 @@ class ProjectRoomViewSet(viewsets.ModelViewSet):
     permission_classes = [ReadOnlyOrContributor]
 
     def get_queryset(self):
-        organization = _request_organization(self.request)
-        return ProjectRoom.objects.filter(deleted_at__isnull=True).filter(Q(owner_organization=organization) | Q(partners__organization=organization)).select_related("owner_organization", "opportunity", "created_by").prefetch_related("partners__organization").distinct()
+        membership = active_membership(self.request.user)
+        organization = membership.organization
+        owner_filter = Q(owner_organization=organization)
+        if membership.role not in {Membership.Role.OWNER, Membership.Role.ADMIN}:
+            owner_filter &= Q(members__membership=membership)
+        partner_filter = Q(partners__organization=organization)
+        if membership.role not in {Membership.Role.OWNER, Membership.Role.ADMIN}:
+            partner_filter &= Q(members__membership=membership)
+        return ProjectRoom.objects.filter(deleted_at__isnull=True).filter(
+            owner_filter | partner_filter
+        ).select_related("owner_organization", "opportunity", "created_by").prefetch_related("partners__organization").distinct()
 
     def perform_create(self, serializer):
-        serializer.save(owner_organization=_request_organization(self.request), created_by=self.request.user)
+        membership = active_membership(self.request.user)
+        room = serializer.save(owner_organization=membership.organization, created_by=self.request.user)
+        ProjectRoomMember.objects.get_or_create(
+            project_room=room,
+            membership=membership,
+            defaults={"role": ProjectRoomMember.Role.MANAGER, "added_by": self.request.user},
+        )
 
     def perform_update(self, serializer):
         room = self.get_object()
-        if room.owner_organization_id != _request_organization(self.request).id:
+        membership = active_membership(self.request.user)
+        if room.owner_organization_id != membership.organization_id or membership.role not in {Membership.Role.OWNER, Membership.Role.ADMIN}:
             from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Only the owning company can modify this Project Room.")
+            audit_denied(self.request, organization=membership.organization, capability="project_room_manage", object_type="project_room", object_id=room.id, reason="owner_admin_required")
+            raise PermissionDenied("Only company owners and administrators can modify this Project Room.")
         serializer.save()
 
     def perform_destroy(self, instance):
-        if instance.owner_organization_id != _request_organization(self.request).id:
+        membership = active_membership(self.request.user)
+        if instance.owner_organization_id != membership.organization_id or membership.role not in {Membership.Role.OWNER, Membership.Role.ADMIN}:
             from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Only the owning company can delete this Project Room.")
+            audit_denied(self.request, organization=membership.organization, capability="project_room_manage", object_type="project_room", object_id=instance.id, reason="owner_admin_required")
+            raise PermissionDenied("Only company owners and administrators can delete this Project Room.")
         instance.deleted_at = timezone.now()
         instance.status = ProjectRoom.Status.CLOSED
         instance.save(update_fields=["deleted_at", "status", "updated_at"])
@@ -1321,7 +1398,11 @@ class ProjectRoomViewSet(viewsets.ModelViewSet):
 
 @api_view(["POST", "DELETE"])
 def project_room_partner(request, room_id: int):
+    membership = active_membership(request.user)
     organization = _request_organization(request)
+    if not membership or membership.role not in {Membership.Role.OWNER, Membership.Role.ADMIN}:
+        audit_denied(request, organization=organization, capability="project_room_partner_manage", object_type="project_room", object_id=room_id, reason="owner_admin_required")
+        return Response({"detail": "Only company owners and administrators can manage Project Room partners."}, status=status.HTTP_403_FORBIDDEN)
     room = ProjectRoom.objects.filter(pk=room_id, owner_organization=organization).first()
     if not room:
         return Response({"detail": "Only the owning company can manage Project Room partners."}, status=status.HTTP_403_FORBIDDEN)
@@ -1353,8 +1434,10 @@ class AIConversationViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         organization = _request_organization(self.request)
-        shared_rooms = ProjectRoom.objects.filter(partners__organization=organization)
-        return AIConversation.objects.filter(Q(organization=organization) | Q(project_room__in=shared_rooms, visibility=AIConversation.Visibility.SHARED)).select_related("project_room", "opportunity", "created_by").prefetch_related("messages").distinct()
+        shared_rooms = accessible_project_rooms(self.request).filter(partners__organization=organization)
+        return AIConversation.objects.filter(
+            Q(organization=organization) | Q(project_room__in=shared_rooms, visibility=AIConversation.Visibility.SHARED)
+        ).select_related("project_room", "opportunity", "created_by").prefetch_related("messages").distinct()
 
 ANALYSIS_PROMPTS = {
     "executive_summary": "Create a clear executive opportunity briefing with these headings when supported: Bottom Line, Agency / Office, Solicitation, Notice Type, Description / Scope, Place of Performance, Response Deadline, POC, NAICS / PSC, Set-Aside, Contract Type / Vehicle, Submission Requirements, Evaluation Factors, Deliverables, Key Risks, Unknowns, and Recommended Next Actions. Do not omit a supported field merely because it is not central to the user's question.",
@@ -1851,7 +1934,7 @@ def opportunity_capture_command_center(request, source_id: str):
 
 
 @api_view(["GET", "PATCH", "POST"])
-@permission_classes([ReadOnlyOrContributor])
+@permission_classes([IsFinancialMember])
 def opportunity_pricing_workspace(request, source_id: str):
     organization = _request_organization(request)
     opportunity = _opportunity_for_source(source_id)
@@ -1881,7 +1964,7 @@ def opportunity_pricing_workspace(request, source_id: str):
 
 
 @api_view(["GET", "PATCH", "POST"])
-@permission_classes([ReadOnlyOrContributor])
+@permission_classes([IsFinancialMember])
 def opportunity_prime_sub_cashflow(request, source_id: str):
     organization = _request_organization(request)
     opportunity = _opportunity_for_source(source_id)
@@ -1902,7 +1985,7 @@ def opportunity_prime_sub_cashflow(request, source_id: str):
 
 
 @api_view(["GET", "POST"])
-@permission_classes([ReadOnlyOrContributor])
+@permission_classes([IsFinancialMember])
 def opportunity_price_to_win(request, source_id: str):
     organization = _request_organization(request)
     opportunity = _opportunity_for_source(source_id)
@@ -1923,7 +2006,7 @@ def opportunity_price_to_win(request, source_id: str):
 
 
 @api_view(["GET", "PATCH"])
-@permission_classes([ReadOnlyOrContributor])
+@permission_classes([IsFinancialMember])
 def pricing_profile(request):
     organization = _request_organization(request)
     profile = ensure_pricing_profile(organization, request.user)
@@ -1967,11 +2050,12 @@ def opportunity_pursuit_decision(request, source_id: str):
         snapshot = record_pursuit_decision(organization=organization, opportunity=opportunity, user=request.user, payload=request.data)
         result = build_pursuit_decision(organization=organization, opportunity=opportunity)
         result["recorded_snapshot_id"] = snapshot.id
-        return Response(result, status=201)
-    return Response(build_pursuit_decision(organization=organization, opportunity=opportunity))
+        return Response(_redact_pursuit_financials(request, result), status=201)
+    return Response(_redact_pursuit_financials(request, build_pursuit_decision(organization=organization, opportunity=opportunity)))
 
 
 @api_view(["GET"])
+@permission_classes([IsProposalMember])
 def opportunity_proposal_workspace(request, source_id: str):
     organization = _request_organization(request)
     opportunity = _opportunity_for_source(source_id)
@@ -1981,7 +2065,7 @@ def opportunity_proposal_workspace(request, source_id: str):
 
 
 @api_view(["GET", "POST"])
-@permission_classes([ReadOnlyOrContributor])
+@permission_classes([IsProposalMember])
 def opportunity_proposal_execution(request, source_id: str):
     organization = _request_organization(request)
     opportunity = _opportunity_for_source(source_id)
@@ -2073,7 +2157,7 @@ def proposal_finding_detail(request, source_id: str, finding_id: int):
 
 
 @api_view(["GET", "POST"])
-@permission_classes([ReadOnlyOrContributor])
+@permission_classes([IsSubmissionController])
 def opportunity_submission_control(request, source_id: str):
     organization = _request_organization(request)
     opportunity = _opportunity_for_source(source_id)
@@ -2120,16 +2204,24 @@ def opportunity_submission_export(request, source_id: str, export_format: str):
 
 
 def _room_access(request, room_id):
-    organization = _request_organization(request)
-    room = ProjectRoom.objects.filter(Q(owner_organization=organization) | Q(partners__organization=organization), pk=room_id).select_related("owner_organization").distinct().first()
-    if not room:
+    access = project_room_access(request, room_id)
+    if not access:
         return None, None, False
-    owner = room.owner_organization_id == organization.id
-    partner = None if owner else ProjectRoomPartner.objects.filter(project_room=room, organization=organization).first()
-    return room, partner, owner
+    return access.room, access.partner, access.owner
+
+def _room_security_access(request, room_id):
+    return project_room_access(request, room_id)
 
 def _visible_room_queryset(queryset, room, owner):
-    return queryset if owner else queryset.filter(visibility="shared")
+    if owner:
+        return queryset
+    organization = _request_organization_from_room_queryset(queryset, room)
+    # Compatibility fallback for legacy call sites; explicit room endpoints use
+    # filter_project_room_visibility below where the actual access object exists.
+    return queryset.filter(visibility="shared")
+
+def _request_organization_from_room_queryset(queryset, room):
+    return room.owner_organization
 
 def _log_room_activity(room, actor, action, summary, *, visibility="shared", object_type="", object_id="", metadata=None):
     return ProjectRoomActivity.objects.create(project_room=room, actor=actor, action=action, summary=summary, visibility=visibility, object_type=object_type, object_id=str(object_id or ""), metadata=metadata or {})
@@ -2137,123 +2229,238 @@ def _log_room_activity(room, actor, action, summary, *, visibility="shared", obj
 
 @api_view(["GET", "POST", "PATCH", "DELETE"])
 def project_room_access_management(request, room_id):
-    room, partner, owner = _room_access(request, room_id)
-    if not room:
+    access = _room_security_access(request, room_id)
+    if not access:
         return Response({"detail": "Project Room not found."}, status=404)
-    organization = _request_organization(request)
+    membership = active_membership(request.user)
+    company_admin = bool(membership and membership.role in {Membership.Role.OWNER, Membership.Role.ADMIN})
+    if not company_admin:
+        audit_denied(
+            request,
+            organization=access.organization,
+            capability="project_room_manage_access",
+            object_type="project_room",
+            object_id=room_id,
+            reason="company_admin_required",
+        )
+        return Response({"detail": "Only company owners and administrators can manage Project Room access."}, status=403)
+
+    organization = access.organization
+    room = access.room
+
     if request.method == "GET":
-        internal_members = ProjectRoomMember.objects.filter(project_room=room).select_related("membership__user", "membership") if owner else ProjectRoomMember.objects.none()
-        partners = ProjectRoomPartner.objects.filter(project_room=room).select_related("organization")
-        available_members = Membership.objects.filter(organization=organization).select_related("user") if owner else Membership.objects.none()
+        if access.owner:
+            internal_members = ProjectRoomMember.objects.filter(
+                project_room=room,
+                membership__organization=organization,
+            ).select_related("membership__user", "membership")
+            partners = ProjectRoomPartner.objects.filter(project_room=room).select_related("organization")
+        else:
+            # Partner admins manage only users from their own company. They do
+            # not receive the owner company's internal room roster.
+            internal_members = ProjectRoomMember.objects.filter(
+                project_room=room,
+                membership__organization=organization,
+            ).select_related("membership__user", "membership")
+            partners = ProjectRoomPartner.objects.none()
+
+        available_members = Membership.objects.filter(
+            organization=organization,
+            active=True,
+        ).select_related("user")
         return Response({
-            "owner": owner,
+            "owner": access.owner,
             "owner_organization": room.owner_organization_id,
             "members": ProjectRoomMemberSerializer(internal_members, many=True).data,
             "available_members": MembershipSerializer(available_members, many=True).data,
             "partners": ProjectRoomPartnerSerializer(partners, many=True).data,
         })
-    if not owner:
-        return Response({"detail": "Only the owning company can manage room access."}, status=403)
+
     kind = str(request.data.get("kind") or "member")
     if kind == "member":
         membership_id = request.query_params.get("membership") if request.method == "DELETE" else request.data.get("membership")
-        membership = Membership.objects.filter(pk=membership_id, organization=organization).first()
-        if not membership:
+        target = Membership.objects.filter(
+            pk=membership_id,
+            organization=organization,
+            active=True,
+        ).first()
+        if not target:
             return Response({"detail": "Workspace member not found."}, status=404)
         if request.method == "DELETE":
-            ProjectRoomMember.objects.filter(project_room=room, membership=membership).delete()
+            # Prevent the current administrator from accidentally removing their
+            # final path into a partner room in the same request.
+            if target.id == membership.id and not access.owner:
+                return Response({"detail": "A partner administrator cannot remove their own active room access."}, status=409)
+            ProjectRoomMember.objects.filter(project_room=room, membership=target).delete()
+            _log_room_activity(room, request.user, "room_member_removed", "Removed a company member from the Project Room.", visibility="internal" if access.owner else "shared", object_type="membership", object_id=target.id)
             return Response(status=204)
-        row, _ = ProjectRoomMember.objects.update_or_create(project_room=room, membership=membership, defaults={"role": request.data.get("role", "contributor"), "added_by": request.user})
+        role = str(request.data.get("role") or ProjectRoomMember.Role.CONTRIBUTOR)
+        if role not in {x for x, _ in ProjectRoomMember.Role.choices}:
+            return Response({"detail": "Invalid Project Room member role."}, status=400)
+        row, _ = ProjectRoomMember.objects.update_or_create(
+            project_room=room,
+            membership=target,
+            defaults={"role": role, "added_by": request.user},
+        )
+        _log_room_activity(room, request.user, "room_member_updated", "Updated Project Room member access.", visibility="internal" if access.owner else "shared", object_type="membership", object_id=target.id)
         return Response(ProjectRoomMemberSerializer(row).data, status=201)
+
+    if not access.owner:
+        audit_denied(
+            request,
+            organization=organization,
+            capability="project_room_partner_manage",
+            object_type="project_room",
+            object_id=room.id,
+            reason="owner_company_required",
+        )
+        return Response({"detail": "Partner companies cannot manage other partner organizations."}, status=403)
+
     partner_org_id = request.query_params.get("organization") if request.method == "DELETE" else request.data.get("organization")
     partner_row = ProjectRoomPartner.objects.filter(project_room=room, organization_id=partner_org_id).first()
     if not partner_row:
         return Response({"detail": "Partner company is not in this room."}, status=404)
     if request.method == "DELETE":
+        partner_name = partner_row.organization.name
+        ProjectRoomMember.objects.filter(
+            project_room=room,
+            membership__organization=partner_row.organization,
+        ).delete()
         partner_row.delete()
+        _log_room_activity(room, request.user, "partner_removed", f"Removed partner company {partner_name}.", visibility="internal")
         return Response(status=204)
+
     serializer = ProjectRoomPartnerSerializer(partner_row, data=request.data, partial=True)
     serializer.is_valid(raise_exception=True)
-    return Response(ProjectRoomPartnerSerializer(serializer.save()).data)
+    saved = serializer.save()
+    _log_room_activity(room, request.user, "partner_access_updated", f"Updated access for {saved.organization.name}.", visibility="internal")
+    return Response(ProjectRoomPartnerSerializer(saved).data)
 
 @api_view(["GET", "POST"])
 def project_room_tasks(request, room_id):
-    room, partner, owner = _room_access(request, room_id)
-    if not room: return Response({"detail":"Project Room not found."}, status=404)
+    access = _room_security_access(request, room_id)
+    if not access:
+        return Response({"detail": "Project Room not found."}, status=404)
+    room = access.room
     if request.method == "GET":
-        qs=_visible_room_queryset(ProjectRoomTask.objects.filter(project_room=room).select_related("assigned_to","created_by"), room, owner)
+        qs = filter_project_room_visibility(
+            ProjectRoomTask.objects.filter(project_room=room).select_related("assigned_to", "created_by"),
+            access,
+        )
         return Response(ProjectRoomTaskSerializer(qs, many=True).data)
-    visibility=request.data.get("visibility","shared")
-    if visibility=="internal" and not owner: return Response({"detail":"Partner companies cannot create internal tasks."}, status=403)
-    serializer=ProjectRoomTaskSerializer(data=request.data)
+
+    if not access.can_contribute:
+        audit_denied(request, organization=access.organization, capability="project_room_contribute", object_type="project_room", object_id=room_id, reason="contributor_access_required")
+        return Response({"detail": "Your Project Room access is read-only."}, status=403)
+    visibility = str(request.data.get("visibility") or "shared")
+    if visibility == "internal" and not access.owner:
+        return Response({"detail": "Partner companies cannot create internal tasks."}, status=403)
+    serializer = ProjectRoomTaskSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    task=serializer.save(project_room=room, created_by=request.user)
-    _log_room_activity(room,request.user,"task_created",f"Created task: {task.title}",visibility=visibility,object_type="task",object_id=task.id)
-    return Response(ProjectRoomTaskSerializer(task).data,status=201)
+    task = serializer.save(project_room=room, created_by=request.user, visibility=visibility)
+    _log_room_activity(room, request.user, "task_created", f"Created task: {task.title}", visibility=visibility, object_type="task", object_id=task.id)
+    return Response(ProjectRoomTaskSerializer(task).data, status=201)
 
 @api_view(["PATCH", "DELETE"])
 def project_room_task_detail(request, room_id, task_id):
-    room, partner, owner=_room_access(request,room_id)
-    if not room: return Response({"detail":"Project Room not found."},status=404)
-    task=ProjectRoomTask.objects.filter(project_room=room,pk=task_id).first()
-    if not task or (not owner and task.visibility!="shared"): return Response({"detail":"Task not found."},status=404)
-    if request.method=="DELETE":
-        if not owner and task.created_by_id!=request.user.id: return Response({"detail":"Only the owner company or task creator can delete this task."},status=403)
-        task.delete(); return Response(status=204)
-    serializer=ProjectRoomTaskSerializer(task,data=request.data,partial=True); serializer.is_valid(raise_exception=True); task=serializer.save()
-    _log_room_activity(room,request.user,"task_updated",f"Updated task: {task.title}",visibility=task.visibility,object_type="task",object_id=task.id)
+    access = _room_security_access(request, room_id)
+    if not access:
+        return Response({"detail": "Project Room not found."}, status=404)
+    task = ProjectRoomTask.objects.filter(project_room=access.room, pk=task_id).first()
+    if not task or (not access.owner and task.visibility != "shared"):
+        return Response({"detail": "Task not found."}, status=404)
+    if not access.can_contribute:
+        return Response({"detail": "Your Project Room access is read-only."}, status=403)
+    if request.method == "DELETE":
+        if not access.owner and task.created_by_id != request.user.id:
+            return Response({"detail": "Only the owner company or task creator can delete this task."}, status=403)
+        task.delete()
+        return Response(status=204)
+    serializer = ProjectRoomTaskSerializer(task, data=request.data, partial=True)
+    serializer.is_valid(raise_exception=True)
+    if not access.owner and serializer.validated_data.get("visibility", task.visibility) != "shared":
+        return Response({"detail": "Partner companies cannot mark tasks internal."}, status=403)
+    task = serializer.save()
+    _log_room_activity(access.room, request.user, "task_updated", f"Updated task: {task.title}", visibility=task.visibility, object_type="task", object_id=task.id)
     return Response(ProjectRoomTaskSerializer(task).data)
 
 @api_view(["GET", "POST"])
 def project_room_comments(request, room_id):
-    room, partner, owner=_room_access(request,room_id)
-    if not room: return Response({"detail":"Project Room not found."},status=404)
-    if request.method=="GET":
-        qs=_visible_room_queryset(ProjectRoomComment.objects.filter(project_room=room).select_related("author"),room,owner)
-        return Response(ProjectRoomCommentSerializer(qs,many=True).data)
-    if partner and not partner.can_comment: return Response({"detail":"This company cannot comment in this room."},status=403)
-    visibility=request.data.get("visibility","shared")
-    if visibility=="internal" and not owner: return Response({"detail":"Partner companies cannot create internal comments."},status=403)
-    serializer=ProjectRoomCommentSerializer(data=request.data); serializer.is_valid(raise_exception=True); comment=serializer.save(project_room=room,author=request.user)
-    _log_room_activity(room,request.user,"comment_added","Added a project comment",visibility=visibility,object_type="comment",object_id=comment.id)
-    return Response(ProjectRoomCommentSerializer(comment).data,status=201)
+    access = _room_security_access(request, room_id)
+    if not access:
+        return Response({"detail": "Project Room not found."}, status=404)
+    if request.method == "GET":
+        qs = filter_project_room_visibility(
+            ProjectRoomComment.objects.filter(project_room=access.room).select_related("author"),
+            access,
+        )
+        return Response(ProjectRoomCommentSerializer(qs, many=True).data)
+    if not access.can_comment:
+        return Response({"detail": "This company cannot comment in this room."}, status=403)
+    visibility = str(request.data.get("visibility") or "shared")
+    if visibility == "internal" and not access.owner:
+        return Response({"detail": "Partner companies cannot create internal comments."}, status=403)
+    serializer = ProjectRoomCommentSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    comment = serializer.save(project_room=access.room, author=request.user, visibility=visibility)
+    _log_room_activity(access.room, request.user, "comment_added", "Added a project comment", visibility=visibility, object_type="comment", object_id=comment.id)
+    return Response(ProjectRoomCommentSerializer(comment).data, status=201)
 
 @api_view(["GET", "POST"])
 def project_room_notes(request, room_id):
-    room, partner, owner=_room_access(request,room_id)
-    if not room: return Response({"detail":"Project Room not found."},status=404)
-    if request.method=="GET":
-        qs=_visible_room_queryset(ProjectRoomNote.objects.filter(project_room=room).select_related("author"),room,owner)
-        return Response(ProjectRoomNoteSerializer(qs,many=True).data)
-    visibility=request.data.get("visibility","internal")
-    if visibility=="internal" and not owner: return Response({"detail":"Partner companies cannot create internal notes."},status=403)
-    serializer=ProjectRoomNoteSerializer(data=request.data); serializer.is_valid(raise_exception=True); note=serializer.save(project_room=room,author=request.user)
-    _log_room_activity(room,request.user,"note_created",f"Created note: {note.title}",visibility=visibility,object_type="note",object_id=note.id)
-    return Response(ProjectRoomNoteSerializer(note).data,status=201)
+    access = _room_security_access(request, room_id)
+    if not access:
+        return Response({"detail": "Project Room not found."}, status=404)
+    if request.method == "GET":
+        qs = filter_project_room_visibility(
+            ProjectRoomNote.objects.filter(project_room=access.room).select_related("author"),
+            access,
+        )
+        return Response(ProjectRoomNoteSerializer(qs, many=True).data)
+    if not access.can_contribute:
+        return Response({"detail": "Your Project Room access is read-only."}, status=403)
+    visibility = str(request.data.get("visibility") or "internal")
+    if visibility == "internal" and not access.owner:
+        return Response({"detail": "Partner companies cannot create internal notes."}, status=403)
+    serializer = ProjectRoomNoteSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    note = serializer.save(project_room=access.room, author=request.user, visibility=visibility)
+    _log_room_activity(access.room, request.user, "note_created", f"Created note: {note.title}", visibility=visibility, object_type="note", object_id=note.id)
+    return Response(ProjectRoomNoteSerializer(note).data, status=201)
 
 @api_view(["GET", "POST"])
 def project_room_files(request, room_id):
-    room, partner, owner=_room_access(request,room_id)
-    if not room: return Response({"detail":"Project Room not found."},status=404)
-    if request.method=="GET":
-        qs=ProjectRoomFile.objects.filter(project_room=room).select_related("uploaded_by")
-        if not owner:
-            allowed=["shared"] + (["pricing"] if partner and partner.can_view_pricing else [])
-            qs=qs.filter(visibility__in=allowed)
-        return Response(ProjectRoomFileSerializer(qs,many=True).data)
-    if partner and not partner.can_upload: return Response({"detail":"This company cannot add files to this room."},status=403)
-    visibility=request.data.get("visibility","shared")
-    if visibility in {"internal","pricing"} and not owner: return Response({"detail":"Only the owner company can create restricted files."},status=403)
-    serializer=ProjectRoomFileSerializer(data=request.data); serializer.is_valid(raise_exception=True); file=serializer.save(project_room=room,uploaded_by=request.user)
-    _log_room_activity(room,request.user,"file_added",f"Added file: {file.name}",visibility="internal" if visibility=="pricing" else visibility,object_type="file",object_id=file.id)
-    return Response(ProjectRoomFileSerializer(file).data,status=201)
+    access = _room_security_access(request, room_id)
+    if not access:
+        return Response({"detail": "Project Room not found."}, status=404)
+    if request.method == "GET":
+        qs = filter_project_room_visibility(
+            ProjectRoomFile.objects.filter(project_room=access.room).select_related("uploaded_by"),
+            access,
+            allow_pricing=True,
+        )
+        return Response(ProjectRoomFileSerializer(qs, many=True).data)
+    if not access.can_upload:
+        return Response({"detail": "This company cannot add files to this room."}, status=403)
+    visibility = str(request.data.get("visibility") or "shared")
+    if visibility in {"internal", "pricing"} and not access.owner:
+        return Response({"detail": "Only the owner company can create restricted files."}, status=403)
+    serializer = ProjectRoomFileSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    file_row = serializer.save(project_room=access.room, uploaded_by=request.user, visibility=visibility)
+    _log_room_activity(access.room, request.user, "file_added", f"Added file: {file_row.name}", visibility="internal" if visibility == "pricing" else visibility, object_type="file", object_id=file_row.id)
+    return Response(ProjectRoomFileSerializer(file_row).data, status=201)
 
 @api_view(["GET"])
 def project_room_activity(request, room_id):
-    room, partner, owner=_room_access(request,room_id)
-    if not room: return Response({"detail":"Project Room not found."},status=404)
-    qs=_visible_room_queryset(ProjectRoomActivity.objects.filter(project_room=room).select_related("actor"),room,owner)[:200]
-    return Response(ProjectRoomActivitySerializer(qs,many=True).data)
+    access = _room_security_access(request, room_id)
+    if not access:
+        return Response({"detail": "Project Room not found."}, status=404)
+    qs = filter_project_room_visibility(
+        ProjectRoomActivity.objects.filter(project_room=access.room).select_related("actor"),
+        access,
+    )[:200]
+    return Response(ProjectRoomActivitySerializer(qs, many=True).data)
 
 class CollaborationNotificationViewSet(viewsets.ModelViewSet):
     serializer_class=CollaborationNotificationSerializer
@@ -2416,7 +2623,11 @@ def project_room_invitations(request):
 @api_view(["POST"])
 @permission_classes([ReadOnlyOrContributor])
 def project_room_invitation_manage(request, invitation_id: int):
+    membership = active_membership(request.user)
     organization = _request_organization(request)
+    if not membership or membership.role not in {Membership.Role.OWNER, Membership.Role.ADMIN}:
+        audit_denied(request, organization=organization, capability="project_room_invitation_manage", object_type="project_room_invitation", object_id=invitation_id, reason="owner_admin_required")
+        return Response({"detail": "Only company owners and administrators can manage Project Room invitations."}, status=status.HTTP_403_FORBIDDEN)
     row = ProjectRoomInvitation.objects.filter(pk=invitation_id, project_room__owner_organization=organization).select_related("project_room", "invited_organization").first()
     if not row:
         return Response({"detail": "Project Room invitation not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -2448,7 +2659,11 @@ def project_room_invitation_manage(request, invitation_id: int):
 @api_view(["POST"])
 @permission_classes([ReadOnlyOrContributor])
 def project_room_invitation_response(request, invitation_id: int):
+    membership = active_membership(request.user)
     organization = _request_organization(request)
+    if not membership or membership.role not in {Membership.Role.OWNER, Membership.Role.ADMIN}:
+        audit_denied(request, organization=organization, capability="project_room_invitation_response", object_type="project_room_invitation", object_id=invitation_id, reason="owner_admin_required")
+        return Response({"detail": "Only company owners and administrators can respond to Project Room invitations."}, status=status.HTTP_403_FORBIDDEN)
     row = ProjectRoomInvitation.objects.filter(pk=invitation_id, invited_organization=organization, status=ProjectRoomInvitation.Status.PENDING).filter(Q(expires_at__isnull=True)|Q(expires_at__gt=timezone.now())).select_related("project_room").first()
     if not row:
         return Response({"detail": "Pending Project Room invitation not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -2461,6 +2676,11 @@ def project_room_invitation_response(request, invitation_id: int):
     row.save(update_fields=["status", "responded_by", "responded_at", "updated_at"])
     if action == "accept":
         ProjectRoomPartner.objects.update_or_create(project_room=row.project_room, organization=organization, defaults={"access_level": row.access_level, "can_upload": row.can_upload, "can_comment": row.can_comment, "can_view_pricing": row.can_view_pricing, "invited_by": row.invited_by})
+        ProjectRoomMember.objects.update_or_create(
+            project_room=row.project_room,
+            membership=membership,
+            defaults={"role": ProjectRoomMember.Role.MANAGER, "added_by": request.user},
+        )
     owner_org = row.project_room.owner_organization
     notify_organization_members(organization=owner_org, title=f"Project Room invitation {action}ed", message=f"{organization.name} {action}ed the invitation to {row.project_room.name}.", kind="project_room_invitation_response", link=f"/project-rooms/{row.project_room_id}", project_room=row.project_room)
     ProjectRoomActivity.objects.create(project_room=row.project_room, actor=request.user, action=f"partner_invitation_{action}ed", summary=f"{organization.name} {action}ed the Project Room invitation.")
@@ -2476,6 +2696,8 @@ def pipeline_project_room(request, pipeline_id: int):
     action = str(request.data.get("action") or "link")
     if action == "create":
         room = ProjectRoom.objects.create(owner_organization=organization, opportunity=item.opportunity, name=str(request.data.get("name") or item.opportunity.title), description=str(request.data.get("description") or f"Teaming workspace for {item.opportunity.title}"), status=ProjectRoom.Status.ACTIVE, created_by=request.user)
+        membership = active_membership(request.user)
+        ProjectRoomMember.objects.get_or_create(project_room=room, membership=membership, defaults={"role": ProjectRoomMember.Role.MANAGER, "added_by": request.user})
         item.project_room = room; item.assigned_team = room.name
         item.save(update_fields=["project_room", "assigned_team", "updated_at"])
         ProjectRoomActivity.objects.create(project_room=room, actor=request.user, action="room.created_from_pipeline", summary=f"Teaming workspace created from pipeline item {item.opportunity.title}.", metadata={"pipeline_id": item.id})
@@ -2497,7 +2719,11 @@ def pipeline_project_room(request, pipeline_id: int):
 
 @api_view(["POST"])
 def project_room_lifecycle(request, room_id: int):
+    membership = active_membership(request.user)
     organization = _request_organization(request)
+    if not membership or membership.role not in {Membership.Role.OWNER, Membership.Role.ADMIN}:
+        audit_denied(request, organization=organization, capability="project_room_lifecycle", object_type="project_room", object_id=room_id, reason="owner_admin_required")
+        return Response({"detail": "Only company owners and administrators can archive or delete Project Rooms."}, status=status.HTTP_403_FORBIDDEN)
     room = ProjectRoom.objects.filter(pk=room_id, owner_organization=organization).first()
     if not room:
         return Response({"detail": "Project Room not found."}, status=status.HTTP_404_NOT_FOUND)

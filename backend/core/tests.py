@@ -27,7 +27,7 @@ from .integrations import (
 from .ai import live_web_status
 from .capture_intelligence import build_capture_assessment
 from .win_strategy import build_win_strategy
-from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Task, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, ProjectRoomActivity, OrganizationProfile, NetworkConnection, ProjectRoomInvitation, OrganizationJoinRequest, AwardSyncRun, ConnectorSource, AccountActionToken, OrganizationSecurityPolicy, UserSecurityProfile
+from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Task, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, ProjectRoomActivity, OrganizationProfile, NetworkConnection, ProjectRoomInvitation, OrganizationJoinRequest, AwardSyncRun, ConnectorSource, AccountActionToken, OrganizationSecurityPolicy, UserSecurityProfile, ProjectRoomMember, AIConversation, AIMessage, OpportunityDocument, ProposalPlan, PricingPlan, PortfolioSnapshot, AuditLog
 
 User = get_user_model()
 
@@ -78,13 +78,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "3.0.3")
+        self.assertEqual(response.json()["version"], "3.0.4")
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "3.0.3")
+        self.assertEqual(response.json()["version"], "3.0.4")
 
 
 class RouterRegressionTests(TestCase):
@@ -2471,3 +2471,193 @@ class MFAAndSessionSecurityTests(TestCase):
         self.assertEqual(confirmed.status_code, 200)
         self.assertIn("forgegov_access", confirmed.cookies)
         self.assertEqual(len(confirmed.json()["recovery_codes"]), 10)
+
+
+class MultiTenantSecurityHardeningTests(TestCase):
+    """Hostile cross-company tests for the v3.0.4 release gate."""
+
+    def setUp(self):
+        self.alpha = Organization.objects.create(name="Alpha Defense", slug="alpha-defense")
+        self.bravo = Organization.objects.create(name="Bravo Federal", slug="bravo-federal")
+        self.charlie = Organization.objects.create(name="Charlie Systems", slug="charlie-systems")
+
+        self.alpha_owner = User.objects.create_user(username="alpha-owner@example.com", email="alpha-owner@example.com", password="StrongPassphrase123!")
+        self.alpha_viewer = User.objects.create_user(username="alpha-viewer@example.com", email="alpha-viewer@example.com", password="StrongPassphrase123!")
+        self.alpha_proposal = User.objects.create_user(username="alpha-proposal@example.com", email="alpha-proposal@example.com", password="StrongPassphrase123!")
+        self.bravo_owner = User.objects.create_user(username="bravo-owner@example.com", email="bravo-owner@example.com", password="StrongPassphrase123!")
+        self.bravo_pricing = User.objects.create_user(username="bravo-pricing@example.com", email="bravo-pricing@example.com", password="StrongPassphrase123!")
+        self.bravo_contributor = User.objects.create_user(username="bravo-contributor@example.com", email="bravo-contributor@example.com", password="StrongPassphrase123!")
+        self.charlie_owner = User.objects.create_user(username="charlie-owner@example.com", email="charlie-owner@example.com", password="StrongPassphrase123!")
+
+        self.alpha_owner_membership = Membership.objects.create(user=self.alpha_owner, organization=self.alpha, role=Membership.Role.OWNER)
+        self.alpha_viewer_membership = Membership.objects.create(user=self.alpha_viewer, organization=self.alpha, role=Membership.Role.VIEWER)
+        self.alpha_proposal_membership = Membership.objects.create(user=self.alpha_proposal, organization=self.alpha, role=Membership.Role.PROPOSAL)
+        self.bravo_owner_membership = Membership.objects.create(user=self.bravo_owner, organization=self.bravo, role=Membership.Role.OWNER)
+        self.bravo_pricing_membership = Membership.objects.create(user=self.bravo_pricing, organization=self.bravo, role=Membership.Role.PRICING)
+        self.bravo_contributor_membership = Membership.objects.create(user=self.bravo_contributor, organization=self.bravo, role=Membership.Role.CONTRIBUTOR)
+        self.charlie_owner_membership = Membership.objects.create(user=self.charlie_owner, organization=self.charlie, role=Membership.Role.OWNER)
+
+        self.opportunity = Opportunity.objects.create(source_id="v304-shared-opportunity", title="Secure vehicle support", agency="USMC")
+        self.bravo_pricing_plan = PricingPlan.objects.create(
+            organization=self.bravo,
+            opportunity=self.opportunity,
+            name="Bravo Internal Price",
+            target_profit_percent="18",
+            minimum_margin_percent="12",
+        )
+        self.bravo_proposal = ProposalPlan.objects.create(
+            organization=self.bravo,
+            opportunity=self.opportunity,
+            created_by=self.bravo_owner,
+        )
+        self.bravo_document = OpportunityDocument.objects.create(
+            organization=self.bravo,
+            opportunity=self.opportunity,
+            file_name="Bravo Internal Capture Notes.pdf",
+            source_url="https://example.invalid/bravo-internal.pdf",
+            status=OpportunityDocument.Status.READY,
+        )
+        self.bravo_conversation = AIConversation.objects.create(
+            organization=self.bravo,
+            opportunity=self.opportunity,
+            title="Bravo private strategy",
+            visibility=AIConversation.Visibility.INTERNAL,
+            created_by=self.bravo_owner,
+        )
+        AIMessage.objects.create(conversation=self.bravo_conversation, role=AIMessage.Role.USER, content="Bravo confidential strategy")
+
+    def client_for(self, user):
+        client = APIClient()
+        client.force_authenticate(user)
+        return client
+
+    def test_viewer_cannot_read_financial_sensitive_pricing(self):
+        response = self.client_for(self.alpha_viewer).get(f"/api/pricing/opportunities/{self.opportunity.source_id}/")
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(AuditLog.objects.filter(actor=self.alpha_viewer, action="security.access_denied").exists())
+
+    def test_proposal_manager_cannot_read_financial_sensitive_pricing(self):
+        response = self.client_for(self.alpha_proposal).get(f"/api/pricing/opportunities/{self.opportunity.source_id}/")
+        self.assertEqual(response.status_code, 403)
+
+    def test_pricing_role_can_read_financial_workspace_but_not_other_tenant_plan(self):
+        response = self.client_for(self.bravo_pricing).get(f"/api/pricing/opportunities/{self.opportunity.source_id}/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["plan"]["name"], "Bravo Internal Price")
+
+        # Alpha has the same public opportunity ID but never resolves Bravo's
+        # organization-owned pricing plan.
+        alpha_owner_response = self.client_for(self.alpha_owner).get(f"/api/pricing/opportunities/{self.opportunity.source_id}/")
+        self.assertEqual(alpha_owner_response.status_code, 200)
+        self.assertNotEqual(alpha_owner_response.json()["plan"]["name"], "Bravo Internal Price")
+
+    def test_proposal_objects_are_organization_scoped(self):
+        # Alpha proposal user can create/read Alpha's proposal state for the same
+        # public opportunity, but never Bravo's ProposalPlan.
+        response = self.client_for(self.alpha_proposal).get(f"/api/ai/opportunities/{self.opportunity.source_id}/proposal-execution/")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(ProposalPlan.objects.filter(organization=self.alpha, opportunity=self.opportunity).exists())
+        self.assertEqual(ProposalPlan.objects.filter(organization=self.bravo, opportunity=self.opportunity).count(), 1)
+
+    def test_internal_ai_conversation_never_crosses_tenant_boundary(self):
+        response = self.client_for(self.alpha_owner).get("/api/ai/conversations/")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        rows = payload.get("results", payload) if isinstance(payload, dict) else payload
+        self.assertFalse(any(row.get("id") == self.bravo_conversation.id for row in rows))
+
+    def test_document_intelligence_never_returns_other_company_documents(self):
+        response = self.client_for(self.alpha_owner).get(f"/api/ai/opportunities/{self.opportunity.source_id}/documents/")
+        self.assertEqual(response.status_code, 200)
+        rows = response.json()
+        self.assertFalse(any(row.get("id") == self.bravo_document.id for row in rows))
+
+    def test_executive_portfolio_is_role_restricted(self):
+        denied = self.client_for(self.alpha_viewer).get("/api/reports/portfolio-intelligence/")
+        self.assertEqual(denied.status_code, 403)
+        allowed = self.client_for(self.alpha_owner).get("/api/reports/portfolio-intelligence/")
+        self.assertEqual(allowed.status_code, 200)
+
+    def test_project_room_foreign_id_is_not_discoverable(self):
+        room = ProjectRoom.objects.create(owner_organization=self.bravo, name="Bravo Internal Room", created_by=self.bravo_owner)
+        ProjectRoomMember.objects.create(project_room=room, membership=self.bravo_owner_membership, role=ProjectRoomMember.Role.MANAGER, added_by=self.bravo_owner)
+        response = self.client_for(self.alpha_owner).get(f"/api/project-rooms/{room.id}/notes/")
+        self.assertEqual(response.status_code, 404)
+
+    def test_project_room_partner_sees_shared_not_internal_or_pricing_without_grant(self):
+        room = ProjectRoom.objects.create(owner_organization=self.alpha, name="Alpha Bravo Teaming", created_by=self.alpha_owner)
+        ProjectRoomMember.objects.create(project_room=room, membership=self.alpha_owner_membership, role=ProjectRoomMember.Role.MANAGER, added_by=self.alpha_owner)
+        ProjectRoomPartner.objects.create(project_room=room, organization=self.bravo, access_level=ProjectRoomPartner.AccessLevel.PARTNER, can_view_pricing=False)
+        internal = ProjectRoomFile.objects.create(project_room=room, name="Alpha internal.xlsx", url="https://example.invalid/internal", visibility=ProjectRoomFile.Visibility.INTERNAL, uploaded_by=self.alpha_owner)
+        pricing = ProjectRoomFile.objects.create(project_room=room, name="Alpha pricing.xlsx", url="https://example.invalid/pricing", visibility=ProjectRoomFile.Visibility.PRICING, uploaded_by=self.alpha_owner)
+        shared = ProjectRoomFile.objects.create(project_room=room, name="Shared scope.pdf", url="https://example.invalid/shared", visibility=ProjectRoomFile.Visibility.SHARED, uploaded_by=self.alpha_owner)
+
+        response = self.client_for(self.bravo_owner).get(f"/api/project-rooms/{room.id}/files/")
+        self.assertEqual(response.status_code, 200)
+        ids = {row["id"] for row in response.json()}
+        self.assertIn(shared.id, ids)
+        self.assertNotIn(internal.id, ids)
+        self.assertNotIn(pricing.id, ids)
+
+    def test_partner_employee_requires_explicit_room_enrollment(self):
+        room = ProjectRoom.objects.create(owner_organization=self.alpha, name="Explicit Partner Membership", created_by=self.alpha_owner)
+        ProjectRoomMember.objects.create(project_room=room, membership=self.alpha_owner_membership, role=ProjectRoomMember.Role.MANAGER, added_by=self.alpha_owner)
+        ProjectRoomPartner.objects.create(project_room=room, organization=self.bravo, can_comment=True, can_upload=True)
+        ProjectRoomNote.objects.create(project_room=room, title="Shared note", body="Allowed only after user enrollment", visibility=ProjectRoomNote.Visibility.SHARED, author=self.alpha_owner)
+
+        denied = self.client_for(self.bravo_contributor).get(f"/api/project-rooms/{room.id}/notes/")
+        self.assertEqual(denied.status_code, 404)
+
+        # Bravo's own admin may enroll Bravo employees, but cannot manage Alpha's roster.
+        enroll = self.client_for(self.bravo_owner).post(
+            f"/api/project-rooms/{room.id}/access/",
+            {"kind": "member", "membership": self.bravo_contributor_membership.id, "role": ProjectRoomMember.Role.CONTRIBUTOR},
+            format="json",
+        )
+        self.assertEqual(enroll.status_code, 201)
+
+        allowed = self.client_for(self.bravo_contributor).get(f"/api/project-rooms/{room.id}/notes/")
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(len(allowed.json()), 1)
+
+    def test_project_room_pricing_share_requires_explicit_partner_grant(self):
+        room = ProjectRoom.objects.create(owner_organization=self.alpha, name="Explicit Pricing Share", created_by=self.alpha_owner)
+        ProjectRoomMember.objects.create(project_room=room, membership=self.alpha_owner_membership, role=ProjectRoomMember.Role.MANAGER, added_by=self.alpha_owner)
+        partner = ProjectRoomPartner.objects.create(project_room=room, organization=self.bravo, can_view_pricing=True)
+        pricing = ProjectRoomFile.objects.create(project_room=room, name="Shared pricing volume.pdf", url="https://example.invalid/shared-pricing", visibility=ProjectRoomFile.Visibility.PRICING, uploaded_by=self.alpha_owner)
+        response = self.client_for(self.bravo_owner).get(f"/api/project-rooms/{room.id}/files/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(pricing.id, {row["id"] for row in response.json()})
+
+    def test_non_admin_cannot_manage_project_room_partners(self):
+        room = ProjectRoom.objects.create(owner_organization=self.alpha, name="Managed Room", created_by=self.alpha_owner)
+        ProjectRoomMember.objects.create(project_room=room, membership=self.alpha_proposal_membership, role=ProjectRoomMember.Role.MANAGER, added_by=self.alpha_owner)
+        response = self.client_for(self.alpha_proposal).post(
+            f"/api/workflow/project-rooms/{room.id}/partners/",
+            {"organization": self.bravo.id, "access_level": "partner"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_membership_role_change_takes_effect_without_new_login(self):
+        client = self.client_for(self.alpha_viewer)
+        first = client.get(f"/api/pricing/opportunities/{self.opportunity.source_id}/")
+        self.assertEqual(first.status_code, 403)
+        self.alpha_viewer_membership.role = Membership.Role.PRICING
+        self.alpha_viewer_membership.save(update_fields=["role", "updated_at"])
+        second = client.get(f"/api/pricing/opportunities/{self.opportunity.source_id}/")
+        self.assertEqual(second.status_code, 200)
+
+    def test_membership_removal_takes_effect_without_new_login(self):
+        client = self.client_for(self.alpha_viewer)
+        self.alpha_viewer_membership.active = False
+        self.alpha_viewer_membership.save(update_fields=["active", "updated_at"])
+        response = client.get("/api/dashboard/summary/")
+        self.assertEqual(response.status_code, 403)
+
+    def test_command_summary_redacts_financial_data_for_non_financial_role(self):
+        response = self.client_for(self.alpha_proposal).get(f"/api/workflow/opportunities/{self.opportunity.source_id}/command-summary/")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["pricing"]["restricted"])
+        self.assertIsNone(response.json()["pricing"]["profit"])
+        self.assertIsNone(response.json()["pricing"]["margin_percent"])

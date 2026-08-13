@@ -8,6 +8,16 @@ type Session = {
   user: { id: number; email: string; first_name: string; last_name: string };
   organization: { id: number; name: string; slug: string };
   role: string;
+  capabilities?: {
+    company_admin:boolean;
+    financial_read:boolean;
+    financial_write:boolean;
+    proposal_read:boolean;
+    proposal_write:boolean;
+    submission_control:boolean;
+    executive_financial:boolean;
+    project_room_manage:boolean;
+  };
 };
 
 type WorkspaceMembership={organization:{id:number;name:string;slug:string};role:string;job_title?:string};

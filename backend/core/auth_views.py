@@ -47,6 +47,7 @@ from .models import (
 from .permissions import IsOrganizationAdmin, active_membership
 from .serializers import AuditLogSerializer, InvitationSerializer, MembershipSerializer, UserSerializer
 from .throttles import LoginThrottle, RegistrationThrottle
+from .tenant_security import membership_capabilities
 from .notifications import create_notification, notify_organization_members, send_system_email
 from .security_services import (
     begin_passkey_auth,
@@ -777,6 +778,7 @@ def me(request):
             "status": membership.organization.status,
         },
         "role": membership.role,
+        "capabilities": membership_capabilities(membership),
     })
 
 
