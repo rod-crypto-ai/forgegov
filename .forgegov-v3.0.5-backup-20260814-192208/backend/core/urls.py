@@ -161,7 +161,6 @@ router.register("ai/conversations", AIConversationViewSet, basename="ai-conversa
 router.register("collaboration/notifications", CollaborationNotificationViewSet, basename="collaboration-notification")
 
 urlpatterns = [
-    path("platform-admin/", include("platform_admin.urls")),
     path("auth/csrf/", csrf_token),
     path("auth/registration-config/", registration_config),
     path("auth/register/", register),
