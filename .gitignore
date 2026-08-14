@@ -28,3 +28,6 @@ frontend/**/*.before-frontend-fix
 .DS_Store
 .vscode/
 .idea/
+
+# ForgeGov installer backups
+.forgegov-v*-backup-*/
