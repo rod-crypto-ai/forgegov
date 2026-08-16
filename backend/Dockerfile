@@ -17,6 +17,12 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh \
     && python manage.py collectstatic --noinput
 
+RUN groupadd --system --gid 10001 forgegov \
+    && useradd --system --uid 10001 --gid forgegov --create-home forgegov \
+    && chown -R forgegov:forgegov /app /entrypoint.sh
+
+USER forgegov
+
 EXPOSE 8000
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["gunicorn", "forgegov.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-"]

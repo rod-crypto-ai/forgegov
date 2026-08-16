@@ -184,10 +184,11 @@ def user_action(request, user_id):
     user = User.objects.filter(pk=user_id).first()
     if not user:
         return Response({"detail": "User not found."}, status=404)
-    if user.pk == request.user.pk and request.data.get("action") in {"suspend", "disable"}:
-        return Response({"detail": "You cannot suspend or disable your own platform-admin account."}, status=400)
 
     action = str(request.data.get("action", "")).strip().lower()
+    if user.pk == request.user.pk and action in {"suspend", "disable"}:
+        return Response({"detail": "You cannot suspend or disable your own platform-admin account."}, status=400)
+
     reason = str(request.data.get("reason", "")).strip()
     state, _ = UserControlState.objects.get_or_create(user=user)
     transitions = {
@@ -203,7 +204,22 @@ def user_action(request, user_id):
     state.reason = reason if action in {"suspend", "disable"} else ""
     state.updated_by = request.user
     state.save()
-    audit(request, f"user.{action}", target_type="user", target_id=user.id, reason=reason)
+
+    from .security import restore_user_access, revoke_user_access
+
+    if action in {"suspend", "disable"}:
+        security_result = revoke_user_access(user)
+    else:
+        security_result = {"reactivated": restore_user_access(user)}
+
+    audit(
+        request,
+        f"user.{action}",
+        target_type="user",
+        target_id=user.id,
+        reason=reason,
+        metadata={"security": security_result},
+    )
     return Response(_user_payload(user))
 
 

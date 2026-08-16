@@ -23,7 +23,7 @@ type SearchResult = {
 };
 
 type Filters = {
-  q: string; agency: string; naics: string; psc: string; state: string; set_aside: string;
+  q: string; agency: string; naics: string; psc: string; state: string; solnum: string; set_aside: string;
   posted_from: string; posted_to: string; opportunity_number: string; aln: string;
   funding_categories: string; eligibilities: string; funding_instruments: string;
   statuses: string; sort_by: string;
@@ -37,10 +37,31 @@ const copy = {
   "federal-grants": ["Federal Grant Opportunities", "Search live Grants.gov opportunities, save searches, export results, and move qualified grants into the same ForgeGov pipeline."],
 } as const;
 
+const SAM_SET_ASIDE_OPTIONS = [
+  ["", "All set-asides"],
+  ["SBA", "Total Small Business"],
+  ["SBP", "Partial Small Business"],
+  ["8A", "8(a) Set-Aside"],
+  ["8AN", "8(a) Sole Source"],
+  ["HZC", "HUBZone Set-Aside"],
+  ["HZS", "HUBZone Sole Source"],
+  ["SDVOSBC", "SDVOSB Set-Aside"],
+  ["SDVOSBS", "SDVOSB Sole Source"],
+  ["WOSB", "WOSB Set-Aside"],
+  ["WOSBSS", "WOSB Sole Source"],
+  ["EDWOSB", "EDWOSB Set-Aside"],
+  ["EDWOSBSS", "EDWOSB Sole Source"],
+  ["LAS", "Local Area Set-Aside"],
+  ["IEE", "Indian Economic Enterprise"],
+  ["ISBEE", "Indian Small Business Economic Enterprise"],
+  ["BICiv", "Buy Indian Set-Aside"],
+  ["VSA", "Veteran-Owned Small Business Set-Aside"],
+  ["VSS", "Veteran-Owned Small Business Sole Source"],
+] as const;
 
 function defaultFilters(query = ""): Filters {
   return {
-    q: query, agency: "", naics: "", psc: "", state: "", set_aside: "",
+    q: query, agency: "", naics: "", psc: "", state: "", solnum: "", set_aside: "",
     posted_from: "", posted_to: "", opportunity_number: "", aln: "", funding_categories: "",
     eligibilities: "", funding_instruments: "", statuses: "forecasted|posted", sort_by: "",
   };
@@ -107,7 +128,7 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
     const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset), persist: "true" });
     const allowed: Array<keyof Filters> = isGrants
       ? ["q", "agency", "opportunity_number", "aln", "funding_categories", "eligibilities", "funding_instruments", "statuses", "sort_by"]
-      : ["q", "agency", "naics", "psc", "state", "set_aside", "posted_from", "posted_to"];
+      : ["q", "agency", "naics", "psc", "state", "solnum", "set_aside", "posted_from", "posted_to"];
     allowed.forEach((key) => { const value = selectedFilters[key]; if (value) params.set(key, value); });
     const endpoint = isGrants ? "/live/grants/opportunities/" : "/live/sam/opportunities/";
     try {
@@ -210,7 +231,8 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
           <label><span>NAICS</span><input value={filters.naics} onChange={(event) => update("naics", event.target.value)} placeholder="811111" /></label>
           <label><span>PSC</span><input value={filters.psc} onChange={(event) => update("psc", event.target.value)} placeholder="J023" /></label>
           <label><span>State</span><input value={filters.state} onChange={(event) => update("state", event.target.value)} maxLength={2} /></label>
-          <label><span>Set-aside code</span><input value={filters.set_aside} onChange={(event) => update("set_aside", event.target.value)} /></label>
+          <label><span>Solicitation number</span><input value={filters.solnum} onChange={(event) => update("solnum", event.target.value)} placeholder="W91QVN-26-R-0001" /></label>
+          <label><span>Set-aside</span><select value={filters.set_aside} onChange={(event) => update("set_aside", event.target.value)}>{SAM_SET_ASIDE_OPTIONS.map(([code, label]) => <option key={code || "all"} value={code}>{label}</option>)}</select></label>
           <label><span>Posted from</span><input type="date" value={filters.posted_from} onChange={(event) => update("posted_from", event.target.value)} /></label>
           <label><span>Posted to</span><input type="date" value={filters.posted_to} onChange={(event) => update("posted_to", event.target.value)} /></label>
         </>}
