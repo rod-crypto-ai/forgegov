@@ -31,3 +31,6 @@ frontend/**/*.before-frontend-fix
 
 # ForgeGov installer backups
 .forgegov-v*-backup-*/
+
+# Local database backups
+backups/

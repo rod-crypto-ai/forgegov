@@ -51,6 +51,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "core.middleware.RenderHealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "core.observability.RequestTelemetryMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -231,7 +232,7 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = SECURE_HSTS_SECONDS > 0
 SECURE_HSTS_PRELOAD = SECURE_HSTS_SECONDS > 0
 X_FRAME_OPTIONS = "DENY"
 SECURE_CONTENT_TYPE_NOSNIFF = True
-SECURE_SECURE_REFERRER_POLICY = "same-origin"
+SECURE_REFERRER_POLICY = "same-origin"
 
 EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
 EMAIL_HOST = os.getenv("EMAIL_HOST", "")
@@ -240,3 +241,30 @@ EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() == "true"
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "ForgeGov <noreply@forge-gov.com>")
+
+
+# ForgeGov v3.0.7 reliability and observability.
+RELIABILITY_SYNC_STALE_HOURS = int(os.getenv("RELIABILITY_SYNC_STALE_HOURS", "30"))
+RELIABILITY_CELERY_PING_TIMEOUT = float(os.getenv("RELIABILITY_CELERY_PING_TIMEOUT", "1.0"))
+FORGEGOV_LOG_FORMAT = os.getenv("FORGEGOV_LOG_FORMAT", "plain" if DEBUG else "json").strip().lower()
+_LOG_FORMATTER = "json" if FORGEGOV_LOG_FORMAT == "json" else "plain"
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "filters": {"redact_secrets": {"()": "core.observability.RedactSecretsFilter"}},
+    "formatters": {
+        "json": {"()": "core.observability.JsonFormatter"},
+        "plain": {"format": "%(levelname)s %(name)s %(message)s"},
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "filters": ["redact_secrets"],
+            "formatter": _LOG_FORMATTER,
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": os.getenv("DJANGO_LOG_LEVEL", "INFO"),
+    },
+}

@@ -140,6 +140,8 @@ from .price_to_win import build_price_to_win, record_price_to_win
 from .prime_sub_cashflow import prime_sub_payload, mutate_prime_sub
 from .portfolio_intelligence import build_portfolio_intelligence, record_portfolio_snapshot
 from .intelligence.services import connector_health, opportunity_intelligence
+from .reliability import readiness_payload
+from .version import VERSION as FORGEGOV_VERSION
 from .intelligence.services.award_ingestion import award_intelligence_summary, connector_registry_payload, sync_usaspending_awards
 
 
@@ -150,7 +152,15 @@ def _truthy(value: str | None) -> bool:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": "3.0.6"})
+    return Response({"status": "ok", "service": "forgegov-api", "product": "ForgeGov", "version": FORGEGOV_VERSION})
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def ready(request):
+    payload = readiness_payload()
+    code = status.HTTP_200_OK if payload["status"] == "ready" else status.HTTP_503_SERVICE_UNAVAILABLE
+    return Response(payload, status=code)
 
 
 @api_view(["GET", "POST"])

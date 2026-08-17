@@ -1,5 +1,7 @@
 from django.http import JsonResponse
 
+from .version import VERSION
+
 
 class RenderHealthCheckMiddleware:
     """Return a lightweight health response before host/security middleware.
@@ -19,6 +21,6 @@ class RenderHealthCheckMiddleware:
                 "status": "ok",
                 "service": "forgegov-api",
                 "product": "ForgeGov",
-                "version": "3.0.6",
+                "version": VERSION,
             })
         return self.get_response(request)

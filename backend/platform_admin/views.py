@@ -359,6 +359,11 @@ def audit_events(request):
 def system_operations(request):
     payload = {"connectors": [], "source": "ForgeGov connector registry", "probe": True}
     try:
+        from core.reliability import operational_health
+        payload["operations"] = operational_health(probe_connectors=True)
+    except Exception as exc:
+        payload["operations"] = {"status": "unavailable", "error": type(exc).__name__}
+    try:
         from core.intelligence.services.connectors import connector_health
         data = connector_health(probe=True)
         payload["connectors"] = data.get("connectors", data) if isinstance(data, dict) else data

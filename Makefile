@@ -1,4 +1,4 @@
-.PHONY: up down logs test test-backend typecheck lint build verify migrate makemigrations live-web open-source-ai
+.PHONY: up down logs test test-backend typecheck lint build verify migrate makemigrations live-web open-source-ai backup verify-backup smoke
 
 up:
 	docker compose up -d --build
@@ -37,3 +37,13 @@ open-source-ai:
 
 verify:
 	./scripts/validate_release.sh
+
+backup:
+	./scripts/backup_database.sh
+
+verify-backup:
+	@test -n "$(BACKUP)" || (echo "Usage: make verify-backup BACKUP=backups/file.dump" && exit 64)
+	./scripts/verify_backup_restore.sh "$(BACKUP)"
+
+smoke:
+	./scripts/release_smoke.sh
