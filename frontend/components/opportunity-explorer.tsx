@@ -5,6 +5,7 @@ import { ArrowDownToLine, ChevronLeft, ChevronRight, ExternalLink, FileSearch, L
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { apiGet, apiPost } from "@/lib/api";
+import { US_STATE_OPTIONS } from "@/lib/us-states";
 
 export type OpportunityMode = "federal-contracts" | "federal-forecasts" | "federal-vehicles" | "state-local" | "federal-grants";
 
@@ -31,9 +32,9 @@ type Filters = {
 
 const copy = {
   "federal-contracts": ["Federal Contract Opportunities", "Search the live SAM.gov Contract Opportunities API and move qualified work directly into your capture pipeline."],
-  "federal-forecasts": ["Federal Forecasts", "Agency forecast connectors are being added as source-specific feeds."],
-  "federal-vehicles": ["Federal Contract Vehicle Opportunities", "Task-order and contract-vehicle connectors are being added."],
-  "state-local": ["State and Local Contract Opportunities", "State and local connectors require source-by-source configuration."],
+  "federal-forecasts": ["Federal Forecasts", "Review live and indexed official agency procurement forecast sources."],
+  "federal-vehicles": ["Federal Contract Vehicle Opportunities", "Search live USAspending IDV and contract-vehicle intelligence."],
+  "state-local": ["State and Local Contract Opportunities", "Open verified state procurement sources and source-specific adapters."],
   "federal-grants": ["Federal Grant Opportunities", "Search live Grants.gov opportunities, save searches, export results, and move qualified grants into the same ForgeGov pipeline."],
 } as const;
 
@@ -109,7 +110,7 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
   const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(false);
   const [showingRecent, setShowingRecent] = useState(true);
-  const [message, setMessage] = useState(live ? "Loading the most recent live opportunities…" : "This connector is not configured yet.");
+  const [message, setMessage] = useState(live ? "Loading the most recent live opportunities…" : "This source uses a dedicated live workspace.");
   const [busyId, setBusyId] = useState("");
 
   const page = result ? Math.floor(result.offset / result.limit) + 1 : 1;
@@ -120,7 +121,7 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
   function update(name: keyof Filters, value: string) { setFilters((current) => ({ ...current, [name]: value })); }
 
   const search = useCallback(async (offset = 0, selectedFilters = filters) => {
-    if (!live) { setMessage("This connector is not configured yet. ForgeGov will not display mock live records."); return; }
+    if (!live) { setMessage("Open the dedicated live source workspace for this opportunity type."); return; }
     const recentView = !hasCustomFilters(selectedFilters, isGrants);
     setShowingRecent(recentView);
     setLoading(true);
@@ -154,7 +155,7 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
     const timer = window.setTimeout(() => {
       const selectedFilters = defaultFilters(queryFromUrl);
       setFilters(selectedFilters); setResult(null); setShowingRecent(true);
-      if (!live) { setLoading(false); setMessage("This connector is not configured yet. ForgeGov will not display mock live records."); return; }
+      if (!live) { setLoading(false); setMessage("Open the dedicated live source workspace for this opportunity type."); return; }
       if (autoSearch && queryFromUrl) lastAutoSearch.current = queryFromUrl;
       void search(0, selectedFilters);
     }, 0);
@@ -230,7 +231,7 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
         </> : <>
           <label><span>NAICS</span><input value={filters.naics} onChange={(event) => update("naics", event.target.value)} placeholder="811111" /></label>
           <label><span>PSC</span><input value={filters.psc} onChange={(event) => update("psc", event.target.value)} placeholder="J023" /></label>
-          <label><span>State</span><input value={filters.state} onChange={(event) => update("state", event.target.value)} maxLength={2} /></label>
+          <label><span>State</span><select value={filters.state} onChange={(event) => update("state", event.target.value)}>{US_STATE_OPTIONS.map(([code, label]) => <option key={code || "all"} value={code}>{label}</option>)}</select></label>
           <label><span>Solicitation number</span><input value={filters.solnum} onChange={(event) => update("solnum", event.target.value)} placeholder="W91QVN-26-R-0001" /></label>
           <label><span>Set-aside</span><select value={filters.set_aside} onChange={(event) => update("set_aside", event.target.value)}>{SAM_SET_ASIDE_OPTIONS.map(([code, label]) => <option key={code || "all"} value={code}>{label}</option>)}</select></label>
           <label><span>Posted from</span><input type="date" value={filters.posted_from} onChange={(event) => update("posted_from", event.target.value)} /></label>

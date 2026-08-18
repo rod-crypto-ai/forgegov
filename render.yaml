@@ -48,6 +48,22 @@ services:
     sync: false
   - key: PUBLIC_REGISTRATION_ENABLED
     value: 'false'
+  - key: REGISTRATION_MODE
+    value: private_beta
+  - key: EMAIL_BACKEND
+    value: django.core.mail.backends.smtp.EmailBackend
+  - key: EMAIL_HOST
+    sync: false
+  - key: EMAIL_PORT
+    value: '587'
+  - key: EMAIL_HOST_USER
+    sync: false
+  - key: EMAIL_HOST_PASSWORD
+    sync: false
+  - key: EMAIL_USE_TLS
+    value: 'true'
+  - key: DEFAULT_FROM_EMAIL
+    value: 'ForgeGov <noreply@forge-gov.com>'
   - key: SECURE_SSL_REDIRECT
     value: 'true'
   - key: SECURE_HSTS_SECONDS

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bell, Bot, Building2, CalendarClock, Database, ExternalLink, Eye, Landmark, Mail, MessageSquare, Network, Phone, RefreshCw, Search, Target, Trash2, Users, X } from "lucide-react";
 import Link from "next/link";
 import { apiDelete, apiGet, apiPatch, apiPost, normalizeList } from "@/lib/api";
+import { US_STATE_OPTIONS } from "@/lib/us-states";
 
 type Row = Record<string, unknown>;
 
@@ -59,7 +60,7 @@ export function StateLocalWorkspace() {
   useInitialLoad(load);
   return <>
     <header className="feature-hero"><div><span className="eyebrow">State and local market access</span><h1>State & Local Procurement Sources</h1><p>Open verified public procurement portals while ForgeGov’s source-specific adapters are expanded.</p></div></header>
-    <section className="data-panel"><form className="advanced-filter-grid" onSubmit={(e) => {e.preventDefault();void load();}}><label><span>Keyword</span><input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="California, construction…"/></label><label><span>State code</span><input value={state} onChange={(e)=>setState(e.target.value.toUpperCase())} maxLength={2} placeholder="TX"/></label><button className="primary-button"><Search size={16}/> Find sources</button></form><p className="inline-message">{message}</p></section>
+    <section className="data-panel"><form className="advanced-filter-grid" onSubmit={(e) => {e.preventDefault();void load();}}><label><span>Keyword</span><input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="California, construction…"/></label><label><span>State</span><select value={state} onChange={(e)=>setState(e.target.value)}>{US_STATE_OPTIONS.map(([code,label])=><option key={code||"all"} value={code}>{label}</option>)}</select></label><button className="primary-button"><Search size={16}/> Find sources</button></form><p className="inline-message">{message}</p></section>
     <section className="source-card-grid">{rows.map((row, index)=><article className="source-card" key={`${text(row.state)}-${index}`}><Building2/><div><span>{text(row.state)}</span><h3>{text(row.jurisdiction)}</h3><p>{text(row.coverage)}</p></div><a className="primary-button" href={text(row.portal)} target="_blank" rel="noreferrer">Open portal <ExternalLink size={15}/></a></article>)}</section>
   </>;
 }

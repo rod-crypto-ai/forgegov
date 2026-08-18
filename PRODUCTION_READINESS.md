@@ -1,60 +1,37 @@
-# ForgeGov v2.0.3 production readiness
+# ForgeGov v3.1.0 Private Beta Production Readiness
 
-## Release gate
-
+## Launch gate
 Run from the repository root:
 
 ```bash
-docker compose down --remove-orphans
-docker compose build --no-cache
-docker compose up -d
-./scripts/enable_live_web.sh
-./scripts/validate_release.sh
+./VERIFY_V3.1.0.command
 ```
 
-The release is approved only when all eight validation stages pass and the final line is:
+Do not push or tag v3.1.0 unless the final line reports successful completion.
 
-```text
-ForgeGov v2.0.3 validation completed successfully.
-```
+## Production requirements
+- `DJANGO_DEBUG=false`
+- strong unique `DJANGO_SECRET_KEY`
+- explicit `DJANGO_ALLOWED_HOSTS`
+- HTTPS `FRONTEND_URL`, `CORS_ALLOWED_ORIGINS`, and `CSRF_TRUSTED_ORIGINS`
+- `PUBLIC_REGISTRATION_ENABLED=false` for private beta
+- `REGISTRATION_MODE=private_beta` or `invite_only`
+- `SECURE_SSL_REDIRECT=true`
+- `SECURE_HSTS_SECONDS=31536000`
+- PostgreSQL and Redis production services
+- configured live connector credentials/endpoints required by enabled sources
+- verified email delivery for verification and password recovery
+- backup and isolated restore verification
 
-## Production-mode frontend smoke test
+## Required staging walkthrough
+1. Register/invite a private-beta user, verify email, sign in, and complete MFA.
+2. Test password reset and session revocation.
+3. Search SAM.gov by keyword, solicitation number, State dropdown, and Set-Aside dropdown.
+4. Open opportunity details/files, save a search, create an alert, and add an opportunity to pipeline.
+5. Create pursuit/project room, invite a partner, exercise pricing/sensitive-document/export permissions, then revoke access.
+6. Search Grants.gov, forecasts, contract vehicles, state/local sources, SUBNet/subawards, and award intelligence.
+7. Exercise pricing, proposal/submission control, ForgeAI, reports, company/network, and Platform Admin health/governance.
+8. Verify `/api/health/` and `/api/ready/`, create a backup, and perform isolated restore verification.
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.production.yml down --remove-orphans
-docker compose -f docker-compose.yml -f docker-compose.production.yml build --no-cache frontend
-docker compose -f docker-compose.yml -f docker-compose.production.yml up -d
-```
-
-## Required environment review
-
-- `DJANGO_SECRET_KEY`
-- `DJANGO_ALLOWED_HOSTS`
-- `FRONTEND_URL`
-- `CORS_ALLOWED_ORIGINS`
-- `CSRF_TRUSTED_ORIGINS`
-- `DATABASE_URL`
-- `REDIS_URL`
-- `SAM_GOV_API_KEY`
-- `NEXT_PUBLIC_API_BASE_URL`
-- `AI_PROVIDER`
-- `OLLAMA_BASE_URL` and `OLLAMA_MODEL`, or `OPENAI_API_KEY`
-- `SEARXNG_URL`
-- `SEARXNG_SECRET`
-- `AI_WEB_SEARCH_ENABLED=true`
-- `PUBLIC_REGISTRATION_ENABLED=false` unless open signup is intentional
-
-## Staging smoke path
-
-1. Sign in.
-2. Search federal contract opportunities and open an internal detail workspace.
-3. Search federal grants and open a complete grant workspace.
-4. Add one contract and one grant to the pipeline.
-5. Open Subcontracting and verify a live, indexed, cached, or reconnecting SBA status without a fatal page error.
-6. Open an agency, company, award, vehicle, and forecast through an internal ForgeGov link.
-7. Ask ForgeGov AI a current-market question and confirm source labels and live-web status.
-8. Evaluate saved searches and open a resulting contract or grant alert.
-
-## External-source limitation
-
-Some official government sources prohibit browser embedding or temporarily block automated server traffic. ForgeGov labels official-source fallbacks and degraded states instead of claiming that every record can always be rendered internally.
+## External-source behavior
+Government sources can rate-limit, block embedding, or experience outages. ForgeGov must show verified cached/indexed/degraded states and official-source fallback links instead of fabricated live records.
