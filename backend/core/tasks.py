@@ -25,19 +25,27 @@ def sync_recent_sam_opportunities(self, days: int = 1, limit: int = 1000):
             posted_to=today.strftime("%m/%d/%Y"),
             limit=limit,
             persist=True,
+            sync_run=run,
         )
         persisted = result["persisted"]
-        run.status = DataSyncRun.Status.SUCCESS
+        run.request_metadata = {**(run.request_metadata or {}), "integrity": {
+            "unchanged": persisted.get("unchanged", 0),
+            "quarantined": persisted.get("quarantined", 0),
+        }}
+        run.status = DataSyncRun.Status.PARTIAL if persisted.get("quarantined") else DataSyncRun.Status.SUCCESS
         run.records_received = len(result["opportunities"])
         run.records_created = persisted["created"]
         run.records_updated = persisted["updated"]
+        run.error_message = " | ".join(persisted.get("errors") or [])[:2000]
         run.finished_at = timezone.now()
         run.save(update_fields=[
             "status",
             "records_received",
             "records_created",
             "records_updated",
+            "error_message",
             "finished_at",
+            "request_metadata",
             "updated_at",
         ])
         return {
@@ -68,14 +76,20 @@ def sync_usaspending_awards(self, days: int = 365, limit: int = 100):
             end_date=today.isoformat(),
             limit=limit,
             persist=True,
+            sync_run=run,
         )
         persisted = result["persisted"]
-        run.status = DataSyncRun.Status.SUCCESS
+        run.request_metadata = {**(run.request_metadata or {}), "integrity": {
+            "unchanged": persisted.get("unchanged", 0),
+            "quarantined": persisted.get("quarantined", 0),
+        }}
+        run.status = DataSyncRun.Status.PARTIAL if persisted.get("quarantined") else DataSyncRun.Status.SUCCESS
         run.records_received = len(result["results"])
         run.records_created = persisted["created"]
         run.records_updated = persisted["updated"]
+        run.error_message = " | ".join(persisted.get("errors") or [])[:2000]
         run.finished_at = timezone.now()
-        run.save(update_fields=["status", "records_received", "records_created", "records_updated", "finished_at", "updated_at"])
+        run.save(update_fields=["status", "records_received", "records_created", "records_updated", "error_message", "finished_at", "request_metadata", "updated_at"])
         return {"run_id": run.pk, "records_received": run.records_received, "records_created": run.records_created, "records_updated": run.records_updated}
     except Exception as exc:
         run.status = DataSyncRun.Status.FAILED

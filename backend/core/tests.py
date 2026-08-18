@@ -25,6 +25,7 @@ from .integrations import (
     upsert_sam_opportunity,
 )
 from .ai import live_web_status
+from .version import VERSION as FORGEGOV_VERSION
 from .capture_intelligence import build_capture_assessment
 from .win_strategy import build_win_strategy
 from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Task, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, ProjectRoomActivity, OrganizationProfile, NetworkConnection, ProjectRoomInvitation, OrganizationJoinRequest, AwardSyncRun, ConnectorSource, AccountActionToken, OrganizationSecurityPolicy, UserSecurityProfile, ProjectRoomMember, AIConversation, AIMessage, OpportunityDocument, ProposalPlan, PricingPlan, PortfolioSnapshot, AuditLog
@@ -78,13 +79,13 @@ class HealthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["product"], "ForgeGov")
-        self.assertEqual(response.json()["version"], "3.0.7")
+        self.assertEqual(response.json()["version"], FORGEGOV_VERSION)
 
     @override_settings(ALLOWED_HOSTS=["forgegov-api.onrender.com"])
     def test_render_health_check_survives_custom_domain_host_transition(self):
         response = APIClient().get("/api/health/", HTTP_HOST="api.example.com")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "3.0.7")
+        self.assertEqual(response.json()["version"], FORGEGOV_VERSION)
 
 
 class RouterRegressionTests(TestCase):

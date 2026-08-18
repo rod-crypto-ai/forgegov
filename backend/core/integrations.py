@@ -9,6 +9,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 
 from .models import Opportunity
+from .integration_resilience import fingerprint_payload, quarantine_record, record_source_version, resilient_request
 
 
 class IntegrationError(RuntimeError):
@@ -138,6 +139,16 @@ def upsert_sam_opportunity(record: dict[str, Any]) -> tuple[Opportunity, bool]:
     source_url = f"https://sam.gov/opp/{notice_id}/view"
     resource_links = record.get("resourceLinks") if isinstance(record.get("resourceLinks"), list) else []
 
+    incoming_modified = _sam_datetime(
+        record.get("modifiedDate") or record.get("modifiedDateTime") or record.get("updatedDate")
+    )
+    existing = Opportunity.objects.filter(source_id=notice_id).only("source_modified_at").first()
+    if (
+        existing and incoming_modified and existing.source_modified_at
+        and incoming_modified < existing.source_modified_at
+    ):
+        raise IntegrationError("SAM.gov returned an older record version than the one already stored.")
+
     defaults = {
         "source": "sam.gov",
         "solicitation_number": _safe_text(record.get("solicitationNumber"), max_length=120),
@@ -160,9 +171,16 @@ def upsert_sam_opportunity(record: dict[str, Any]) -> tuple[Opportunity, bool]:
         "active": _safe_text(record.get("active")).lower() not in {"no", "false", "0"},
         "source_url": source_url,
         "resource_links": resource_links,
+        "source_modified_at": incoming_modified,
         "raw_data": record,
     }
-    return Opportunity.objects.update_or_create(source_id=notice_id, defaults=defaults)
+    opportunity, created = Opportunity.objects.update_or_create(source_id=notice_id, defaults=defaults)
+    _, version_created = record_source_version(
+        source="sam.gov", record_type="opportunity.sam", source_id=notice_id, payload=record,
+        source_url=source_url, source_modified_at=incoming_modified, provenance={"transport": "api"},
+    )
+    opportunity._forgegov_source_version_created = version_created
+    return opportunity, created
 
 
 def _build_sam_params(
@@ -211,13 +229,13 @@ def _build_sam_params(
     return params
 
 
-def search_sam_opportunities(*, persist: bool = False, **filters: Any) -> dict[str, Any]:
+def search_sam_opportunities(*, persist: bool = False, sync_run=None, **filters: Any) -> dict[str, Any]:
     if not settings.SAM_GOV_API_KEY:
         raise IntegrationError("SAM_GOV_API_KEY is not configured.")
 
     params = _build_sam_params(**filters)
     try:
-        response = requests.get(settings.SAM_GOV_BASE_URL, params=params, timeout=30)
+        response = resilient_request("sam.gov", "GET", settings.SAM_GOV_BASE_URL, params=params, timeout=30)
     except requests.RequestException as exc:
         raise IntegrationError("SAM.gov could not be reached. Check network access and try again.") from exc
 
@@ -251,17 +269,27 @@ def search_sam_opportunities(*, persist: bool = False, **filters: Any) -> dict[s
 
     created = 0
     updated = 0
+    unchanged = 0
+    quarantined = 0
     persistence_errors: list[str] = []
     if persist:
         for record in opportunities:
             if not isinstance(record, dict):
                 continue
             try:
-                _, was_created = upsert_sam_opportunity(record)
+                opportunity, was_created = upsert_sam_opportunity(record)
+                version_created = bool(getattr(opportunity, "_forgegov_source_version_created", True))
                 created += int(was_created)
-                updated += int(not was_created)
-            except IntegrationError as exc:
+                updated += int((not was_created) and version_created)
+                unchanged += int((not was_created) and (not version_created))
+            except (IntegrationError, ValueError, TypeError) as exc:
                 persistence_errors.append(str(exc))
+                quarantined += 1
+                quarantine_record(
+                    source="sam.gov", record_type="opportunity.sam", payload=record,
+                    source_id=_safe_text(record.get("noticeId") or record.get("noticeid"), max_length=255),
+                    reason="persistence_error", error=exc, data_sync_run=sync_run,
+                )
 
     normalized_opportunities = []
     for record in opportunities:
@@ -283,6 +311,8 @@ def search_sam_opportunities(*, persist: bool = False, **filters: Any) -> dict[s
             "enabled": persist,
             "created": created,
             "updated": updated,
+            "unchanged": unchanged,
+            "quarantined": quarantined,
             "errors": persistence_errors,
         },
     }
@@ -298,7 +328,7 @@ def usaspending_status(*, probe: bool = False) -> dict[str, Any]:
 
     url = f"{settings.USASPENDING_BASE_URL.rstrip('/')}/api/v2/awards/last_updated/"
     try:
-        response = requests.get(url, timeout=15)
+        response = resilient_request("usaspending.gov", "GET", url, timeout=15)
         result.update({"reachable": response.ok, "status_code": response.status_code})
     except requests.RequestException:
         result.update({"reachable": False, "error": "USAspending could not be reached."})
@@ -347,6 +377,16 @@ def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None =
     psc = _safe_text(_usa_value(record, "PSC Code", "product_or_service_code"), max_length=12)
     pop = _safe_text(_usa_value(record, "Place of Performance", "place_of_performance"), max_length=500)
 
+    incoming_modified = _grant_date(
+        _usa_value(record, "last_modified_date", "Last Modified Date", "last_modified", "source_updated_at")
+    )
+    existing = Award.objects.filter(source_id=source_id).only("source_updated_at").first()
+    if (
+        existing and incoming_modified and existing.source_updated_at
+        and incoming_modified < existing.source_updated_at
+    ):
+        raise IntegrationError("USAspending returned an older award version than the one already stored.")
+
     defaults = {
         "source": "usaspending.gov",
         "award_number": award_number,
@@ -357,6 +397,7 @@ def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None =
         "set_aside_code": _safe_text(_usa_value(record, "set_aside_code", "Set Aside"), max_length=40),
         "jurisdiction_level": "federal",
         "jurisdiction_code": "US",
+        "source_updated_at": incoming_modified,
         "award_type": award_type or Award.AwardType.CONTRACT,
         "description": description,
         "recipient_name": recipient,
@@ -374,6 +415,12 @@ def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None =
         "raw_data": record,
     }
     award, created = Award.objects.update_or_create(source_id=source_id, defaults=defaults)
+    history_type = "award.usaspending.vehicle" if award_type == Award.AwardType.VEHICLE else "award.usaspending"
+    _, version_created = record_source_version(
+        source="usaspending.gov", record_type=history_type, source_id=source_id, payload=record,
+        source_url=defaults["source_url"], source_modified_at=incoming_modified, provenance={"transport": "api", "award_type": defaults["award_type"]},
+    )
+    award._forgegov_source_version_created = version_created
 
     if recipient:
         Vendor.objects.update_or_create(
@@ -412,6 +459,7 @@ def search_usaspending_awards(
     page: int = 1,
     limit: int = 25,
     persist: bool = False,
+    sync_run=None,
 ) -> dict[str, Any]:
     today = date.today()
     start_date = start_date or f"{today.year - 1}-01-01"
@@ -442,7 +490,7 @@ def search_usaspending_awards(
     }
     url = f"{settings.USASPENDING_BASE_URL.rstrip('/')}/api/v2/search/spending_by_award/"
     try:
-        response = requests.post(url, json=payload, timeout=45)
+        response = resilient_request("usaspending.gov", "POST", url, json=payload, timeout=45)
     except requests.RequestException as exc:
         raise IntegrationError("USAspending could not be reached. Check network access and try again.") from exc
     if not response.ok:
@@ -456,24 +504,32 @@ def search_usaspending_awards(
     results = data.get("results") if isinstance(data, dict) else []
     if not isinstance(results, list):
         results = []
-    created = updated = 0
+    created = updated = unchanged = quarantined = 0
     errors: list[str] = []
     if persist:
         for record in results:
             if not isinstance(record, dict):
                 continue
             try:
-                _, was_created = upsert_usaspending_award(record)
+                award, was_created = upsert_usaspending_award(record)
+                version_created = bool(getattr(award, "_forgegov_source_version_created", True))
                 created += int(was_created)
-                updated += int(not was_created)
-            except IntegrationError as exc:
+                updated += int((not was_created) and version_created)
+                unchanged += int((not was_created) and (not version_created))
+            except (IntegrationError, ValueError, TypeError) as exc:
                 errors.append(str(exc))
+                quarantined += 1
+                quarantine_record(
+                    source="usaspending.gov", record_type="award.usaspending", payload=record,
+                    source_id=_safe_text(_usa_value(record, "generated_unique_award_id", "Award ID", "award_id"), max_length=255),
+                    reason="persistence_error", error=exc, data_sync_run=sync_run,
+                )
 
     return {
         "page_metadata": data.get("page_metadata", {}),
         "spending_level": data.get("spending_level", "awards"),
         "results": results,
-        "persisted": {"enabled": persist, "created": created, "updated": updated, "errors": errors},
+        "persisted": {"enabled": persist, "created": created, "updated": updated, "unchanged": unchanged, "quarantined": quarantined, "errors": errors},
         "request": {"start_date": start_date, "end_date": end_date, "keyword": keyword, "recipient": recipient, "agency": agency, "naics": naics},
     }
 
@@ -524,6 +580,16 @@ def upsert_grants_opportunity(record: dict[str, Any]) -> tuple[Opportunity, bool
         aln_values = [str(alns)]
     aln_text = ", ".join(v for v in aln_values if v)
 
+    incoming_modified = _grant_date(
+        record.get("modifiedDate") or record.get("lastUpdatedDate") or record.get("updatedDate")
+    )
+    existing = Opportunity.objects.filter(source_id=source_id).only("source_modified_at").first()
+    if (
+        existing and incoming_modified and existing.source_modified_at
+        and incoming_modified < existing.source_modified_at
+    ):
+        raise IntegrationError("Grants.gov returned an older record version than the one already stored.")
+
     defaults = {
         "source": "grants.gov",
         "solicitation_number": number,
@@ -546,9 +612,16 @@ def upsert_grants_opportunity(record: dict[str, Any]) -> tuple[Opportunity, bool
         "active": status_value.lower() in {"posted", "forecasted", "open", ""},
         "source_url": f"https://www.grants.gov/search-results-detail/{opportunity_id}",
         "resource_links": [],
+        "source_modified_at": incoming_modified,
         "raw_data": record,
     }
-    return Opportunity.objects.update_or_create(source_id=source_id, defaults=defaults)
+    opportunity, created = Opportunity.objects.update_or_create(source_id=source_id, defaults=defaults)
+    _, version_created = record_source_version(
+        source="grants.gov", record_type="opportunity.grants", source_id=source_id, payload=record,
+        source_url=defaults["source_url"], source_modified_at=incoming_modified, provenance={"transport": "api"},
+    )
+    opportunity._forgegov_source_version_created = version_created
+    return opportunity, created
 
 
 def search_grants_opportunities(
@@ -565,6 +638,7 @@ def search_grants_opportunities(
     limit: int = 25,
     offset: int = 0,
     persist: bool = False,
+    sync_run=None,
 ) -> dict[str, Any]:
     payload = {
         "rows": max(1, min(int(limit), 100)),
@@ -582,7 +656,7 @@ def search_grants_opportunities(
     payload = {key: value for key, value in payload.items() if value not in ("", None)}
 
     try:
-        response = requests.post(f"{settings.GRANTS_GOV_BASE_URL.rstrip('/')}/search2", json=payload, timeout=30)
+        response = resilient_request("grants.gov", "POST", f"{settings.GRANTS_GOV_BASE_URL.rstrip('/')}/search2", json=payload, timeout=30)
     except requests.RequestException as exc:
         raise IntegrationError("Grants.gov could not be reached. Check network access and try again.") from exc
 
@@ -602,18 +676,26 @@ def search_grants_opportunities(
     if not isinstance(opportunities, list):
         opportunities = []
 
-    created = updated = 0
+    created = updated = unchanged = quarantined = 0
     errors = []
     if persist:
         for record in opportunities:
             if not isinstance(record, dict):
                 continue
             try:
-                _, was_created = upsert_grants_opportunity(record)
+                opportunity, was_created = upsert_grants_opportunity(record)
+                version_created = bool(getattr(opportunity, "_forgegov_source_version_created", True))
                 created += int(was_created)
-                updated += int(not was_created)
-            except IntegrationError as exc:
+                updated += int((not was_created) and version_created)
+                unchanged += int((not was_created) and (not version_created))
+            except (IntegrationError, ValueError, TypeError) as exc:
                 errors.append(str(exc))
+                quarantined += 1
+                quarantine_record(
+                    source="grants.gov", record_type="opportunity.grants", payload=record,
+                    source_id=_grant_source_id(record.get("id") or record.get("opportunityId")),
+                    reason="persistence_error", error=exc, data_sync_run=sync_run,
+                )
 
     normalized = []
     for record in opportunities:
@@ -637,7 +719,7 @@ def search_grants_opportunities(
             "funding_instruments": data.get("fundingInstruments") or [],
             "agencies": data.get("agencies") or [],
         },
-        "persisted": {"enabled": persist, "created": created, "updated": updated, "errors": errors},
+        "persisted": {"enabled": persist, "created": created, "updated": updated, "unchanged": unchanged, "quarantined": quarantined, "errors": errors},
     }
 
 
@@ -645,8 +727,8 @@ def fetch_grants_opportunity(opportunity_id: str, *, persist: bool = True) -> di
     """Fetch and normalize a Grants.gov opportunity into a ForgeGov detail workspace."""
     try:
         numeric_id = int(str(opportunity_id).replace("grants.gov:", ""))
-        response = requests.post(
-            f"{settings.GRANTS_GOV_BASE_URL.rstrip('/')}/fetchOpportunity",
+        response = resilient_request(
+            "grants.gov", "POST", f"{settings.GRANTS_GOV_BASE_URL.rstrip('/')}/fetchOpportunity",
             json={"opportunityId": numeric_id}, timeout=30,
         )
     except ValueError as exc:
@@ -784,7 +866,7 @@ def search_sam_contract_awards(
     params.update({key: value for key, value in optional.items() if value})
 
     try:
-        response = requests.get(settings.SAM_CONTRACT_AWARDS_BASE_URL, params=params, timeout=45)
+        response = resilient_request("sam.gov", "GET", settings.SAM_CONTRACT_AWARDS_BASE_URL, params=params, timeout=45)
     except requests.RequestException as exc:
         raise IntegrationError("SAM.gov Contract Awards could not be reached.") from exc
     if response.status_code == 204:
@@ -861,7 +943,7 @@ def fetch_sam_opportunity_documents(notice_id: str) -> dict[str, Any]:
     description = opportunity.description if opportunity else ""
     if isinstance(description_url, str) and description_url.startswith("http"):
         try:
-            response = requests.get(description_url, params={"api_key": settings.SAM_GOV_API_KEY}, timeout=30)
+            response = resilient_request("sam.gov", "GET", description_url, params={"api_key": settings.SAM_GOV_API_KEY}, timeout=30)
             if response.ok:
                 try:
                     body = response.json()
@@ -933,7 +1015,7 @@ def search_usaspending_contract_vehicles(
     }
     url = f"{settings.USASPENDING_BASE_URL.rstrip('/')}/api/v2/search/spending_by_award/"
     try:
-        response = requests.post(url, json=payload, timeout=45)
+        response = resilient_request("usaspending.gov", "POST", url, json=payload, timeout=45)
     except requests.RequestException as exc:
         raise IntegrationError("USAspending contract vehicle search could not be reached.") from exc
     if not response.ok:
@@ -946,7 +1028,7 @@ def search_usaspending_contract_vehicles(
     results = data.get("results") if isinstance(data, dict) else []
     if not isinstance(results, list):
         results = []
-    created = updated = 0
+    created = updated = unchanged = quarantined = 0
     errors: list[str] = []
     if persist:
         from .models import Award
@@ -954,15 +1036,23 @@ def search_usaspending_contract_vehicles(
             if not isinstance(record, dict):
                 continue
             try:
-                _, was_created = upsert_usaspending_award(record, award_type=Award.AwardType.VEHICLE)
+                award, was_created = upsert_usaspending_award(record, award_type=Award.AwardType.VEHICLE)
+                version_created = bool(getattr(award, "_forgegov_source_version_created", True))
                 created += int(was_created)
-                updated += int(not was_created)
-            except IntegrationError as exc:
+                updated += int((not was_created) and version_created)
+                unchanged += int((not was_created) and (not version_created))
+            except (IntegrationError, ValueError, TypeError) as exc:
                 errors.append(str(exc))
+                quarantined += 1
+                quarantine_record(
+                    source="usaspending.gov", record_type="award.usaspending.vehicle", payload=record,
+                    source_id=_safe_text(_usa_value(record, "generated_unique_award_id", "Award ID", "award_id"), max_length=255),
+                    reason="vehicle_persistence_error", error=exc,
+                )
     return {
         "page_metadata": data.get("page_metadata", {}),
         "results": results,
-        "persisted": {"enabled": persist, "created": created, "updated": updated, "errors": errors},
+        "persisted": {"enabled": persist, "created": created, "updated": updated, "unchanged": unchanged, "quarantined": quarantined, "errors": errors},
         "request": {"start_date": start_date, "end_date": end_date, "keyword": keyword, "recipient": recipient, "agency": agency, "naics": naics},
     }
 
@@ -1028,7 +1118,7 @@ def search_federal_forecast_sources(*, query: str = "") -> dict[str, Any]:
 
     directory_url = "https://www.acquisition.gov/procurement-forecasts"
     try:
-        response = requests.get(directory_url, timeout=30, headers={"User-Agent": "ForgeGov/1.2 (+https://forgegov.com)"})
+        response = resilient_request("acquisition.gov", "GET", directory_url, timeout=30, headers={"User-Agent": "ForgeGov/1.2 (+https://forgegov.com)"})
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
         rows: list[dict[str, str]] = []
@@ -1062,6 +1152,16 @@ def search_federal_forecast_sources(*, query: str = "") -> dict[str, Any]:
     term = query.strip().lower()
     if term:
         sources = [item for item in sources if term in item["agency"].lower()]
+    for item in sources:
+        try:
+            source_id = f"forecast:{fingerprint_payload({"agency": item.get("agency"), "url": item.get("forecast_url")})[:24]}"
+            record_source_version(
+                source="acquisition.gov", record_type="forecast.directory", source_id=source_id, payload=item,
+                source_url=item.get("forecast_url") or directory_url,
+                provenance={"transport": "html", "reachable": reachable},
+            )
+        except Exception:
+            pass
     return {
         "total_records": len(sources),
         "results": sources,
@@ -1120,7 +1220,7 @@ def search_sam_subawards(
     optional = {"piid": piid, "referencedIDVPIID": referenced_idv, "agencyId": agency_id}
     params.update({k: v for k, v in optional.items() if v})
     try:
-        response = requests.get(settings.SAM_SUBAWARDS_BASE_URL, params=params, timeout=45)
+        response = resilient_request("sam.gov", "GET", settings.SAM_SUBAWARDS_BASE_URL, params=params, timeout=45)
     except requests.RequestException as exc:
         raise IntegrationError("SAM.gov subaward reporting could not be reached.") from exc
     if not response.ok:
@@ -1240,9 +1340,23 @@ def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: i
     def persist(rows):
         for row in rows:
             source_id=_safe_text(row.get("source_id"),max_length=255)
-            if not source_id: continue
-            naics="".join(c for c in _safe_text(row.get("naics"),max_length=120) if c.isdigit())[:6]; closing=_grant_date(row.get("closing_date"))
-            Opportunity.objects.update_or_create(source_id=source_id,defaults={"source":"sba-subnet","title":_safe_text(row.get("title"),max_length=500) or "Untitled SBA SUBNet opportunity","description":_safe_text(row.get("description"),max_length=50000),"agency":_safe_text(row.get("prime_contractor"),max_length=255),"office":"SBA SUBNet","notice_type":Opportunity.NoticeType.OTHER,"notice_type_raw":"Subcontracting Opportunity","naics_code":naics,"response_deadline":closing,"place_of_performance":_safe_text(row.get("place_of_performance"),max_length=500),"active":not closing or closing>=timezone.now(),"source_url":_safe_text(row.get("source_url"),max_length=1500),"raw_data":row})
+            if not source_id:
+                quarantine_record(source="sba-subnet", record_type="opportunity.subnet", payload=row, reason="missing_source_id")
+                continue
+            try:
+                naics="".join(c for c in _safe_text(row.get("naics"),max_length=120) if c.isdigit())[:6]
+                closing=_grant_date(row.get("closing_date"))
+                source_url=_safe_text(row.get("source_url"),max_length=1500)
+                Opportunity.objects.update_or_create(source_id=source_id,defaults={"source":"sba-subnet","title":_safe_text(row.get("title"),max_length=500) or "Untitled SBA SUBNet opportunity","description":_safe_text(row.get("description"),max_length=50000),"agency":_safe_text(row.get("prime_contractor"),max_length=255),"office":"SBA SUBNet","notice_type":Opportunity.NoticeType.OTHER,"notice_type_raw":"Subcontracting Opportunity","naics_code":naics,"response_deadline":closing,"place_of_performance":_safe_text(row.get("place_of_performance"),max_length=500),"active":not closing or closing>=timezone.now(),"source_url":source_url,"raw_data":row})
+                record_source_version(
+                    source="sba-subnet", record_type="opportunity.subnet", source_id=source_id, payload=row,
+                    source_url=source_url, provenance={"transport": "html"},
+                )
+            except (IntegrationError, ValueError, TypeError) as exc:
+                quarantine_record(
+                    source="sba-subnet", record_type="opportunity.subnet", payload=row, source_id=source_id,
+                    reason="subnet_persistence_error", error=exc,
+                )
 
     def database_snapshot():
         rows=[]
@@ -1259,7 +1373,7 @@ def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: i
             source_pages=[page*2,page*2+1] if "sba.gov/federal-contracting" in source_url else [page]
             for source_page in source_pages:
                 source_params=dict(params); source_params["page"]=source_page
-                response=requests.get(source_url,params=source_params,timeout=18,headers=headers,allow_redirects=True)
+                response=resilient_request("sba-subnet", "GET", source_url, params=source_params, timeout=18, headers=headers, allow_redirects=True)
                 response.raise_for_status(); response_url=response.url
                 parsed,source_has_next=parse_page(response.text,response.url)
                 combined.extend(parsed); any_next=any_next or source_has_next
@@ -1284,7 +1398,7 @@ def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: i
         if query.strip(): terms.append(query.strip())
         if state.strip() and state.strip().lower()!="all": terms.append(state.strip())
         try:
-            wr=requests.get(searx.rstrip("/")+"/search",params={"q":" ".join(terms),"format":"json","language":"en-US","safesearch":1},timeout=18,headers={"User-Agent":"ForgeGov/2.5.0"}); wr.raise_for_status(); rows=wr.json().get("results"); indexed=[]
+            wr=resilient_request("searxng", "GET", searx.rstrip("/")+"/search", params={"q":" ".join(terms),"format":"json","language":"en-US","safesearch":1}, timeout=18, headers={"User-Agent":"ForgeGov/2.5.0"}); wr.raise_for_status(); rows=wr.json().get("results"); indexed=[]
             if isinstance(rows,list):
                 for row in rows:
                     if not isinstance(row,dict): continue

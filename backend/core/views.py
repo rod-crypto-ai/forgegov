@@ -1655,10 +1655,26 @@ def opportunity_documents(request, source_id: str):
                 }
                 record.metadata = metadata
                 record.save()
+                from .integration_resilience import record_source_version
+                record_source_version(
+                    source="document", record_type="opportunity.document", source_id=str(record.id),
+                    payload={
+                        "opportunity_id": opportunity.id, "source_url": url, "file_name": name,
+                        "checksum": digest, "content_type": content_type,
+                        "page_count": record.page_count, "character_count": record.character_count,
+                    },
+                    source_url=url, provenance={"transport": "download", "checksum": digest},
+                )
         except (DocumentIngestionError, ValueError, OSError) as exc:
             record.status = OpportunityDocument.Status.FAILED
             record.error_message = str(exc)[:1000]
             record.save(update_fields=["status", "error_message", "updated_at"])
+            from .integration_resilience import quarantine_record
+            quarantine_record(
+                source="document", record_type="opportunity.document",
+                source_id=str(record.id), payload={"opportunity_id": opportunity.id, "source_url": url, "file_name": name},
+                reason="document_ingestion_error", error=exc,
+            )
         results.append(record)
     return Response(OpportunityDocumentSerializer(results, many=True).data, status=status.HTTP_201_CREATED)
 

@@ -376,3 +376,31 @@ def system_operations(request):
     except Exception:
         pass
     return Response(payload)
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformAdmin])
+def data_integrity(request):
+    from core.integration_resilience import data_integrity_payload
+    try:
+        limit = max(1, min(int(request.query_params.get("limit", 25)), 100))
+    except (TypeError, ValueError):
+        limit = 25
+    return Response(data_integrity_payload(limit=limit))
+
+
+@api_view(["POST"])
+@permission_classes([IsPlatformSuperAdmin])
+def retry_quarantine(request, quarantine_id):
+    from core.integration_resilience import retry_quarantined_record
+    from core.models import SyncQuarantine
+
+    row = SyncQuarantine.objects.filter(pk=quarantine_id, resolved_at__isnull=True).first()
+    if not row:
+        return Response({"detail": "Unresolved quarantine record not found."}, status=404)
+    try:
+        result = retry_quarantined_record(row)
+    except Exception as exc:
+        return Response({"detail": str(exc)[:500]}, status=400)
+    audit(request, "data_integrity.quarantine_retry", target_type="sync_quarantine", target_id=row.id)
+    return Response(result)

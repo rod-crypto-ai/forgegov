@@ -20,7 +20,11 @@ type UserRow = { id:number; email:string; first_name:string; last_name:string; p
 type FlagRow = { id:number; key:string; name:string; description:string; enabled:boolean; updated_at:string };
 type Beta = { id:number; organization_id:number; organization_name:string; status:string; applicant_email:string; application_notes:string; requested_information:string; submitted_at:string };
 type Audit = { id:number; action:string; actor_email:string; target_type:string; target_id:string; reason:string; created_at:string };
-type System = { connectors?: unknown; connector_registry?: unknown; connector_error?: string };
+type IntegrityQuarantine = { id:number; source:string; record_type:string; source_id:string; reason:string; error_message:string; occurrences:number };
+type System = {
+  connectors?: unknown; connector_registry?: unknown; connector_error?: string;
+  operations?: { data_integrity?: { summary?: { version_rows:number; tracked_records:number; unresolved_quarantine:number }; quarantine?: IntegrityQuarantine[] } };
+};
 
 const tabs = [
   ["dashboard","Command Dashboard", Gauge],
@@ -99,6 +103,11 @@ export default function PlatformAdminPage() {
   async function toggleFlag(flag:FlagRow) {
     if(!superAdmin) return;
     await apiPost("/platform-admin/feature-flags/", {key:flag.key,enabled:!flag.enabled});
+    await load();
+  }
+  async function retryQuarantine(id:number) {
+    if(!superAdmin) return;
+    await apiPost(`/platform-admin/data-integrity/quarantine/${id}/retry/`, {});
     await load();
   }
   async function setMode(mode:"normal"|"maintenance") {
@@ -188,7 +197,18 @@ export default function PlatformAdminPage() {
     </div>)}</div></section></main>}
 
     {tab==="system" && <main className="platform-admin-stack">
-      <section className="platform-admin-panel"><header><h2>Connector & system health</h2><p>Uses ForgeGov’s existing connector registry and health services.</p></header>
+      <section className="platform-admin-panel"><header><h2>Connector & system health</h2><p>Live readiness, connector health, sync freshness, source history, and quarantine state.</p></header>
+        {system.operations?.data_integrity?.summary && <div className="platform-admin-metrics">
+          <div><ClipboardList/><span>Tracked records</span><strong>{system.operations.data_integrity.summary.tracked_records}</strong><small>{system.operations.data_integrity.summary.version_rows} source versions</small></div>
+          <div><Wrench/><span>Quarantine</span><strong>{system.operations.data_integrity.summary.unresolved_quarantine}</strong><small>Unresolved source records</small></div>
+        </div>}
+        {(system.operations?.data_integrity?.quarantine?.length ?? 0) > 0 && <div className="platform-admin-table">
+          {system.operations?.data_integrity?.quarantine?.map(row=><div className="platform-admin-record" key={row.id}>
+            <div><b>{row.source} · {row.record_type}</b><span>{row.source_id || "No source ID"} · {row.reason} · seen {row.occurrences}x</span></div>
+            <em className="state-suspended">quarantined</em>
+            <div className="platform-admin-actions"><button disabled={!superAdmin} onClick={()=>void retryQuarantine(row.id)}>Retry</button></div>
+          </div>)}
+        </div>}
         <pre className="platform-admin-json">{JSON.stringify(system,null,2)}</pre>
       </section>
     </main>}

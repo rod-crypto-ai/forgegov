@@ -8,7 +8,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-        ("core", "__latest__"),
+        ("core", "0026_mfa_sessions_passkeys"),
     ]
 
     operations = [

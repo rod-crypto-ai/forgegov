@@ -9,6 +9,7 @@ from rest_framework.test import APIClient
 from .models import DataSyncRun
 from .observability import redact
 from .reliability import readiness_payload, sync_freshness
+from .version import VERSION as FORGEGOV_VERSION
 
 
 class ReliabilityV307Tests(SimpleTestCase):
@@ -17,10 +18,10 @@ class ReliabilityV307Tests(SimpleTestCase):
     def test_readiness_payload_is_ready_when_critical_dependencies_are_healthy(self, database, cache):
         payload = readiness_payload()
         self.assertEqual(payload["status"], "ready")
-        self.assertEqual(payload["version"], "3.0.7")
+        self.assertEqual(payload["version"], FORGEGOV_VERSION)
 
     @patch("core.views.readiness_payload", return_value={
-        "status": "not_ready", "service": "forgegov-api", "product": "ForgeGov", "version": "3.0.7",
+        "status": "not_ready", "service": "forgegov-api", "product": "ForgeGov", "version": FORGEGOV_VERSION,
         "checks": {"database": {"status": "unavailable"}, "cache": {"status": "healthy"}},
     })
     def test_ready_endpoint_returns_503_when_dependency_is_down(self, payload):
@@ -29,13 +30,13 @@ class ReliabilityV307Tests(SimpleTestCase):
         self.assertEqual(response.json()["status"], "not_ready")
 
     @patch("core.views.readiness_payload", return_value={
-        "status": "ready", "service": "forgegov-api", "product": "ForgeGov", "version": "3.0.7",
+        "status": "ready", "service": "forgegov-api", "product": "ForgeGov", "version": FORGEGOV_VERSION,
         "checks": {"database": {"status": "healthy"}, "cache": {"status": "healthy"}},
     })
     def test_ready_endpoint_returns_200_when_dependencies_are_healthy(self, payload):
         response = APIClient().get("/api/ready/")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "3.0.7")
+        self.assertEqual(response.json()["version"], FORGEGOV_VERSION)
         self.assertTrue(response["X-Request-ID"])
 
     def test_log_redaction_masks_common_credentials(self):
@@ -68,8 +69,8 @@ class PlatformSystemReliabilityV307Tests(TestCase):
 
     @patch("core.intelligence.services.award_ingestion.connector_registry_payload", return_value={"connectors": []})
     @patch("core.intelligence.services.connectors.connector_health", return_value={"connectors": [], "summary": {"total": 0, "healthy": 0, "attention": 0}})
-    @patch("core.reliability.operational_health", return_value={"status": "ready", "version": "3.0.7"})
+    @patch("core.reliability.operational_health", return_value={"status": "ready", "version": FORGEGOV_VERSION})
     def test_platform_system_includes_operational_health(self, operations, connectors, registry):
         response = self.client.get("/api/platform-admin/system/")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["operations"]["version"], "3.0.7")
+        self.assertEqual(response.json()["operations"]["version"], FORGEGOV_VERSION)

@@ -95,6 +95,8 @@ def sync_freshness() -> dict[str, Any]:
         age_hours = max(0.0, (now - reference_time).total_seconds() / 3600)
         if latest.status == DataSyncRun.Status.FAILED:
             state = "failed"
+        elif latest.status == DataSyncRun.Status.PARTIAL:
+            state = "partial"
         elif latest.status == DataSyncRun.Status.RUNNING:
             state = "running"
         elif age_hours > threshold_hours:
@@ -134,6 +136,7 @@ def readiness_payload() -> dict[str, Any]:
 
 def operational_health(*, probe_connectors: bool = True) -> dict[str, Any]:
     from .intelligence.services.connectors import connector_health
+    from .integration_resilience import data_integrity_payload
 
     readiness = readiness_payload()
     try:
@@ -151,5 +154,6 @@ def operational_health(*, probe_connectors: bool = True) -> dict[str, Any]:
         "critical": readiness["checks"],
         "workers": celery_health(),
         "sync_freshness": sync_freshness(),
+        "data_integrity": data_integrity_payload(limit=10),
         "connectors": connectors,
     }

@@ -14,4 +14,6 @@ urlpatterns = [
     path("platform-state/", views.platform_state),
     path("audit/", views.audit_events),
     path("system/", views.system_operations),
+    path("data-integrity/", views.data_integrity),
+    path("data-integrity/quarantine/<int:quarantine_id>/retry/", views.retry_quarantine),
 ]

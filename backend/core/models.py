@@ -307,6 +307,7 @@ class DataSyncRun(TimeStampedModel):
     class Status(models.TextChoices):
         RUNNING = "running", "Running"
         SUCCESS = "success", "Success"
+        PARTIAL = "partial", "Partial"
         FAILED = "failed", "Failed"
 
     source = models.CharField(max_length=80)
@@ -501,6 +502,61 @@ class AwardSyncRun(TimeStampedModel):
 
     class Meta:
         ordering = ["-created_at"]
+
+
+class SourceRecordVersion(TimeStampedModel):
+    source = models.CharField(max_length=80, db_index=True)
+    record_type = models.CharField(max_length=80, db_index=True)
+    source_id = models.CharField(max_length=255, db_index=True)
+    fingerprint = models.CharField(max_length=64, db_index=True)
+    source_modified_at = models.DateTimeField(null=True, blank=True)
+    observed_at = models.DateTimeField(default=timezone.now, db_index=True)
+    last_seen_at = models.DateTimeField(default=timezone.now, db_index=True)
+    provenance = models.JSONField(default=dict, blank=True)
+    raw_data = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-observed_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("source", "record_type", "source_id", "fingerprint"),
+                name="uniq_source_record_version_fingerprint",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["source", "record_type", "source_id", "-observed_at"], name="srcver_source_record_idx"),
+        ]
+
+
+class SyncQuarantine(TimeStampedModel):
+    source = models.CharField(max_length=80, db_index=True)
+    record_type = models.CharField(max_length=80, db_index=True)
+    source_id = models.CharField(max_length=255, blank=True, db_index=True)
+    payload_hash = models.CharField(max_length=64, db_index=True)
+    reason = models.CharField(max_length=120)
+    error_message = models.CharField(max_length=1000, blank=True)
+    raw_data = models.JSONField(default=dict, blank=True)
+    occurrences = models.PositiveIntegerField(default=1)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolution_note = models.CharField(max_length=1000, blank=True)
+    data_sync_run = models.ForeignKey(
+        DataSyncRun, null=True, blank=True, on_delete=models.SET_NULL, related_name="quarantine_records"
+    )
+    award_sync_run = models.ForeignKey(
+        AwardSyncRun, null=True, blank=True, on_delete=models.SET_NULL, related_name="quarantine_records"
+    )
+
+    class Meta:
+        ordering = ["-updated_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("source", "record_type", "payload_hash"),
+                name="uniq_quarantine_source_record_hash",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["source", "resolved_at", "-updated_at"], name="quarantine_source_state_idx"),
+        ]
 
 
 class Contact(TimeStampedModel):
