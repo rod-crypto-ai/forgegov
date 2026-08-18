@@ -1,3 +1,4 @@
+from .version import VERSION as FORGEGOV_VERSION
 from .models import OpportunityWorkspace
 from unittest.mock import Mock, patch
 from datetime import timedelta
@@ -25,7 +26,6 @@ from .integrations import (
     upsert_sam_opportunity,
 )
 from .ai import live_web_status
-from .version import VERSION as FORGEGOV_VERSION
 from .capture_intelligence import build_capture_assessment
 from .win_strategy import build_win_strategy
 from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Task, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, ProjectRoomActivity, OrganizationProfile, NetworkConnection, ProjectRoomInvitation, OrganizationJoinRequest, AwardSyncRun, ConnectorSource, AccountActionToken, OrganizationSecurityPolicy, UserSecurityProfile, ProjectRoomMember, AIConversation, AIMessage, OpportunityDocument, ProposalPlan, PricingPlan, PortfolioSnapshot, AuditLog

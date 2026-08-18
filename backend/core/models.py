@@ -113,6 +113,8 @@ class OrganizationSecurityPolicy(TimeStampedModel):
     organization = models.OneToOneField(Organization, on_delete=models.CASCADE, related_name="security_policy")
     require_mfa = models.BooleanField(default=False)
     require_mfa_for_financial_roles = models.BooleanField(default=False)
+    require_mfa_for_exports = models.BooleanField(default=False)
+    require_mfa_for_project_room_admin = models.BooleanField(default=False)
     session_max_days = models.PositiveSmallIntegerField(default=7)
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="updated_org_security_policies")
 
@@ -1246,13 +1248,20 @@ class ProjectRoomPartner(TimeStampedModel):
     can_upload = models.BooleanField(default=True)
     can_comment = models.BooleanField(default=True)
     can_view_pricing = models.BooleanField(default=False)
+    can_view_sensitive_documents = models.BooleanField(default=False)
+    can_export = models.BooleanField(default=False)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
     invited_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="project_room_partner_invites")
 
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=("project_room", "organization"), name="unique_project_room_partner"),
         ]
-        indexes = [models.Index(fields=["organization", "project_room"], name="core_projec_organiz_5d07a0_idx")]
+        indexes = [
+            models.Index(fields=["organization", "project_room"], name="core_projec_organiz_5d07a0_idx"),
+            models.Index(fields=["project_room", "revoked_at", "expires_at"], name="core_prpartner_access_idx"),
+        ]
 
 
 class ProjectRoomTask(TimeStampedModel):
@@ -1320,6 +1329,7 @@ class ProjectRoomFile(TimeStampedModel):
         INTERNAL = "internal", "Owner Company Only"
         SHARED = "shared", "All Project Room Participants"
         PRICING = "pricing", "Pricing Authorized Participants"
+        SENSITIVE = "sensitive", "Sensitive Document Authorized Participants"
 
     project_room = models.ForeignKey(ProjectRoom, on_delete=models.CASCADE, related_name="collaboration_files")
     name = models.CharField(max_length=500)
@@ -1548,6 +1558,9 @@ class ProjectRoomInvitation(TimeStampedModel):
     can_upload = models.BooleanField(default=True)
     can_comment = models.BooleanField(default=True)
     can_view_pricing = models.BooleanField(default=False)
+    can_view_sensitive_documents = models.BooleanField(default=False)
+    can_export = models.BooleanField(default=False)
+    partner_expires_at = models.DateTimeField(null=True, blank=True)
     message = models.TextField(blank=True)
     expires_at = models.DateTimeField(null=True, blank=True)
     last_sent_at = models.DateTimeField(null=True, blank=True)

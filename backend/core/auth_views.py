@@ -726,6 +726,8 @@ def security_overview(request):
         "organization_security": {
             "require_mfa": bool(policy and policy.require_mfa),
             "require_mfa_for_financial_roles": bool(policy and policy.require_mfa_for_financial_roles),
+            "require_mfa_for_exports": bool(policy and policy.require_mfa_for_exports),
+            "require_mfa_for_project_room_admin": bool(policy and policy.require_mfa_for_project_room_admin),
             "session_max_days": policy.session_max_days if policy else 7,
             "can_manage": bool(membership and membership.role in {Membership.Role.OWNER, Membership.Role.ADMIN}),
         },
@@ -989,6 +991,10 @@ def organization_security_policy(request):
         policy.require_mfa = desired_require_mfa
         if "require_mfa_for_financial_roles" in request.data:
             policy.require_mfa_for_financial_roles = bool(request.data.get("require_mfa_for_financial_roles"))
+        if "require_mfa_for_exports" in request.data:
+            policy.require_mfa_for_exports = bool(request.data.get("require_mfa_for_exports"))
+        if "require_mfa_for_project_room_admin" in request.data:
+            policy.require_mfa_for_project_room_admin = bool(request.data.get("require_mfa_for_project_room_admin"))
         if "session_max_days" in request.data:
             policy.session_max_days = max(1, min(int(request.data.get("session_max_days") or 7), 7))
         policy.updated_by = request.user
@@ -997,6 +1003,8 @@ def organization_security_policy(request):
     return Response({
         "require_mfa": policy.require_mfa,
         "require_mfa_for_financial_roles": policy.require_mfa_for_financial_roles,
+        "require_mfa_for_exports": policy.require_mfa_for_exports,
+        "require_mfa_for_project_room_admin": policy.require_mfa_for_project_room_admin,
         "session_max_days": policy.session_max_days,
     })
 

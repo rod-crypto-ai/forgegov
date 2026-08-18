@@ -342,14 +342,14 @@ class ProjectRoomPartnerSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ProjectRoomPartner
-        fields = ("id", "project_room", "organization", "organization_name", "access_level", "can_upload", "can_comment", "can_view_pricing", "created_at", "updated_at")
-        read_only_fields = ("id", "project_room", "organization_name", "created_at", "updated_at")
+        fields = ("id", "project_room", "organization", "organization_name", "access_level", "can_upload", "can_comment", "can_view_pricing", "can_view_sensitive_documents", "can_export", "expires_at", "revoked_at", "created_at", "updated_at")
+        read_only_fields = ("id", "project_room", "organization", "organization_name", "revoked_at", "created_at", "updated_at")
 
 
 class ProjectRoomSerializer(serializers.ModelSerializer):
     owner_organization_name = serializers.CharField(source="owner_organization.name", read_only=True)
     opportunity_detail = OpportunitySerializer(source="opportunity", read_only=True)
-    partners = ProjectRoomPartnerSerializer(many=True, read_only=True)
+    partners = serializers.SerializerMethodField()
     linked_pipeline_items = serializers.SerializerMethodField()
 
     class Meta:
@@ -357,7 +357,21 @@ class ProjectRoomSerializer(serializers.ModelSerializer):
         fields = ("id", "owner_organization", "owner_organization_name", "opportunity", "opportunity_detail", "name", "description", "status", "archived_at", "deleted_at", "created_by", "partners", "linked_pipeline_items", "created_at", "updated_at")
         read_only_fields = ("id", "owner_organization", "created_by", "archived_at", "deleted_at", "created_at", "updated_at")
 
+    def _request_membership(self):
+        request = self.context.get("request")
+        return active_membership(getattr(request, "user", None)) if request else None
+
+    def get_partners(self, obj):
+        membership = self._request_membership()
+        qs = obj.partners.select_related("organization").filter(revoked_at__isnull=True)
+        if membership and membership.organization_id != obj.owner_organization_id:
+            qs = qs.filter(organization_id=membership.organization_id)
+        return ProjectRoomPartnerSerializer(qs, many=True).data
+
     def get_linked_pipeline_items(self, obj):
+        membership = self._request_membership()
+        if not membership or membership.organization_id != obj.owner_organization_id:
+            return []
         return [{"id": row.id, "title": row.opportunity.title, "stage": row.stage, "owner_name": (row.owner.get_full_name() or row.owner.email) if row.owner else "", "next_action": row.next_action, "follow_up_date": row.follow_up_date.isoformat() if row.follow_up_date else None} for row in obj.pipeline_items.select_related("opportunity", "owner").all()]
 
 
@@ -493,5 +507,5 @@ class ProjectRoomInvitationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ProjectRoomInvitation
-        fields = ("id", "project_room", "project_room_name", "owner_organization_name", "invited_organization", "invited_organization_name", "status", "access_level", "can_upload", "can_comment", "can_view_pricing", "message", "expires_at", "last_sent_at", "resend_count", "invited_by", "responded_by", "responded_at", "created_at", "updated_at")
+        fields = ("id", "project_room", "project_room_name", "owner_organization_name", "invited_organization", "invited_organization_name", "status", "access_level", "can_upload", "can_comment", "can_view_pricing", "can_view_sensitive_documents", "can_export", "partner_expires_at", "message", "expires_at", "last_sent_at", "resend_count", "invited_by", "responded_by", "responded_at", "created_at", "updated_at")
         read_only_fields = ("id", "project_room_name", "owner_organization_name", "invited_organization_name", "status", "last_sent_at", "resend_count", "invited_by", "responded_by", "responded_at", "created_at", "updated_at")

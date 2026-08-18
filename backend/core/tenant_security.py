@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from django.db.models import Q
+from django.utils import timezone
 from rest_framework.permissions import BasePermission, SAFE_METHODS
+from rest_framework.exceptions import PermissionDenied
 
 from .models import (
     AuditLog,
@@ -15,6 +17,7 @@ from .models import (
     ProjectRoomPartner,
 )
 from .permissions import active_membership
+from .security_services import org_security_policy, recent_step_up, session_from_token
 
 
 FINANCIAL_ROLES = {
@@ -46,6 +49,20 @@ EXECUTIVE_FINANCIAL_ROLES = {
 COMPANY_ADMIN_ROLES = {
     Membership.Role.OWNER,
     Membership.Role.ADMIN,
+}
+EXPORT_ROLES = {
+    Membership.Role.OWNER,
+    Membership.Role.ADMIN,
+    Membership.Role.CAPTURE,
+    Membership.Role.PROPOSAL,
+    Membership.Role.PRICING,
+}
+SENSITIVE_DOCUMENT_ROLES = {
+    Membership.Role.OWNER,
+    Membership.Role.ADMIN,
+    Membership.Role.CAPTURE,
+    Membership.Role.PROPOSAL,
+    Membership.Role.PRICING,
 }
 
 
@@ -95,6 +112,8 @@ def membership_capabilities(membership: Membership | None) -> dict[str, bool]:
         "submission_control": role in SUBMISSION_ROLES,
         "executive_financial": role in EXECUTIVE_FINANCIAL_ROLES,
         "project_room_manage": role in COMPANY_ADMIN_ROLES,
+        "export_data": role in EXPORT_ROLES,
+        "sensitive_documents": role in SENSITIVE_DOCUMENT_ROLES,
     }
 
 
@@ -143,6 +162,43 @@ class IsExecutiveFinancialMember(RoleCapabilityPermission):
     allowed_write_roles = EXECUTIVE_FINANCIAL_ROLES
 
 
+class IsExportMember(RoleCapabilityPermission):
+    capability = "export_data"
+    allowed_read_roles = EXPORT_ROLES
+    allowed_write_roles = EXPORT_ROLES
+
+
+def role_capability_matrix() -> dict[str, dict[str, bool]]:
+    return {
+        role: membership_capabilities(type("MembershipRole", (), {"role": role})())
+        for role, _ in Membership.Role.choices
+    }
+
+
+def enforce_governance_step_up(request, *, purpose: str, organization: Organization | None = None):
+    membership = active_membership(request.user)
+    organization = organization or (membership.organization if membership else None)
+    if not organization:
+        raise PermissionDenied("A valid workspace membership is required.")
+    policy = org_security_policy(organization)
+    required = (
+        bool(policy.require_mfa_for_exports) if purpose == "export"
+        else bool(policy.require_mfa_for_project_room_admin) if purpose == "project_room_admin"
+        else False
+    )
+    if not required:
+        return
+    session = session_from_token(request.auth, user=request.user)
+    if not recent_step_up(session):
+        audit_denied(
+            request,
+            organization=organization,
+            capability=f"{purpose}_step_up",
+            reason="recent_authentication_required",
+        )
+        raise PermissionDenied("Recent authentication is required for this protected action.")
+
+
 @dataclass(frozen=True)
 class ProjectRoomAccess:
     room: ProjectRoom
@@ -163,7 +219,26 @@ class ProjectRoomAccess:
 
     @property
     def can_view_pricing(self) -> bool:
-        return self.owner or bool(self.partner and self.partner.can_view_pricing)
+        if self.owner:
+            return bool(self.member and self.member.membership.role in FINANCIAL_ROLES)
+        return bool(self.partner and self.partner.can_view_pricing)
+
+    @property
+    def can_view_sensitive_documents(self) -> bool:
+        if self.owner:
+            return bool(self.member and self.member.membership.role in SENSITIVE_DOCUMENT_ROLES)
+        return bool(self.partner and self.partner.can_view_sensitive_documents)
+
+    @property
+    def can_export(self) -> bool:
+        if self.owner:
+            return bool(self.member and self.member.membership.role in EXPORT_ROLES)
+        return bool(
+            self.partner
+            and self.partner.can_export
+            and self.member
+            and self.member.role != ProjectRoomMember.Role.VIEWER
+        )
 
     @property
     def can_upload(self) -> bool:
@@ -198,7 +273,9 @@ def accessible_project_rooms(request):
     organization = membership.organization
 
     owner_filter = Q(owner_organization=organization)
-    partner_filter = Q(partners__organization=organization)
+    partner_filter = Q(partners__organization=organization, partners__revoked_at__isnull=True) & (
+        Q(partners__expires_at__isnull=True) | Q(partners__expires_at__gt=timezone.now())
+    )
     if membership.role not in COMPANY_ADMIN_ROLES:
         owner_filter &= Q(members__membership=membership)
         partner_filter &= Q(members__membership=membership)
@@ -268,8 +345,17 @@ def project_room_access(request, room_id: int) -> ProjectRoomAccess | None:
         partner = ProjectRoomPartner.objects.filter(
             project_room=room,
             organization=organization,
-        ).first()
+            revoked_at__isnull=True,
+        ).filter(Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now())).first()
         if not partner:
+            audit_denied(
+                request,
+                organization=organization,
+                capability="project_room",
+                object_type="project_room",
+                object_id=room_id,
+                reason="partner_access_expired_or_revoked",
+            )
             return None
         member = ProjectRoomMember.objects.filter(
             project_room=room,
@@ -303,10 +389,18 @@ def project_room_access(request, room_id: int) -> ProjectRoomAccess | None:
     )
 
 
-def filter_project_room_visibility(queryset, access: ProjectRoomAccess, *, allow_pricing: bool = False):
-    if access.owner:
-        return queryset
+def filter_project_room_visibility(
+    queryset,
+    access: ProjectRoomAccess,
+    *,
+    allow_pricing: bool = False,
+    allow_sensitive: bool = False,
+):
     visibilities = ["shared"]
+    if access.owner:
+        visibilities.append("internal")
     if allow_pricing and access.can_view_pricing:
         visibilities.append("pricing")
+    if allow_sensitive and access.can_view_sensitive_documents:
+        visibilities.append("sensitive")
     return queryset.filter(visibility__in=visibilities)

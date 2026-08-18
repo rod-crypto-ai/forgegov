@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework import status, viewsets
 from rest_framework.decorators import api_view, throttle_classes, permission_classes
 from rest_framework.response import Response
@@ -14,11 +15,14 @@ from .tenant_security import (
     IsFinancialMember,
     IsProposalMember,
     IsSubmissionController,
+    IsExportMember,
     accessible_project_rooms,
     audit_denied,
     filter_project_room_visibility,
     membership_capabilities,
     project_room_access,
+    role_capability_matrix,
+    enforce_governance_step_up,
 )
 from .ai import OpenAIIntegrationError, ask_ai, live_web_status
 
@@ -149,6 +153,17 @@ def _truthy(value: str | None) -> bool:
     return str(value or "").lower() in {"1", "true", "yes", "on"}
 
 
+def _partner_access_expiry(value, *, default_days: int = 90):
+    if not value:
+        return timezone.now() + timedelta(days=default_days)
+    if isinstance(value, str):
+        parsed = parse_datetime(value)
+        if parsed is None:
+            raise ValueError("partner_expires_at must be an ISO-8601 date/time.")
+        return parsed
+    return value
+
+
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
@@ -161,6 +176,18 @@ def ready(request):
     payload = readiness_payload()
     code = status.HTTP_200_OK if payload["status"] == "ready" else status.HTTP_503_SERVICE_UNAVAILABLE
     return Response(payload, status=code)
+
+
+@api_view(["GET"])
+def governance_role_matrix(request):
+    membership = active_membership(request.user)
+    if not membership:
+        return Response({"detail": "No active workspace membership."}, status=403)
+    return Response({
+        "role": membership.role,
+        "capabilities": membership_capabilities(membership),
+        "matrix": role_capability_matrix(),
+    })
 
 
 @api_view(["GET", "POST"])
@@ -1370,7 +1397,9 @@ class ProjectRoomViewSet(viewsets.ModelViewSet):
         owner_filter = Q(owner_organization=organization)
         if membership.role not in {Membership.Role.OWNER, Membership.Role.ADMIN}:
             owner_filter &= Q(members__membership=membership)
-        partner_filter = Q(partners__organization=organization)
+        partner_filter = Q(partners__organization=organization, partners__revoked_at__isnull=True) & (
+            Q(partners__expires_at__isnull=True) | Q(partners__expires_at__gt=timezone.now())
+        )
         if membership.role not in {Membership.Role.OWNER, Membership.Role.ADMIN}:
             partner_filter &= Q(members__membership=membership)
         return ProjectRoom.objects.filter(deleted_at__isnull=True).filter(
@@ -1393,6 +1422,7 @@ class ProjectRoomViewSet(viewsets.ModelViewSet):
             from rest_framework.exceptions import PermissionDenied
             audit_denied(self.request, organization=membership.organization, capability="project_room_manage", object_type="project_room", object_id=room.id, reason="owner_admin_required")
             raise PermissionDenied("Only company owners and administrators can modify this Project Room.")
+        enforce_governance_step_up(self.request, purpose="project_room_admin", organization=membership.organization)
         serializer.save()
 
     def perform_destroy(self, instance):
@@ -1401,6 +1431,7 @@ class ProjectRoomViewSet(viewsets.ModelViewSet):
             from rest_framework.exceptions import PermissionDenied
             audit_denied(self.request, organization=membership.organization, capability="project_room_manage", object_type="project_room", object_id=instance.id, reason="owner_admin_required")
             raise PermissionDenied("Only company owners and administrators can delete this Project Room.")
+        enforce_governance_step_up(self.request, purpose="project_room_admin", organization=membership.organization)
         instance.deleted_at = timezone.now()
         instance.status = ProjectRoom.Status.CLOSED
         instance.save(update_fields=["deleted_at", "status", "updated_at"])
@@ -1416,6 +1447,7 @@ def project_room_partner(request, room_id: int):
     room = ProjectRoom.objects.filter(pk=room_id, owner_organization=organization).first()
     if not room:
         return Response({"detail": "Only the owning company can manage Project Room partners."}, status=status.HTTP_403_FORBIDDEN)
+    enforce_governance_step_up(request, purpose="project_room_admin", organization=organization)
     partner_org_id = request.data.get("organization")
     if not partner_org_id:
         return Response({"detail": "Partner organization is required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -1423,7 +1455,11 @@ def project_room_partner(request, room_id: int):
     if not partner_org:
         return Response({"detail": "Partner organization not found."}, status=status.HTTP_404_NOT_FOUND)
     if request.method == "DELETE":
-        ProjectRoomPartner.objects.filter(project_room=room, organization=partner_org).delete()
+        partner = ProjectRoomPartner.objects.filter(project_room=room, organization=partner_org).first()
+        if partner:
+            partner.revoked_at = timezone.now()
+            partner.save(update_fields=["revoked_at", "updated_at"])
+            ProjectRoomMember.objects.filter(project_room=room, membership__organization=partner_org).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
     partner, _ = ProjectRoomPartner.objects.update_or_create(
         project_room=room, organization=partner_org,
@@ -1432,6 +1468,10 @@ def project_room_partner(request, room_id: int):
             "can_upload": bool(request.data.get("can_upload", True)),
             "can_comment": bool(request.data.get("can_comment", True)),
             "can_view_pricing": bool(request.data.get("can_view_pricing", False)),
+            "can_view_sensitive_documents": bool(request.data.get("can_view_sensitive_documents", False)),
+            "can_export": bool(request.data.get("can_export", False)),
+            "expires_at": _partner_access_expiry(request.data.get("expires_at")),
+            "revoked_at": None,
             "invited_by": request.user,
         },
     )
@@ -2214,9 +2254,10 @@ def opportunity_submission_control(request, source_id: str):
 
 
 @api_view(["GET"])
-@permission_classes([ReadOnlyOrContributor])
+@permission_classes([IsExportMember])
 def opportunity_submission_export(request, source_id: str, export_format: str):
     organization = _request_organization(request)
+    enforce_governance_step_up(request, purpose="export", organization=organization)
     opportunity = _opportunity_for_source(source_id)
     if not opportunity:
         return Response({"detail": "Opportunity not found."}, status=404)
@@ -2274,13 +2315,16 @@ def project_room_access_management(request, room_id):
     organization = access.organization
     room = access.room
 
+    if request.method != "GET":
+        enforce_governance_step_up(request, purpose="project_room_admin", organization=organization)
+
     if request.method == "GET":
         if access.owner:
             internal_members = ProjectRoomMember.objects.filter(
                 project_room=room,
                 membership__organization=organization,
             ).select_related("membership__user", "membership")
-            partners = ProjectRoomPartner.objects.filter(project_room=room).select_related("organization")
+            partners = ProjectRoomPartner.objects.filter(project_room=room, revoked_at__isnull=True).select_related("organization")
         else:
             # Partner admins manage only users from their own company. They do
             # not receive the owner company's internal room roster.
@@ -2300,6 +2344,14 @@ def project_room_access_management(request, room_id):
             "members": ProjectRoomMemberSerializer(internal_members, many=True).data,
             "available_members": MembershipSerializer(available_members, many=True).data,
             "partners": ProjectRoomPartnerSerializer(partners, many=True).data,
+            "effective_access": {
+                "can_contribute": access.can_contribute,
+                "can_upload": access.can_upload,
+                "can_comment": access.can_comment,
+                "can_view_pricing": access.can_view_pricing,
+                "can_view_sensitive_documents": access.can_view_sensitive_documents,
+                "can_export": access.can_export,
+            },
         })
 
     kind = str(request.data.get("kind") or "member")
@@ -2352,8 +2404,9 @@ def project_room_access_management(request, room_id):
             project_room=room,
             membership__organization=partner_row.organization,
         ).delete()
-        partner_row.delete()
-        _log_room_activity(room, request.user, "partner_removed", f"Removed partner company {partner_name}.", visibility="internal")
+        partner_row.revoked_at = timezone.now()
+        partner_row.save(update_fields=["revoked_at", "updated_at"])
+        _log_room_activity(room, request.user, "partner_removed", f"Revoked partner company {partner_name}.", visibility="internal")
         return Response(status=204)
 
     serializer = ProjectRoomPartnerSerializer(partner_row, data=request.data, partial=True)
@@ -2464,18 +2517,58 @@ def project_room_files(request, room_id):
             ProjectRoomFile.objects.filter(project_room=access.room).select_related("uploaded_by"),
             access,
             allow_pricing=True,
+            allow_sensitive=True,
         )
         return Response(ProjectRoomFileSerializer(qs, many=True).data)
     if not access.can_upload:
         return Response({"detail": "This company cannot add files to this room."}, status=403)
     visibility = str(request.data.get("visibility") or "shared")
-    if visibility in {"internal", "pricing"} and not access.owner:
+    if visibility in {"internal", "pricing", "sensitive"} and not access.owner:
         return Response({"detail": "Only the owner company can create restricted files."}, status=403)
+    if visibility == "pricing" and not access.can_view_pricing:
+        audit_denied(request, organization=access.organization, capability="pricing_file_create", object_type="project_room", object_id=room_id, reason="financial_role_required")
+        return Response({"detail": "Financial Sensitive access is required to create pricing-restricted files."}, status=403)
+    if visibility == "sensitive" and not access.can_view_sensitive_documents:
+        audit_denied(request, organization=access.organization, capability="sensitive_file_create", object_type="project_room", object_id=room_id, reason="sensitive_document_role_required")
+        return Response({"detail": "Sensitive Document access is required to create this file."}, status=403)
     serializer = ProjectRoomFileSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     file_row = serializer.save(project_room=access.room, uploaded_by=request.user, visibility=visibility)
-    _log_room_activity(access.room, request.user, "file_added", f"Added file: {file_row.name}", visibility="internal" if visibility == "pricing" else visibility, object_type="file", object_id=file_row.id)
+    _log_room_activity(access.room, request.user, "file_added", f"Added file: {file_row.name}", visibility="internal" if visibility in {"pricing", "sensitive"} else visibility, object_type="file", object_id=file_row.id)
     return Response(ProjectRoomFileSerializer(file_row).data, status=201)
+
+@api_view(["GET"])
+def project_room_export(request, room_id):
+    access = _room_security_access(request, room_id)
+    if not access:
+        return Response({"detail": "Project Room not found."}, status=404)
+    if not access.can_export:
+        audit_denied(request, organization=access.organization, capability="project_room_export", object_type="project_room", object_id=room_id, reason="export_permission_required")
+        return Response({"detail": "Export permission is required for this Project Room."}, status=403)
+    enforce_governance_step_up(request, purpose="export", organization=access.organization)
+    tasks = filter_project_room_visibility(ProjectRoomTask.objects.filter(project_room=access.room), access)
+    comments = filter_project_room_visibility(ProjectRoomComment.objects.filter(project_room=access.room), access)
+    notes = filter_project_room_visibility(ProjectRoomNote.objects.filter(project_room=access.room), access)
+    files = filter_project_room_visibility(
+        ProjectRoomFile.objects.filter(project_room=access.room),
+        access,
+        allow_pricing=True,
+        allow_sensitive=True,
+    )
+    _log_room_activity(access.room, request.user, "room_exported", "Exported authorized Project Room data.", visibility="internal" if access.owner else "shared")
+    return Response({
+        "project_room": ProjectRoomSerializer(access.room, context={"request": request}).data,
+        "effective_access": {
+            "can_view_pricing": access.can_view_pricing,
+            "can_view_sensitive_documents": access.can_view_sensitive_documents,
+            "can_export": access.can_export,
+        },
+        "tasks": ProjectRoomTaskSerializer(tasks, many=True).data,
+        "comments": ProjectRoomCommentSerializer(comments, many=True).data,
+        "notes": ProjectRoomNoteSerializer(notes, many=True).data,
+        "files": ProjectRoomFileSerializer(files, many=True).data,
+    })
+
 
 @api_view(["GET"])
 def project_room_activity(request, room_id):
@@ -2627,9 +2720,13 @@ def naics_catalog(request):
 @permission_classes([ReadOnlyOrContributor])
 def project_room_invitations(request):
     organization = _request_organization(request)
+    membership = active_membership(request.user)
     if request.method == "GET":
         rows = ProjectRoomInvitation.objects.filter(Q(invited_organization=organization) | Q(project_room__owner_organization=organization)).select_related("project_room", "project_room__owner_organization", "invited_organization")
         return Response(ProjectRoomInvitationSerializer(rows, many=True).data)
+    if not membership or membership.role not in {Membership.Role.OWNER, Membership.Role.ADMIN}:
+        audit_denied(request, organization=organization, capability="project_room_invitation_create", object_type="project_room", object_id=request.data.get("project_room") or "", reason="owner_admin_required")
+        return Response({"detail": "Only company owners and administrators can invite partner companies."}, status=status.HTTP_403_FORBIDDEN)
     room = ProjectRoom.objects.filter(pk=request.data.get("project_room"), owner_organization=organization).first()
     invited_org = Organization.objects.filter(pk=request.data.get("invited_organization")).exclude(pk=organization.pk).first()
     if not room or not invited_org:
@@ -2637,7 +2734,8 @@ def project_room_invitations(request):
     connection = _network_connection_between(organization, invited_org)
     if not connection or connection.status != NetworkConnection.Status.ACCEPTED:
         return Response({"detail": "Connect with this company before inviting it to a Project Room."}, status=status.HTTP_403_FORBIDDEN)
-    row, created = ProjectRoomInvitation.objects.update_or_create(project_room=room, invited_organization=invited_org, status=ProjectRoomInvitation.Status.PENDING, defaults={"invited_by": request.user, "access_level": request.data.get("access_level", ProjectRoomPartner.AccessLevel.PARTNER), "can_upload": bool(request.data.get("can_upload", True)), "can_comment": bool(request.data.get("can_comment", True)), "can_view_pricing": bool(request.data.get("can_view_pricing", False)), "message": str(request.data.get("message") or "")[:2000], "expires_at": timezone.now()+timedelta(days=14), "last_sent_at": timezone.now()})
+    enforce_governance_step_up(request, purpose="project_room_admin", organization=organization)
+    row, created = ProjectRoomInvitation.objects.update_or_create(project_room=room, invited_organization=invited_org, status=ProjectRoomInvitation.Status.PENDING, defaults={"invited_by": request.user, "access_level": request.data.get("access_level", ProjectRoomPartner.AccessLevel.PARTNER), "can_upload": bool(request.data.get("can_upload", True)), "can_comment": bool(request.data.get("can_comment", True)), "can_view_pricing": bool(request.data.get("can_view_pricing", False)), "can_view_sensitive_documents": bool(request.data.get("can_view_sensitive_documents", False)), "can_export": bool(request.data.get("can_export", False)), "partner_expires_at": _partner_access_expiry(request.data.get("partner_expires_at")), "message": str(request.data.get("message") or "")[:2000], "expires_at": timezone.now()+timedelta(days=14), "last_sent_at": timezone.now()})
     link = f"/network?tab=invitations"
     notify_organization_members(organization=invited_org, title=f"Project Room invitation: {room.name}", message=f"{organization.name} invited your company to collaborate.", kind="project_room_invitation", link=link, project_room=room)
     for member in Membership.objects.filter(organization=invited_org, active=True, role__in=[Membership.Role.OWNER, Membership.Role.ADMIN]).select_related("user"):
@@ -2654,6 +2752,7 @@ def project_room_invitation_manage(request, invitation_id: int):
     if not membership or membership.role not in {Membership.Role.OWNER, Membership.Role.ADMIN}:
         audit_denied(request, organization=organization, capability="project_room_invitation_manage", object_type="project_room_invitation", object_id=invitation_id, reason="owner_admin_required")
         return Response({"detail": "Only company owners and administrators can manage Project Room invitations."}, status=status.HTTP_403_FORBIDDEN)
+    enforce_governance_step_up(request, purpose="project_room_admin", organization=organization)
     row = ProjectRoomInvitation.objects.filter(pk=invitation_id, project_room__owner_organization=organization).select_related("project_room", "invited_organization").first()
     if not row:
         return Response({"detail": "Project Room invitation not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -2669,9 +2768,11 @@ def project_room_invitation_manage(request, invitation_id: int):
             return Response({"detail": "Only pending or expired invitations can be resent."}, status=status.HTTP_400_BAD_REQUEST)
         row.status = ProjectRoomInvitation.Status.PENDING
         row.expires_at = timezone.now()+timedelta(days=14)
+        if not row.partner_expires_at or row.partner_expires_at <= timezone.now():
+            row.partner_expires_at = timezone.now()+timedelta(days=90)
         row.last_sent_at = timezone.now()
         row.resend_count += 1
-        row.save(update_fields=["status", "expires_at", "last_sent_at", "resend_count", "updated_at"])
+        row.save(update_fields=["status", "expires_at", "partner_expires_at", "last_sent_at", "resend_count", "updated_at"])
         link = "/network?tab=invitations"
         notify_organization_members(organization=row.invited_organization, title=f"Project Room invitation: {row.project_room.name}", message=f"{organization.name} resent the collaboration invitation.", kind="project_room_invitation", link=link, project_room=row.project_room)
         for member in Membership.objects.filter(organization=row.invited_organization, active=True, role__in=[Membership.Role.OWNER, Membership.Role.ADMIN]).select_related("user"):
@@ -2690,6 +2791,7 @@ def project_room_invitation_response(request, invitation_id: int):
     if not membership or membership.role not in {Membership.Role.OWNER, Membership.Role.ADMIN}:
         audit_denied(request, organization=organization, capability="project_room_invitation_response", object_type="project_room_invitation", object_id=invitation_id, reason="owner_admin_required")
         return Response({"detail": "Only company owners and administrators can respond to Project Room invitations."}, status=status.HTTP_403_FORBIDDEN)
+    enforce_governance_step_up(request, purpose="project_room_admin", organization=organization)
     row = ProjectRoomInvitation.objects.filter(pk=invitation_id, invited_organization=organization, status=ProjectRoomInvitation.Status.PENDING).filter(Q(expires_at__isnull=True)|Q(expires_at__gt=timezone.now())).select_related("project_room").first()
     if not row:
         return Response({"detail": "Pending Project Room invitation not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -2701,7 +2803,7 @@ def project_room_invitation_response(request, invitation_id: int):
     row.responded_at = timezone.now()
     row.save(update_fields=["status", "responded_by", "responded_at", "updated_at"])
     if action == "accept":
-        ProjectRoomPartner.objects.update_or_create(project_room=row.project_room, organization=organization, defaults={"access_level": row.access_level, "can_upload": row.can_upload, "can_comment": row.can_comment, "can_view_pricing": row.can_view_pricing, "invited_by": row.invited_by})
+        ProjectRoomPartner.objects.update_or_create(project_room=row.project_room, organization=organization, defaults={"access_level": row.access_level, "can_upload": row.can_upload, "can_comment": row.can_comment, "can_view_pricing": row.can_view_pricing, "can_view_sensitive_documents": row.can_view_sensitive_documents, "can_export": row.can_export, "expires_at": row.partner_expires_at, "revoked_at": None, "invited_by": row.invited_by})
         ProjectRoomMember.objects.update_or_create(
             project_room=row.project_room,
             membership=membership,
@@ -2753,6 +2855,7 @@ def project_room_lifecycle(request, room_id: int):
     room = ProjectRoom.objects.filter(pk=room_id, owner_organization=organization).first()
     if not room:
         return Response({"detail": "Project Room not found."}, status=status.HTTP_404_NOT_FOUND)
+    enforce_governance_step_up(request, purpose="project_room_admin", organization=organization)
     action = str(request.data.get("action") or "archive")
     if action == "restore":
         room.archived_at = None; room.deleted_at = None; room.status = ProjectRoom.Status.ACTIVE
