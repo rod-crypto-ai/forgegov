@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED = "3.1.0"
+EXPECTED = "3.1.1"
 errors: list[str] = []
 
 
@@ -14,10 +14,10 @@ def require(condition: bool, message: str):
         errors.append(message)
 
 
-require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.1.0")
+require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.1.1")
 package = json.loads((ROOT / "frontend/package.json").read_text())
-require(package.get("version") == EXPECTED, "frontend package version is not 3.1.0")
-require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.1.0")
+require(package.get("version") == EXPECTED, "frontend package version is not 3.1.1")
+require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.1.1")
 
 # Historical migrations must never depend on a moving target.
 for migration in ROOT.glob("backend/*/migrations/*.py"):
@@ -27,10 +27,10 @@ for migration in ROOT.glob("backend/*/migrations/*.py"):
 # Private-beta production settings in the deployment blueprint.
 render = (ROOT / "render.yaml").read_text()
 for needle in (
-    "PUBLIC_REGISTRATION_ENABLED\n    value: 'false'",
+    "PUBLIC_REGISTRATION_ENABLED\n    value: 'true'",
     "SECURE_SSL_REDIRECT\n    value: 'true'",
     "SECURE_HSTS_SECONDS\n    value: '31536000'",
-    "REGISTRATION_MODE\n    value: private_beta",
+    "REGISTRATION_MODE\n    value: public",
     "EMAIL_BACKEND\n    value: django.core.mail.backends.smtp.EmailBackend",
     "EMAIL_HOST_PASSWORD\n    sync: false",
 ):
@@ -65,6 +65,21 @@ resilience = (ROOT / "backend/core/integration_resilience.py").read_text()
 require('requests.get if method_name == "GET"' in resilience, "connector test-isolation fix is missing")
 platform_migration = (ROOT / "backend/platform_admin/migrations/0001_initial.py").read_text()
 require("0026_mfa_sessions_passkeys" in platform_migration, "platform_admin historical migration dependency regressed")
+
+# v3.1.1 beta stabilization and public landing requirements.
+landing = (ROOT / "frontend/components/public-landing.tsx").read_text()
+require("Find the work. Understand the market. Run the capture." in landing, "public landing page hero is missing")
+require("/auth/registration-config/" in landing, "landing page does not reflect runtime registration state")
+auth_provider = (ROOT / "frontend/components/auth-provider.tsx").read_text()
+require('pathname === "/"' in auth_provider, "root landing route is not public")
+creator_permissions = (ROOT / "backend/platform_admin/permissions.py").read_text()
+require("IsPlatformCreator" in creator_permissions and '"creator"' in creator_permissions, "creator role enforcement is missing")
+creator_command = (ROOT / "backend/platform_admin/management/commands/promote_creator.py").read_text()
+require("Creator access requires MFA" in creator_command, "creator bootstrap does not require MFA")
+registration = (ROOT / "backend/core/registration_control.py").read_text()
+require("effective_registration_mode" in registration, "runtime registration control is missing")
+feedback = (ROOT / "frontend/components/beta-feedback.tsx").read_text()
+require("/beta-feedback/" in feedback, "in-app beta feedback is not wired")
 
 if errors:
     print("Private beta launch source audit FAILED:")

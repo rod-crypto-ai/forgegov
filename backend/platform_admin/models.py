@@ -4,6 +4,7 @@ from django.db import models
 
 class PlatformAdminGrant(models.Model):
     class Role(models.TextChoices):
+        CREATOR = "creator", "ForgeGov Creator / Platform Owner"
         SUPER_ADMIN = "super_admin", "Platform Super Admin"
         SUPPORT_ADMIN = "support_admin", "Platform Support Admin"
 

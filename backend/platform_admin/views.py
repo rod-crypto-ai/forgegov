@@ -5,7 +5,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
 
-from core.models import Organization
+from core.models import Organization, BetaFeedback
 from .models import (
     PlatformAdminGrant,
     OrganizationControlState,
@@ -15,7 +15,7 @@ from .models import (
     PlatformSetting,
     PlatformAuditEvent,
 )
-from .permissions import IsPlatformAdmin, IsPlatformSuperAdmin, active_platform_grant
+from .permissions import IsPlatformAdmin, IsPlatformSuperAdmin, IsPlatformCreator, active_platform_grant
 from .services import audit, seed_defaults, platform_mode
 
 User = get_user_model()
@@ -53,8 +53,8 @@ def _user_payload(user):
         "last_login": getattr(user, "last_login", None),
         "date_joined": getattr(user, "date_joined", None),
         "platform_status": state.status,
-        "platform_role": "super_admin" if getattr(user, "is_superuser", False) else (grant.role if grant else None),
-        "mfa_verified": True if getattr(user, "is_superuser", False) else bool(grant and grant.mfa_verified),
+        "platform_role": grant.role if grant else ("super_admin" if getattr(user, "is_superuser", False) else None),
+        "mfa_verified": bool(grant and grant.mfa_verified) if grant else bool(getattr(user, "is_superuser", False)),
     }
 
 
@@ -93,6 +93,7 @@ def dashboard(request):
         },
         "beta_pending": BetaApplication.objects.filter(status=BetaApplication.Status.PENDING).count(),
         "feature_flags": FeatureFlag.objects.count(),
+        "feedback_open": BetaFeedback.objects.exclude(status__in=[BetaFeedback.Status.FIXED, BetaFeedback.Status.CLOSED]).count(),
         "recent_events": list(PlatformAuditEvent.objects.values(
             "id", "action", "target_type", "target_id", "reason", "created_at"
         )[:12]),
@@ -404,3 +405,70 @@ def retry_quarantine(request, quarantine_id):
         return Response({"detail": str(exc)[:500]}, status=400)
     audit(request, "data_integrity.quarantine_retry", target_type="sync_quarantine", target_id=row.id)
     return Response(result)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsPlatformCreator])
+def creator_control(request):
+    from core.registration_control import effective_registration_mode, VALID_REGISTRATION_MODES
+    setting, _ = PlatformSetting.objects.get_or_create(
+        key="registration_mode", defaults={"value": {"mode": effective_registration_mode()}}
+    )
+    if request.method == "GET":
+        return Response({
+            "role": "creator",
+            "registration_mode": effective_registration_mode(),
+            "registration_modes": sorted(VALID_REGISTRATION_MODES),
+            "platform_mode": platform_mode(),
+            "organizations": Organization.objects.count(),
+            "users": User.objects.count(),
+            "open_feedback": BetaFeedback.objects.exclude(status__in=[BetaFeedback.Status.FIXED, BetaFeedback.Status.CLOSED]).count(),
+        })
+    mode = str(request.data.get("registration_mode") or "").strip().lower()
+    if mode not in VALID_REGISTRATION_MODES:
+        return Response({"detail": "Unsupported registration mode."}, status=400)
+    setting.value = {"mode": mode}
+    setting.updated_by = request.user
+    setting.save()
+    audit(request, "creator.registration_mode_changed", target_type="platform_setting", target_id=setting.id, metadata={"mode": mode})
+    return Response({"registration_mode": mode})
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformAdmin])
+def feedback_queue(request):
+    rows = BetaFeedback.objects.select_related("user", "organization", "resolved_by")[:500]
+    return Response({"results": [{
+        "id": row.id,
+        "category": row.category,
+        "status": row.status,
+        "page_path": row.page_path,
+        "message": row.message,
+        "admin_notes": row.admin_notes,
+        "user_email": getattr(row.user, "email", "") if row.user else "",
+        "organization_name": getattr(row.organization, "name", "") if row.organization else "",
+        "created_at": row.created_at,
+        "resolved_at": row.resolved_at,
+    } for row in rows]})
+
+
+@api_view(["POST"])
+@permission_classes([IsPlatformSuperAdmin])
+def feedback_action(request, feedback_id):
+    row = BetaFeedback.objects.filter(pk=feedback_id).first()
+    if not row:
+        return Response({"detail": "Feedback not found."}, status=404)
+    new_status = str(request.data.get("status") or "").strip().lower()
+    if new_status not in BetaFeedback.Status.values:
+        return Response({"detail": "Unsupported feedback status."}, status=400)
+    row.status = new_status
+    row.admin_notes = str(request.data.get("admin_notes") or row.admin_notes or "")[:8000]
+    if new_status in {BetaFeedback.Status.FIXED, BetaFeedback.Status.CLOSED}:
+        row.resolved_at = timezone.now()
+        row.resolved_by = request.user
+    else:
+        row.resolved_at = None
+        row.resolved_by = None
+    row.save()
+    audit(request, "beta_feedback.status_changed", target_type="beta_feedback", target_id=row.id, metadata={"status": new_status})
+    return Response({"id": row.id, "status": row.status})

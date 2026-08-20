@@ -118,6 +118,7 @@ from .views import (
     opportunity_submission_control,
     opportunity_submission_export,
     project_room_tasks,
+    beta_feedback,
     project_room_access_management,
     project_room_task_detail,
     project_room_comments,
@@ -165,6 +166,7 @@ router.register("collaboration/notifications", CollaborationNotificationViewSet,
 
 urlpatterns = [
     path("platform-admin/", include("platform_admin.urls")),
+    path("beta-feedback/", beta_feedback),
     path("auth/csrf/", csrf_token),
     path("auth/registration-config/", registration_config),
     path("auth/register/", register),

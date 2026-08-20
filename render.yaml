@@ -47,9 +47,9 @@ services:
   - key: CSRF_TRUSTED_ORIGINS
     sync: false
   - key: PUBLIC_REGISTRATION_ENABLED
-    value: 'false'
+    value: 'true'
   - key: REGISTRATION_MODE
-    value: private_beta
+    value: public
   - key: EMAIL_BACKEND
     value: django.core.mail.backends.smtp.EmailBackend
   - key: EMAIL_HOST

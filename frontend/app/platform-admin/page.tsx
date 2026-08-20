@@ -11,6 +11,7 @@ type Dashboard = {
   organizations: { total: number; active: number; pending: number; suspended: number };
   users: { total: number; active: number; suspended: number };
   beta_pending: number;
+  feedback_open: number;
   feature_flags: number;
   platform_mode: "normal" | "maintenance";
   recent_events: Array<{ id:number; action:string; target_type:string; target_id:string; reason:string; created_at:string }>;
@@ -19,6 +20,8 @@ type Org = { id:number; name:string; status:string; beta_access:boolean; member_
 type UserRow = { id:number; email:string; first_name:string; last_name:string; platform_status:string; platform_role?:string|null; mfa_verified:boolean; last_login?:string|null };
 type FlagRow = { id:number; key:string; name:string; description:string; enabled:boolean; updated_at:string };
 type Beta = { id:number; organization_id:number; organization_name:string; status:string; applicant_email:string; application_notes:string; requested_information:string; submitted_at:string };
+type Feedback = { id:number; category:string; status:string; page_path:string; message:string; admin_notes:string; user_email:string; organization_name:string; created_at:string };
+type CreatorControl = { role:string; registration_mode:string; registration_modes:string[]; platform_mode:string; organizations:number; users:number; open_feedback:number };
 type Audit = { id:number; action:string; actor_email:string; target_type:string; target_id:string; reason:string; created_at:string };
 type IntegrityQuarantine = { id:number; source:string; record_type:string; source_id:string; reason:string; error_message:string; occurrences:number };
 type System = {
@@ -31,6 +34,8 @@ const tabs = [
   ["organizations","Organizations", Building2],
   ["users","Users", Users],
   ["beta","Private Beta", LockKeyhole],
+  ["feedback","Beta Feedback", ClipboardList],
+  ["creator","Creator Control", ShieldCheck],
   ["security","Security Operations", ShieldCheck],
   ["features","Feature Controls", Flag],
   ["system","System Operations", Activity],
@@ -47,10 +52,13 @@ export default function PlatformAdminPage() {
   const [flags,setFlags]=useState<FlagRow[]>([]);
   const [beta,setBeta]=useState<Beta[]>([]);
   const [audit,setAudit]=useState<Audit[]>([]);
+  const [feedback,setFeedback]=useState<Feedback[]>([]);
+  const [creator,setCreator]=useState<CreatorControl|null>(null);
   const [system,setSystem]=useState<System>({});
   const [q,setQ]=useState("");
 
-  const superAdmin = role === "super_admin";
+  const superAdmin = role === "super_admin" || role === "creator";
+  const isCreator = role === "creator";
 
   const load = useCallback(async () => {
     setBusy(true); setError("");
@@ -68,6 +76,9 @@ export default function PlatformAdminPage() {
       ]);
       setDash(d); setOrgs(o.results); setUsers(u.results); setBeta(b.results);
       setFlags(f.results); setAudit(a.results); setSystem(s);
+      const feedbackData = await apiGet<{results:Feedback[]}>("/platform-admin/feedback/");
+      setFeedback(feedbackData.results);
+      if(me.role==="creator") setCreator(await apiGet<CreatorControl>("/platform-admin/creator-control/"));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Platform administration could not be loaded.");
     } finally { setBusy(false); }
@@ -117,6 +128,17 @@ export default function PlatformAdminPage() {
     await load();
   }
 
+  async function feedbackStatus(row:Feedback,status:string){
+    if(!superAdmin) return;
+    await apiPost(`/platform-admin/feedback/${row.id}/action/`,{status});
+    await load();
+  }
+  async function registrationMode(mode:string){
+    if(!isCreator) return;
+    await apiPost("/platform-admin/creator-control/",{registration_mode:mode});
+    await load();
+  }
+
   if(error) return <div className="platform-admin-shell"><section className="platform-admin-denied"><ShieldCheck/><h1>Platform Administration</h1><p>{error}</p></section></div>;
   if(!dash) return <div className="platform-admin-shell"><section className="platform-admin-denied"><RefreshCw className="spin"/><h1>Loading platform control plane…</h1></section></div>;
 
@@ -127,7 +149,7 @@ export default function PlatformAdminPage() {
     </header>
 
     <nav className="platform-admin-tabs">
-      {tabs.map(([key,label,Icon])=><button key={key} className={tab===key?"active":""} onClick={()=>setTab(key)}><Icon size={16}/>{label}</button>)}
+      {tabs.filter(([key])=>key!=="creator"||isCreator).map(([key,label,Icon])=><button key={key} className={tab===key?"active":""} onClick={()=>setTab(key)}><Icon size={16}/>{label}</button>)}
     </nav>
 
     {busy && <div className="platform-admin-loading">Refreshing platform state…</div>}
@@ -137,6 +159,7 @@ export default function PlatformAdminPage() {
         <div><Building2/><span>Organizations</span><strong>{dash.organizations.total}</strong><small>{dash.organizations.active} active · {dash.organizations.pending} pending</small></div>
         <div><Users/><span>Users</span><strong>{dash.users.total}</strong><small>{dash.users.active} active · {dash.users.suspended} suspended</small></div>
         <div><LockKeyhole/><span>Beta queue</span><strong>{dash.beta_pending}</strong><small>Pending review</small></div>
+        <div><ClipboardList/><span>Beta feedback</span><strong>{dash.feedback_open}</strong><small>Open reports</small></div>
         <div><Flag/><span>Feature controls</span><strong>{dash.feature_flags}</strong><small>{dash.platform_mode} mode</small></div>
       </section>
       <section className="platform-admin-panel"><header><h2>Platform state</h2></header><div className="platform-admin-actions">
@@ -184,6 +207,10 @@ export default function PlatformAdminPage() {
         <button onClick={()=>void betaAction(b.id,"reject")}>Reject</button>
       </>}</div>
     </div>)}</div></section></main>}
+
+    {tab==="feedback" && <main className="platform-admin-stack"><section className="platform-admin-panel"><header><h2>Private-beta feedback</h2><p>Issues and suggestions submitted directly from authenticated workspaces.</p></header><div className="platform-admin-table">{feedback.map(row=><div className="platform-admin-record" key={row.id}><div><b>{row.category} · {row.page_path||"unknown page"}</b><span>{row.message}</span><small>{row.user_email||"unknown user"}{row.organization_name?` · ${row.organization_name}`:""} · {new Date(row.created_at).toLocaleString()}</small></div><em className={`state-${row.status}`}>{row.status}</em><div className="platform-admin-actions">{superAdmin&&<><button onClick={()=>void feedbackStatus(row,"reviewing")}>Reviewing</button><button onClick={()=>void feedbackStatus(row,"planned")}>Planned</button><button onClick={()=>void feedbackStatus(row,"fixed")}>Fixed</button><button onClick={()=>void feedbackStatus(row,"closed")}>Close</button></>}</div></div>)}</div></section></main>}
+
+    {tab==="creator" && isCreator && creator && <main className="platform-admin-stack"><section className="platform-admin-panel"><header><h2>Creator / Platform Owner</h2><p>Authenticated owner-level controls for the ForgeGov platform. This is not an authentication bypass.</p></header><div className="platform-admin-metrics"><div><Users/><span>Users</span><strong>{creator.users}</strong><small>Across ForgeGov</small></div><div><Building2/><span>Organizations</span><strong>{creator.organizations}</strong><small>Tenant workspaces</small></div><div><ClipboardList/><span>Open feedback</span><strong>{creator.open_feedback}</strong><small>Beta reports</small></div><div><LockKeyhole/><span>Registration</span><strong>{creator.registration_mode.replaceAll("_"," ")}</strong><small>Current access mode</small></div></div></section><section className="platform-admin-panel"><header><h2>Test registration control</h2><p>Open registration for test runs or return ForgeGov to controlled onboarding without redeploying.</p></header><div className="platform-admin-actions">{creator.registration_modes.map(mode=><button key={mode} disabled={mode===creator.registration_mode} onClick={()=>void registrationMode(mode)}>{mode.replaceAll("_"," ")}</button>)}</div></section></main>}
 
     {tab==="security" && <main className="platform-admin-stack">
       <section className="platform-admin-panel"><header><h2>Administrative audit</h2><p>Platform-level privileged state changes. Tenant audit remains separate.</p></header>

@@ -1572,3 +1572,38 @@ class ProjectRoomInvitation(TimeStampedModel):
         ordering = ["-created_at"]
         constraints = [models.UniqueConstraint(fields=("project_room", "invited_organization"), condition=models.Q(status="pending"), name="unique_pending_project_room_invite")]
         indexes = [models.Index(fields=["invited_organization", "status", "-created_at"], name="core_prinvite_org_stat_idx")]
+
+
+class BetaFeedback(TimeStampedModel):
+    class Category(models.TextChoices):
+        ISSUE = "issue", "Issue"
+        SUGGESTION = "suggestion", "Suggestion"
+        UX = "ux", "User Experience"
+        DATA = "data", "Data / Connector"
+        OTHER = "other", "Other"
+
+    class Status(models.TextChoices):
+        NEW = "new", "New"
+        REVIEWING = "reviewing", "Reviewing"
+        PLANNED = "planned", "Planned"
+        FIXED = "fixed", "Fixed"
+        CLOSED = "closed", "Closed"
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="forgegov_beta_feedback")
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.SET_NULL, related_name="beta_feedback")
+    category = models.CharField(max_length=20, choices=Category.choices, default=Category.ISSUE)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.NEW)
+    page_path = models.CharField(max_length=500, blank=True)
+    message = models.TextField()
+    user_agent = models.TextField(blank=True)
+    request_id = models.CharField(max_length=120, blank=True)
+    admin_notes = models.TextField(blank=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="forgegov_beta_feedback_resolved")
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status", "-created_at"], name="beta_feedback_status_idx"),
+            models.Index(fields=["organization", "-created_at"], name="beta_feedback_org_idx"),
+        ]

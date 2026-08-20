@@ -4,6 +4,9 @@ from . import views
 urlpatterns = [
     path("me/", views.me),
     path("dashboard/", views.dashboard),
+    path("feedback/<int:feedback_id>/action/", views.feedback_action),
+    path("feedback/", views.feedback_queue),
+    path("creator-control/", views.creator_control),
     path("organizations/", views.organizations),
     path("organizations/<int:organization_id>/action/", views.organization_action),
     path("users/", views.users),

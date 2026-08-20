@@ -91,6 +91,7 @@ from .models import (
     ProposalSubmissionSnapshot,
     ProposalCloseout,
     PricingPlan,
+    BetaFeedback,
 )
 from .serializers import (
     AgencySerializer,
@@ -2904,3 +2905,24 @@ def organization_join_request_response(request, request_id: int):
         row.status = OrganizationJoinRequest.Status.DECLINED
     row.reviewed_by = request.user; row.reviewed_at = timezone.now(); row.save(update_fields=["status", "reviewed_by", "reviewed_at", "updated_at"])
     return Response(OrganizationJoinRequestSerializer(row).data)
+
+
+@api_view(["POST"])
+def beta_feedback(request):
+    membership = active_membership(request.user)
+    category = str(request.data.get("category") or BetaFeedback.Category.ISSUE).strip().lower()
+    if category not in BetaFeedback.Category.values:
+        category = BetaFeedback.Category.OTHER
+    message = str(request.data.get("message") or "").strip()
+    if len(message) < 5:
+        return Response({"detail": "Please include a little more detail."}, status=status.HTTP_400_BAD_REQUEST)
+    row = BetaFeedback.objects.create(
+        user=request.user,
+        organization=membership.organization if membership else None,
+        category=category,
+        page_path=str(request.data.get("page_path") or "")[:500],
+        message=message[:8000],
+        user_agent=str(request.META.get("HTTP_USER_AGENT") or "")[:2000],
+        request_id=str(request.META.get("HTTP_X_REQUEST_ID") or "")[:120],
+    )
+    return Response({"id": row.id, "status": row.status, "detail": "Feedback received. Thank you for helping improve ForgeGov."}, status=status.HTTP_201_CREATED)

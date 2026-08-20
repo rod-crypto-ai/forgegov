@@ -28,6 +28,7 @@ from .identity import (
     send_password_reset_email,
     send_verification_email,
 )
+from .registration_control import effective_registration_mode
 from .models import (
     AccountActionToken,
     AuthSession,
@@ -147,9 +148,10 @@ def csrf_token(request):
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def registration_config(request):
+    mode = effective_registration_mode()
     return Response({
-        "mode": settings.REGISTRATION_MODE,
-        "public_registration": settings.REGISTRATION_MODE == "public",
+        "mode": mode,
+        "public_registration": mode == "public",
         "business_email_required": settings.BUSINESS_EMAIL_REQUIRED,
         "terms_version": settings.TERMS_VERSION,
         "privacy_version": settings.PRIVACY_VERSION,
@@ -170,6 +172,7 @@ def register(request):
     invitation_token = str(request.data.get("invitation_token") or "").strip()
     accepted_terms = bool(request.data.get("accept_terms"))
     accepted_privacy = bool(request.data.get("accept_privacy"))
+    registration_mode = effective_registration_mode()
 
     if not first_name or not last_name or not email or not password:
         return Response({"detail": "Full name, email, and password are required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -201,10 +204,10 @@ def register(request):
             if invitation.role == Membership.Role.OWNER:
                 return Response({"detail": "Owner access cannot be granted through a team invitation."}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not invitation and settings.REGISTRATION_MODE in {"private_beta", "invite_only", "closed"}:
+        if not invitation and registration_mode in {"private_beta", "invite_only", "closed"}:
             return Response({
                 "detail": "ForgeGov registration is currently controlled. A valid company invitation is required.",
-                "registration_mode": settings.REGISTRATION_MODE,
+                "registration_mode": registration_mode,
             }, status=status.HTTP_403_FORBIDDEN)
 
         existing_organization = None if invitation else organization_for_domain(domain)
@@ -294,7 +297,7 @@ def register(request):
         user.id,
         {
             "identifier": _masked_identifier(email),
-            "registration_mode": settings.REGISTRATION_MODE,
+            "registration_mode": registration_mode,
             "invitation": bool(invitation),
             "pending_organization": pending_organization.id if pending_organization else None,
             "terms_version": settings.TERMS_VERSION,
@@ -713,7 +716,7 @@ def security_overview(request):
         "last_password_change_at": profile.last_password_change_at,
         "last_login_ip": profile.last_login_ip,
         "organization_status": membership.organization.status if membership else None,
-        "registration_mode": settings.REGISTRATION_MODE,
+        "registration_mode": effective_registration_mode(),
         "mfa": {
             "available": True,
             "enabled": user_has_mfa(request.user),
