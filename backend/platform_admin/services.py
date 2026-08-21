@@ -29,6 +29,10 @@ def seed_defaults():
         key="platform_mode",
         defaults={"value": {"mode": "normal"}},
     )
+    PlatformSetting.objects.get_or_create(
+        key="notifications_enabled",
+        defaults={"value": {"enabled": True}},
+    )
 
 
 def audit(request, action, *, target_type="", target_id="", organization=None, reason="", metadata=None):

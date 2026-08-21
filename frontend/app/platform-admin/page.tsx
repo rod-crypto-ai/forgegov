@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity, Building2, Flag, Gauge, LockKeyhole, RefreshCw,
-  ShieldCheck, Users, Wrench, ClipboardList
+  ShieldCheck, Users, Wrench, ClipboardList, Mail
 } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
 
@@ -21,7 +21,8 @@ type UserRow = { id:number; email:string; first_name:string; last_name:string; p
 type FlagRow = { id:number; key:string; name:string; description:string; enabled:boolean; updated_at:string };
 type Beta = { id:number; organization_id:number; organization_name:string; status:string; applicant_email:string; application_notes:string; requested_information:string; submitted_at:string };
 type Feedback = { id:number; category:string; status:string; page_path:string; message:string; admin_notes:string; user_email:string; organization_name:string; created_at:string };
-type CreatorControl = { role:string; registration_mode:string; registration_modes:string[]; platform_mode:string; organizations:number; users:number; open_feedback:number };
+type CreatorControl = { role:string; registration_mode:string; registration_modes:string[]; platform_mode:string; notifications_enabled:boolean; organizations:number; users:number; open_feedback:number; notification_delivery:{sent_24h:number;failed_24h:number;total_7d:number} };
+type NotificationOps = { sent_24h:number; failed_24h:number; skipped_24h:number; total_7d:number; recent_failures:Array<{id:number;category:string;subject:string;recipient:string;organization:string;error_message:string;created_at:string}> };
 type Audit = { id:number; action:string; actor_email:string; target_type:string; target_id:string; reason:string; created_at:string };
 type IntegrityQuarantine = { id:number; source:string; record_type:string; source_id:string; reason:string; error_message:string; occurrences:number };
 type System = {
@@ -54,6 +55,7 @@ export default function PlatformAdminPage() {
   const [audit,setAudit]=useState<Audit[]>([]);
   const [feedback,setFeedback]=useState<Feedback[]>([]);
   const [creator,setCreator]=useState<CreatorControl|null>(null);
+  const [notificationOps,setNotificationOps]=useState<NotificationOps|null>(null);
   const [system,setSystem]=useState<System>({});
   const [q,setQ]=useState("");
 
@@ -77,6 +79,7 @@ export default function PlatformAdminPage() {
       setDash(d); setOrgs(o.results); setUsers(u.results); setBeta(b.results);
       setFlags(f.results); setAudit(a.results); setSystem(s);
       const feedbackData = await apiGet<{results:Feedback[]}>("/platform-admin/feedback/");
+      setNotificationOps(await apiGet<NotificationOps>("/platform-admin/notifications/"));
       setFeedback(feedbackData.results);
       if(me.role==="creator") setCreator(await apiGet<CreatorControl>("/platform-admin/creator-control/"));
     } catch (e) {
@@ -137,6 +140,19 @@ export default function PlatformAdminPage() {
     if(!isCreator) return;
     await apiPost("/platform-admin/creator-control/",{registration_mode:mode});
     await load();
+  }
+  async function notificationMode(enabled:boolean){
+    if(!isCreator) return;
+    await apiPost("/platform-admin/creator-control/",{notifications_enabled:enabled});
+    await load();
+  }
+  async function testNotification(){
+    if(!isCreator) return;
+    try{
+      const result=await apiPost<{in_app_created:boolean;email_sent:boolean}>("/platform-admin/notifications/test/",{});
+      window.alert(`Test complete. In-app: ${result.in_app_created?"created":"not created"}; email: ${result.email_sent?"sent":"failed"}.`);
+      await load();
+    }catch(e){window.alert(e instanceof Error?e.message:"Notification test failed.")}
   }
 
   if(error) return <div className="platform-admin-shell"><section className="platform-admin-denied"><ShieldCheck/><h1>Platform Administration</h1><p>{error}</p></section></div>;
@@ -210,7 +226,7 @@ export default function PlatformAdminPage() {
 
     {tab==="feedback" && <main className="platform-admin-stack"><section className="platform-admin-panel"><header><h2>Private-beta feedback</h2><p>Issues and suggestions submitted directly from authenticated workspaces.</p></header><div className="platform-admin-table">{feedback.map(row=><div className="platform-admin-record" key={row.id}><div><b>{row.category} · {row.page_path||"unknown page"}</b><span>{row.message}</span><small>{row.user_email||"unknown user"}{row.organization_name?` · ${row.organization_name}`:""} · {new Date(row.created_at).toLocaleString()}</small></div><em className={`state-${row.status}`}>{row.status}</em><div className="platform-admin-actions">{superAdmin&&<><button onClick={()=>void feedbackStatus(row,"reviewing")}>Reviewing</button><button onClick={()=>void feedbackStatus(row,"planned")}>Planned</button><button onClick={()=>void feedbackStatus(row,"fixed")}>Fixed</button><button onClick={()=>void feedbackStatus(row,"closed")}>Close</button></>}</div></div>)}</div></section></main>}
 
-    {tab==="creator" && isCreator && creator && <main className="platform-admin-stack"><section className="platform-admin-panel"><header><h2>Creator / Platform Owner</h2><p>Authenticated owner-level controls for the ForgeGov platform. This is not an authentication bypass.</p></header><div className="platform-admin-metrics"><div><Users/><span>Users</span><strong>{creator.users}</strong><small>Across ForgeGov</small></div><div><Building2/><span>Organizations</span><strong>{creator.organizations}</strong><small>Tenant workspaces</small></div><div><ClipboardList/><span>Open feedback</span><strong>{creator.open_feedback}</strong><small>Beta reports</small></div><div><LockKeyhole/><span>Registration</span><strong>{creator.registration_mode.replaceAll("_"," ")}</strong><small>Current access mode</small></div></div></section><section className="platform-admin-panel"><header><h2>Test registration control</h2><p>Open registration for test runs or return ForgeGov to controlled onboarding without redeploying.</p></header><div className="platform-admin-actions">{creator.registration_modes.map(mode=><button key={mode} disabled={mode===creator.registration_mode} onClick={()=>void registrationMode(mode)}>{mode.replaceAll("_"," ")}</button>)}</div></section></main>}
+    {tab==="creator" && isCreator && creator && <main className="platform-admin-stack"><section className="platform-admin-panel"><header><h2>Creator / Platform Owner</h2><p>Authenticated owner-level controls for the ForgeGov platform. This is not an authentication bypass.</p></header><div className="platform-admin-metrics"><div><Users/><span>Users</span><strong>{creator.users}</strong><small>Across ForgeGov</small></div><div><Building2/><span>Organizations</span><strong>{creator.organizations}</strong><small>Tenant workspaces</small></div><div><ClipboardList/><span>Open feedback</span><strong>{creator.open_feedback}</strong><small>Beta reports</small></div><div><LockKeyhole/><span>Registration</span><strong>{creator.registration_mode.replaceAll("_"," ")}</strong><small>Current access mode</small></div><div><Mail/><span>Email sent</span><strong>{creator.notification_delivery.sent_24h}</strong><small>Last 24 hours</small></div><div><Wrench/><span>Email failures</span><strong>{creator.notification_delivery.failed_24h}</strong><small>{creator.notification_delivery.total_7d} deliveries in 7 days</small></div></div></section><section className="platform-admin-panel"><header><h2>Test registration control</h2><p>Open registration for test runs or return ForgeGov to controlled onboarding without redeploying.</p></header><div className="platform-admin-actions">{creator.registration_modes.map(mode=><button key={mode} disabled={mode===creator.registration_mode} onClick={()=>void registrationMode(mode)}>{mode.replaceAll("_"," ")}</button>)}</div></section><section className="platform-admin-panel"><header><h2>Notification delivery control</h2><p>Pause ForgeGov intelligence/collaboration notifications globally or send a controlled test to your own Creator account.</p></header><div className="platform-admin-actions"><button disabled={creator.notifications_enabled} onClick={()=>void notificationMode(true)}>Enable notifications</button><button disabled={!creator.notifications_enabled} onClick={()=>void notificationMode(false)}>Pause notifications</button><button onClick={()=>void testNotification()}>Send test to me</button></div></section>{notificationOps&&<section className="platform-admin-panel"><header><h2>Notification operations</h2><p>{notificationOps.sent_24h} sent · {notificationOps.failed_24h} failed · {notificationOps.skipped_24h} skipped in the last 24 hours.</p></header>{notificationOps.recent_failures.length?<div className="platform-admin-table">{notificationOps.recent_failures.map(row=><div className="platform-admin-record" key={row.id}><div><b>{row.subject}</b><span>{row.organization||"Platform"} · {row.category.replaceAll("_"," ")}</span><small>{row.recipient} · {new Date(row.created_at).toLocaleString()}</small></div><span className="status-suspended">failed</span><small>{row.error_message}</small></div>)}</div>:<div className="table-state"><Mail/><strong>No recent email delivery failures</strong><p>Tracked notification failures will appear here for investigation.</p></div>}</section>}</main>}
 
     {tab==="security" && <main className="platform-admin-stack">
       <section className="platform-admin-panel"><header><h2>Administrative audit</h2><p>Platform-level privileged state changes. Tenant audit remains separate.</p></header>

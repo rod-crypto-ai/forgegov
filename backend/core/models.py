@@ -1163,6 +1163,14 @@ class IntelligenceAlert(TimeStampedModel):
     class AlertType(models.TextChoices):
         NEW_OPPORTUNITY = "new_opportunity", "New Opportunity"
         DEADLINE = "deadline", "Upcoming Deadline"
+        AMENDMENT = "amendment", "Amendment Posted"
+        DEADLINE_CHANGED = "deadline_changed", "Response Deadline Changed"
+        CANCELLED = "cancelled", "Opportunity Cancelled"
+        DOCUMENT = "document", "New Attachment"
+        SET_ASIDE_CHANGED = "set_aside_changed", "Set-Aside Changed"
+        STATUS_CHANGED = "status_changed", "Status Changed"
+        PIPELINE = "pipeline", "Pipeline Update"
+        PROJECT_ROOM = "project_room", "Project Room Update"
         AWARD = "award", "Award Intelligence"
         FORECAST = "forecast", "Forecast Update"
 
@@ -1175,6 +1183,7 @@ class IntelligenceAlert(TimeStampedModel):
     source_id = models.CharField(max_length=255, blank=True)
     source_url = models.URLField(blank=True)
     matched_filters = models.JSONField(default=dict, blank=True)
+    event_key = models.CharField(max_length=255, blank=True, db_index=True)
     read = models.BooleanField(default=False)
     dismissed = models.BooleanField(default=False)
 
@@ -1184,6 +1193,11 @@ class IntelligenceAlert(TimeStampedModel):
             models.UniqueConstraint(
                 fields=("organization", "saved_search", "source_id", "alert_type"),
                 name="unique_saved_search_intelligence_alert",
+            ),
+            models.UniqueConstraint(
+                fields=("organization", "event_key"),
+                condition=~models.Q(event_key=""),
+                name="unique_intelligence_alert_event_key",
             ),
         ]
         indexes = [
@@ -1373,6 +1387,53 @@ class CollaborationNotification(TimeStampedModel):
     class Meta:
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["organization", "user", "read", "-created_at"], name="core_collabnotif_org_user_idx")]
+
+
+class NotificationPreference(TimeStampedModel):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="notification_preferences")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="forgegov_notification_preferences")
+    in_app_enabled = models.BooleanField(default=True)
+    email_enabled = models.BooleanField(default=True)
+    immediate_critical = models.BooleanField(default=True)
+    daily_digest = models.BooleanField(default=True)
+    weekly_digest = models.BooleanField(default=False)
+    opportunity_alerts = models.BooleanField(default=True)
+    opportunity_changes = models.BooleanField(default=True)
+    deadlines = models.BooleanField(default=True)
+    pipeline = models.BooleanField(default=True)
+    project_room = models.BooleanField(default=True)
+    security = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=("organization", "user"), name="unique_notification_preference_per_workspace"),
+        ]
+
+
+class NotificationDelivery(TimeStampedModel):
+    class Status(models.TextChoices):
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
+        SKIPPED = "skipped", "Skipped"
+
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.SET_NULL, related_name="notification_deliveries")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="forgegov_notification_deliveries")
+    channel = models.CharField(max_length=20, default="email")
+    category = models.CharField(max_length=60, blank=True)
+    recipient = models.EmailField(blank=True)
+    subject = models.CharField(max_length=255)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.SENT)
+    error_message = models.CharField(max_length=1000, blank=True)
+    related_object_type = models.CharField(max_length=80, blank=True)
+    related_object_id = models.CharField(max_length=120, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["organization", "status", "-created_at"], name="notif_delivery_org_status_idx"),
+            models.Index(fields=["user", "-created_at"], name="notif_delivery_user_idx"),
+        ]
 
 
 class AIConversation(TimeStampedModel):

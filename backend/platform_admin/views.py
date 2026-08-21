@@ -1,3 +1,4 @@
+from datetime import timedelta
 from django.contrib.auth import get_user_model
 from django.db.models import Count
 from django.utils import timezone
@@ -5,7 +6,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
 
-from core.models import Organization, BetaFeedback
+from core.models import Organization, BetaFeedback, Membership, NotificationDelivery
 from .models import (
     PlatformAdminGrant,
     OrganizationControlState,
@@ -414,24 +415,99 @@ def creator_control(request):
     setting, _ = PlatformSetting.objects.get_or_create(
         key="registration_mode", defaults={"value": {"mode": effective_registration_mode()}}
     )
+    notifications_setting, _ = PlatformSetting.objects.get_or_create(
+        key="notifications_enabled", defaults={"value": {"enabled": True}}
+    )
     if request.method == "GET":
         return Response({
             "role": "creator",
             "registration_mode": effective_registration_mode(),
             "registration_modes": sorted(VALID_REGISTRATION_MODES),
             "platform_mode": platform_mode(),
+            "notifications_enabled": bool((notifications_setting.value or {}).get("enabled", True)),
             "organizations": Organization.objects.count(),
             "users": User.objects.count(),
             "open_feedback": BetaFeedback.objects.exclude(status__in=[BetaFeedback.Status.FIXED, BetaFeedback.Status.CLOSED]).count(),
+            "notification_delivery": {
+                "sent_24h": NotificationDelivery.objects.filter(status=NotificationDelivery.Status.SENT, created_at__gte=timezone.now()-timedelta(days=1)).count(),
+                "failed_24h": NotificationDelivery.objects.filter(status=NotificationDelivery.Status.FAILED, created_at__gte=timezone.now()-timedelta(days=1)).count(),
+                "total_7d": NotificationDelivery.objects.filter(created_at__gte=timezone.now()-timedelta(days=7)).count(),
+            },
         })
-    mode = str(request.data.get("registration_mode") or "").strip().lower()
-    if mode not in VALID_REGISTRATION_MODES:
-        return Response({"detail": "Unsupported registration mode."}, status=400)
-    setting.value = {"mode": mode}
-    setting.updated_by = request.user
-    setting.save()
-    audit(request, "creator.registration_mode_changed", target_type="platform_setting", target_id=setting.id, metadata={"mode": mode})
-    return Response({"registration_mode": mode})
+    response = {}
+    if "registration_mode" in request.data:
+        mode = str(request.data.get("registration_mode") or "").strip().lower()
+        if mode not in VALID_REGISTRATION_MODES:
+            return Response({"detail": "Unsupported registration mode."}, status=400)
+        setting.value = {"mode": mode}
+        setting.updated_by = request.user
+        setting.save()
+        audit(request, "creator.registration_mode_changed", target_type="platform_setting", target_id=setting.id, metadata={"mode": mode})
+        response["registration_mode"] = mode
+    if "notifications_enabled" in request.data:
+        raw_enabled = request.data.get("notifications_enabled")
+        enabled = raw_enabled if isinstance(raw_enabled, bool) else str(raw_enabled).strip().lower() in {"1", "true", "yes", "on"}
+        notifications_setting.value = {"enabled": enabled}
+        notifications_setting.updated_by = request.user
+        notifications_setting.save()
+        audit(request, "creator.notifications_changed", target_type="platform_setting", target_id=notifications_setting.id, metadata={"enabled": enabled})
+        response["notifications_enabled"] = enabled
+    if not response:
+        return Response({"detail": "No supported Creator setting was supplied."}, status=400)
+    return Response(response)
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformCreator])
+def notification_operations(request):
+    since_24h = timezone.now() - timedelta(days=1)
+    since_7d = timezone.now() - timedelta(days=7)
+    recent_failures = NotificationDelivery.objects.filter(status=NotificationDelivery.Status.FAILED).select_related("user", "organization")[:50]
+    return Response({
+        "sent_24h": NotificationDelivery.objects.filter(status=NotificationDelivery.Status.SENT, created_at__gte=since_24h).count(),
+        "failed_24h": NotificationDelivery.objects.filter(status=NotificationDelivery.Status.FAILED, created_at__gte=since_24h).count(),
+        "skipped_24h": NotificationDelivery.objects.filter(status=NotificationDelivery.Status.SKIPPED, created_at__gte=since_24h).count(),
+        "total_7d": NotificationDelivery.objects.filter(created_at__gte=since_7d).count(),
+        "recent_failures": [{
+            "id": row.id,
+            "category": row.category,
+            "subject": row.subject,
+            "recipient": row.recipient,
+            "organization": row.organization.name if row.organization else "",
+            "error_message": row.error_message,
+            "created_at": row.created_at,
+        } for row in recent_failures],
+    })
+
+
+@api_view(["POST"])
+@permission_classes([IsPlatformCreator])
+def notification_test(request):
+    from core.notifications import create_notification, send_tracked_email
+    membership = Membership.objects.filter(user=request.user, active=True).select_related("organization").first()
+    organization = membership.organization if membership else None
+    in_app = None
+    if organization:
+        in_app = create_notification(
+            organization=organization,
+            user=request.user,
+            title="ForgeGov notification test",
+            message="Creator test delivery succeeded for the in-app notification channel.",
+            kind="system_test",
+            link="/notifications",
+        )
+    ok = send_tracked_email(
+        subject="ForgeGov notification test",
+        message="This is a Creator notification-delivery test from ForgeGov.",
+        recipient=getattr(request.user, "email", ""),
+        organization=organization,
+        user=request.user,
+        category="system_test",
+        related_object_type="platform_test",
+        related_object_id=request.user.id,
+    )
+    audit(request, "creator.notification_test", target_type="user", target_id=request.user.id, metadata={"email_sent": ok})
+    return Response({"in_app_created": bool(in_app), "email_sent": ok}, status=200 if ok else 502)
 
 
 @api_view(["GET"])

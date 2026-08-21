@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED = "3.1.1"
+EXPECTED = "3.1.2"
 errors: list[str] = []
 
 
@@ -14,10 +14,12 @@ def require(condition: bool, message: str):
         errors.append(message)
 
 
-require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.1.1")
+require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.1.2")
+require(not (ROOT / "INSTALL.command").exists(), "obsolete root INSTALL.command must be removed")
+require(not (ROOT / "VERIFY.command").exists(), "obsolete root VERIFY.command must be removed")
 package = json.loads((ROOT / "frontend/package.json").read_text())
-require(package.get("version") == EXPECTED, "frontend package version is not 3.1.1")
-require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.1.1")
+require(package.get("version") == EXPECTED, "frontend package version is not 3.1.2")
+require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.1.2")
 
 # Historical migrations must never depend on a moving target.
 for migration in ROOT.glob("backend/*/migrations/*.py"):
@@ -80,6 +82,54 @@ registration = (ROOT / "backend/core/registration_control.py").read_text()
 require("effective_registration_mode" in registration, "runtime registration control is missing")
 feedback = (ROOT / "frontend/components/beta-feedback.tsx").read_text()
 require("/beta-feedback/" in feedback, "in-app beta feedback is not wired")
+
+# v3.1.2 alerts, notifications, and daily intelligence requirements.
+models = (ROOT / "backend/core/models.py").read_text()
+for model_name in ("NotificationPreference", "NotificationDelivery"):
+    require(f"class {model_name}" in models, f"notification model missing: {model_name}")
+require("event_key = models.CharField" in models, "durable alert event deduplication key is missing")
+
+tasks = (ROOT / "backend/core/tasks.py").read_text()
+for task_name in (
+    "evaluate_opportunity_change_alerts",
+    "evaluate_deadline_alerts",
+    "send_daily_intelligence_digests",
+    "send_weekly_intelligence_digests",
+):
+    require(f"def {task_name}" in tasks, f"scheduled notification task missing: {task_name}")
+
+notification_helpers = (ROOT / "backend/core/notifications.py").read_text()
+require("platform_notifications_enabled" in notification_helpers, "Creator notification kill switch is missing")
+require("NotificationDelivery.objects.create" in notification_helpers, "tracked email delivery is missing")
+require("notify_project_room_participants" in notification_helpers, "Project Room participant notification routing is missing")
+
+urls = (ROOT / "backend/core/urls.py").read_text()
+require('path("notifications/preferences/", notification_preferences)' in urls, "notification preference API route is missing")
+require('path("notifications/deliveries/", notification_delivery_history)' in urls, "notification delivery history API route is missing")
+
+admin_urls = (ROOT / "backend/platform_admin/urls.py").read_text()
+require('path("notifications/", views.notification_operations)' in admin_urls, "platform notification operations route is missing")
+require('path("notifications/test/", views.notification_test)' in admin_urls, "Creator notification test route is missing")
+admin_views = (ROOT / "backend/platform_admin/views.py").read_text()
+require('@permission_classes([IsPlatformCreator])\ndef notification_operations' in admin_views, "notification delivery operations must be Creator-only")
+require('@permission_classes([IsPlatformCreator])\ndef notification_test' in admin_views, "notification test delivery must be Creator-only")
+
+settings = (ROOT / "backend/forgegov/settings.py").read_text()
+require("send-daily-intelligence-digests" in settings, "daily intelligence digest schedule is missing")
+require("send-weekly-intelligence-digests" in settings, "weekly intelligence digest schedule is missing")
+require('"schedule": 60 * 60' in settings, "hourly alert evaluation schedule is missing")
+
+notification_page = (ROOT / "frontend/app/notifications/page.tsx").read_text()
+for needle in ("/notifications/preferences/", "/notifications/deliveries/", "/alerts/"):
+    require(needle in notification_page, f"unified notification center missing integration: {needle}")
+
+admin_page = (ROOT / "frontend/app/platform-admin/page.tsx").read_text()
+require("Send test to me" in admin_page, "Creator notification test control is missing")
+require("Pause notifications" in admin_page, "Creator notification pause control is missing")
+
+render = (ROOT / "render.yaml").read_text()
+require(render.count("NOTIFICATION_DIGESTS_ENABLED") >= 2, "Render web/beat notification digest settings are incomplete")
+require("envVarKey: EMAIL_HOST_PASSWORD" in render, "worker SMTP secret forwarding is missing")
 
 if errors:
     print("Private beta launch source audit FAILED:")

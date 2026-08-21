@@ -5,6 +5,7 @@ import sys
 from urllib.parse import urlparse
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
+from celery.schedules import crontab
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "development-only-key-change-me")
@@ -175,7 +176,24 @@ if os.getenv("SAM_SYNC_ENABLED", "false").lower() == "true":
 if os.getenv("ALERTS_ENABLED", "true").lower() == "true":
     CELERY_BEAT_SCHEDULE["evaluate-saved-search-alerts"] = {
         "task": "core.tasks.evaluate_saved_search_alerts",
-        "schedule": 24 * 60 * 60,
+        "schedule": 60 * 60,
+    }
+    CELERY_BEAT_SCHEDULE["evaluate-opportunity-change-alerts"] = {
+        "task": "core.tasks.evaluate_opportunity_change_alerts",
+        "schedule": 60 * 60,
+    }
+    CELERY_BEAT_SCHEDULE["evaluate-deadline-alerts"] = {
+        "task": "core.tasks.evaluate_deadline_alerts",
+        "schedule": 60 * 60,
+    }
+if os.getenv("NOTIFICATION_DIGESTS_ENABLED", "true").lower() == "true":
+    CELERY_BEAT_SCHEDULE["send-daily-intelligence-digests"] = {
+        "task": "core.tasks.send_daily_intelligence_digests",
+        "schedule": crontab(hour=int(os.getenv("DAILY_DIGEST_UTC_HOUR", "13")), minute=0),
+    }
+    CELERY_BEAT_SCHEDULE["send-weekly-intelligence-digests"] = {
+        "task": "core.tasks.send_weekly_intelligence_digests",
+        "schedule": crontab(day_of_week=os.getenv("WEEKLY_DIGEST_DAY", "mon"), hour=int(os.getenv("WEEKLY_DIGEST_UTC_HOUR", "13")), minute=30),
     }
 
 SAM_GOV_API_KEY = os.getenv("SAM_GOV_API_KEY", "")

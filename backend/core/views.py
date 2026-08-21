@@ -8,7 +8,7 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import api_view, throttle_classes, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
-from .notifications import notify_organization_members, send_system_email
+from .notifications import notify_organization_members, notify_project_room_participants, send_system_email
 from .permissions import ReadOnlyOrContributor, active_membership
 from .tenant_security import (
     IsExecutiveFinancialMember,
@@ -71,6 +71,8 @@ from .models import (
     ProjectRoomFile,
     ProjectRoomActivity,
     CollaborationNotification,
+    NotificationPreference,
+    NotificationDelivery,
     AIConversation,
     AIMessage,
     OpportunityDocument,
@@ -121,6 +123,8 @@ from .serializers import (
     ProjectRoomFileSerializer,
     ProjectRoomActivitySerializer,
     CollaborationNotificationSerializer,
+    NotificationPreferenceSerializer,
+    NotificationDeliverySerializer,
     AIConversationSerializer,
     OpportunityDocumentSerializer,
     OpportunityAnalysisSerializer,
@@ -1388,6 +1392,24 @@ class IntelligenceAlertViewSet(OrganizationScopedViewSetMixin, viewsets.ModelVie
         return queryset
 
 
+@api_view(["GET", "PATCH"])
+def notification_preferences(request):
+    organization = _request_organization(request)
+    preference, _ = NotificationPreference.objects.get_or_create(organization=organization, user=request.user)
+    if request.method == "PATCH":
+        serializer = NotificationPreferenceSerializer(preference, data=request.data, partial=True, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        preference = serializer.save()
+    return Response(NotificationPreferenceSerializer(preference).data)
+
+
+@api_view(["GET"])
+def notification_delivery_history(request):
+    organization = _request_organization(request)
+    rows = NotificationDelivery.objects.filter(organization=organization, user=request.user)[:100]
+    return Response({"results": NotificationDeliverySerializer(rows, many=True).data})
+
+
 class ProjectRoomViewSet(viewsets.ModelViewSet):
     serializer_class = ProjectRoomSerializer
     permission_classes = [ReadOnlyOrContributor]
@@ -2439,6 +2461,7 @@ def project_room_tasks(request, room_id):
     serializer.is_valid(raise_exception=True)
     task = serializer.save(project_room=room, created_by=request.user, visibility=visibility)
     _log_room_activity(room, request.user, "task_created", f"Created task: {task.title}", visibility=visibility, object_type="task", object_id=task.id)
+    notify_project_room_participants(room=room, actor=request.user, title=f"Project Room task: {task.title}", message=task.description or "A new Project Room task was created.", kind="project_room_task", visibility=visibility)
     return Response(ProjectRoomTaskSerializer(task).data, status=201)
 
 @api_view(["PATCH", "DELETE"])
@@ -2484,6 +2507,7 @@ def project_room_comments(request, room_id):
     serializer.is_valid(raise_exception=True)
     comment = serializer.save(project_room=access.room, author=request.user, visibility=visibility)
     _log_room_activity(access.room, request.user, "comment_added", "Added a project comment", visibility=visibility, object_type="comment", object_id=comment.id)
+    notify_project_room_participants(room=access.room, actor=request.user, title=f"New comment in {access.room.name}", message=comment.body[:500], kind="project_room_comment", visibility=visibility)
     return Response(ProjectRoomCommentSerializer(comment).data, status=201)
 
 @api_view(["GET", "POST"])
@@ -2536,6 +2560,8 @@ def project_room_files(request, room_id):
     serializer.is_valid(raise_exception=True)
     file_row = serializer.save(project_room=access.room, uploaded_by=request.user, visibility=visibility)
     _log_room_activity(access.room, request.user, "file_added", f"Added file: {file_row.name}", visibility="internal" if visibility in {"pricing", "sensitive"} else visibility, object_type="file", object_id=file_row.id)
+    if visibility in {"shared", "internal"}:
+        notify_project_room_participants(room=access.room, actor=request.user, title=f"New file in {access.room.name}", message=f"{file_row.name} was added to the Project Room.", kind="project_room_file", visibility=visibility)
     return Response(ProjectRoomFileSerializer(file_row).data, status=201)
 
 @api_view(["GET"])

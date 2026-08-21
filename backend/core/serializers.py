@@ -33,6 +33,8 @@ from .models import (
     ProjectRoomFile,
     ProjectRoomActivity,
     CollaborationNotification,
+    NotificationPreference,
+    NotificationDelivery,
     AIConversation,
     AIMessage,
     OpportunityDocument,
@@ -164,16 +166,28 @@ class SavedSearchSerializer(WorkspaceRelationshipValidationMixin, serializers.Mo
 
 
 class IntelligenceAlertSerializer(serializers.ModelSerializer):
+    opportunity_source = serializers.CharField(source="opportunity.source", read_only=True, default="")
+    internal_link = serializers.SerializerMethodField()
+
+    def get_internal_link(self, obj):
+        if not obj.opportunity_id:
+            return "/capture/alerts"
+        if obj.opportunity.source == "grants.gov":
+            return f"/opportunities/federal-grants/{obj.opportunity.source_id}"
+        if obj.opportunity.source == "sam.gov":
+            return f"/opportunities/federal-contracts/{obj.opportunity.source_id}"
+        return "/capture/alerts"
+
     class Meta:
         model = IntelligenceAlert
         fields = (
-            "id", "organization", "saved_search", "opportunity", "alert_type",
-            "title", "summary", "source_id", "source_url", "matched_filters",
+            "id", "organization", "saved_search", "opportunity", "opportunity_source", "internal_link", "alert_type",
+            "title", "summary", "source_id", "source_url", "matched_filters", "event_key",
             "read", "dismissed", "created_at", "updated_at",
         )
         read_only_fields = (
             "id", "organization", "saved_search", "opportunity", "alert_type",
-            "title", "summary", "source_id", "source_url", "matched_filters",
+            "title", "summary", "source_id", "source_url", "matched_filters", "event_key",
             "created_at", "updated_at",
         )
 
@@ -475,6 +489,29 @@ class CollaborationNotificationSerializer(serializers.ModelSerializer):
         model = CollaborationNotification
         fields = ("id", "organization", "user", "project_room", "title", "message", "kind", "read", "link", "created_at", "updated_at")
         read_only_fields = ("id", "organization", "user", "project_room", "title", "message", "kind", "link", "created_at", "updated_at")
+
+
+class NotificationPreferenceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificationPreference
+        fields = (
+            "id", "organization", "user", "in_app_enabled", "email_enabled",
+            "immediate_critical", "daily_digest", "weekly_digest",
+            "opportunity_alerts", "opportunity_changes", "deadlines",
+            "pipeline", "project_room", "security", "created_at", "updated_at",
+        )
+        read_only_fields = ("id", "organization", "user", "created_at", "updated_at")
+
+
+class NotificationDeliverySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificationDelivery
+        fields = (
+            "id", "organization", "user", "channel", "category", "recipient",
+            "subject", "status", "error_message", "related_object_type",
+            "related_object_id", "sent_at", "created_at", "updated_at",
+        )
+        read_only_fields = fields
 
 
 class OrganizationProfileSerializer(serializers.ModelSerializer):

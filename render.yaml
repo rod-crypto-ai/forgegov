@@ -74,6 +74,14 @@ services:
     sync: false
   - key: ALERTS_ENABLED
     value: 'true'
+  - key: NOTIFICATION_DIGESTS_ENABLED
+    value: 'true'
+  - key: DAILY_DIGEST_UTC_HOUR
+    value: '13'
+  - key: WEEKLY_DIGEST_DAY
+    value: mon
+  - key: WEEKLY_DIGEST_UTC_HOUR
+    value: '13'
   - key: AI_PROVIDER
     value: openai
   - key: SEARXNG_URL
@@ -123,6 +131,41 @@ services:
       type: web
       name: forgegov-api
       envVarKey: OPENAI_API_KEY
+  - key: EMAIL_BACKEND
+    fromService:
+      type: web
+      name: forgegov-api
+      envVarKey: EMAIL_BACKEND
+  - key: EMAIL_HOST
+    fromService:
+      type: web
+      name: forgegov-api
+      envVarKey: EMAIL_HOST
+  - key: EMAIL_PORT
+    fromService:
+      type: web
+      name: forgegov-api
+      envVarKey: EMAIL_PORT
+  - key: EMAIL_HOST_USER
+    fromService:
+      type: web
+      name: forgegov-api
+      envVarKey: EMAIL_HOST_USER
+  - key: EMAIL_HOST_PASSWORD
+    fromService:
+      type: web
+      name: forgegov-api
+      envVarKey: EMAIL_HOST_PASSWORD
+  - key: EMAIL_USE_TLS
+    fromService:
+      type: web
+      name: forgegov-api
+      envVarKey: EMAIL_USE_TLS
+  - key: DEFAULT_FROM_EMAIL
+    fromService:
+      type: web
+      name: forgegov-api
+      envVarKey: DEFAULT_FROM_EMAIL
   - key: ALERTS_ENABLED
     value: 'true'
 - type: worker
@@ -161,6 +204,14 @@ services:
       envVarKey: SAM_GOV_API_KEY
   - key: ALERTS_ENABLED
     value: 'true'
+  - key: NOTIFICATION_DIGESTS_ENABLED
+    value: 'true'
+  - key: DAILY_DIGEST_UTC_HOUR
+    value: '13'
+  - key: WEEKLY_DIGEST_DAY
+    value: mon
+  - key: WEEKLY_DIGEST_UTC_HOUR
+    value: '13'
 - type: web
   name: forgegov
   runtime: docker

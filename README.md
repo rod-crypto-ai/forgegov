@@ -1,4 +1,4 @@
-# ForgeGov v2.0.3
+# ForgeGov v3.1.2
 
 ForgeGov is a government-contracting intelligence and capture-management platform built with Django, Django REST Framework, PostgreSQL, Redis, Celery, Next.js, TypeScript, and Docker.
 
@@ -9,6 +9,7 @@ ForgeGov is a government-contracting intelligence and capture-management platfor
 - Resilient SBA SUBNet discovery with live, indexed, cached, and stored-history fallbacks.
 - SAM.gov subaward intelligence, USAspending awards and contract vehicles, federal forecasts, agency profiles, company profiles, teaming, alerts, pipeline, and pursuits.
 - Interactive links for opportunities, grants, companies, agencies, awards, vehicles, and forecasts.
+- Unified in-app/email intelligence notifications with saved-search matches, opportunity changes, deadlines, Project Room activity, and daily/weekly briefs.
 - ForgeGov AI grounded in organization-scoped workspace records, government data, and optional live web research.
 - OpenAI or self-hosted Ollama model provider.
 - Private local SearXNG service for live web search.
