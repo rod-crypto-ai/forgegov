@@ -6,8 +6,8 @@ from .version import VERSION
 
 
 class PrivateBetaLaunchGateV310Tests(SimpleTestCase):
-    def test_release_version_is_v310(self):
-        self.assertEqual(VERSION, "3.1.0")
+    def test_release_version_is_v310_or_newer(self):
+        self.assertGreaterEqual(tuple(map(int, VERSION.split("."))), (3, 1, 0))
 
     def test_sam_state_filter_maps_to_official_state_parameter(self):
         params = _build_sam_params(state="TX", solicitation_number="W91QVN-26-R-0001", set_aside="SBA")

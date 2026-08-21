@@ -1,27 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$ROOT"
 
 echo "Tracked secret-bearing environment files"
-tracked_env="$(git ls-files | grep -E '(^|/)\.env($|\.(production|prod|local|staging)$)' || true)"
-if [ -n "$tracked_env" ]; then
-  echo "FAIL: tracked environment file(s):"
-  echo "$tracked_env"
-  exit 1
-fi
-echo "PASS"
 
-echo "Credential-like values in application source"
-files="$(grep -RIlE \
-  'sk-[A-Za-z0-9_-]{24,}|re_[A-Za-z0-9_-]{24,}|AKIA[0-9A-Z]{16}' \
-  backend frontend \
-  --exclude='*.md' --exclude='*.lock' --exclude='test*.py' --exclude='*test*.py' \
-  --exclude-dir='node_modules' --exclude-dir='.next' --exclude-dir='__pycache__' \
-  || true)"
-if [ -n "$files" ]; then
-  echo "FAIL: credential-like values found in:"
-  echo "$files"
+ENV_FILES="$(git ls-files | grep -E '(^|/)\.env($|\.(production|prod|local|staging)$)' || true)"
+
+if [ -n "$ENV_FILES" ]; then
+  echo "FAIL: tracked environment files found:"
+  echo "$ENV_FILES"
   exit 1
 fi
+
+echo "PASS"
+echo "Credential-like values in tracked production source"
+
+MATCHES="$(
+  git grep -nE '(^|[^A-Za-z0-9_])(sk-[A-Za-z0-9_-]{20,}|re_[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)' -- backend frontend 2>/dev/null \
+  | grep -Ev '(^|/)(test[^/]*\.py|tests\.py):' \
+  || true
+)"
+
+if [ -n "$MATCHES" ]; then
+  echo "FAIL: possible credentials found:"
+  echo "$MATCHES"
+  exit 1
+fi
+
 echo "PASS"
