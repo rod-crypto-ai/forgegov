@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED = "3.1.2"
+EXPECTED = "3.1.3"
 errors: list[str] = []
 
 
@@ -14,12 +14,12 @@ def require(condition: bool, message: str):
         errors.append(message)
 
 
-require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.1.2")
+require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.1.3")
 require(not (ROOT / "INSTALL.command").exists(), "obsolete root INSTALL.command must be removed")
 require(not (ROOT / "VERIFY.command").exists(), "obsolete root VERIFY.command must be removed")
 package = json.loads((ROOT / "frontend/package.json").read_text())
-require(package.get("version") == EXPECTED, "frontend package version is not 3.1.2")
-require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.1.2")
+require(package.get("version") == EXPECTED, "frontend package version is not 3.1.3")
+require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.1.3")
 
 # Historical migrations must never depend on a moving target.
 for migration in ROOT.glob("backend/*/migrations/*.py"):
@@ -130,6 +130,26 @@ require("Pause notifications" in admin_page, "Creator notification pause control
 render = (ROOT / "render.yaml").read_text()
 require(render.count("NOTIFICATION_DIGESTS_ENABLED") >= 2, "Render web/beat notification digest settings are incomplete")
 require("envVarKey: EMAIL_HOST_PASSWORD" in render, "worker SMTP secret forwarding is missing")
+
+# v3.1.3 capture intelligence and competitive positioning requirements.
+require("class CompetitivePositionSnapshot" in models, "competitive-position snapshot model is missing")
+positioning = (ROOT / "backend/core/competitive_positioning.py").read_text()
+for needle in ("agency_buying_history", "competitor_profiles", "win_themes", "questions_to_validate", "qualification"):
+    require(needle in positioning, f"competitive-positioning engine missing: {needle}")
+require("official_historical_award_rollup" in positioning, "agency buying history lacks official-evidence classification")
+require("not an official bidder list" in positioning, "competitor inference guardrail is missing")
+require("does not have enough validated" in positioning.lower(), "win-theme evidence guardrail is missing")
+require('path("ai/opportunities/<str:source_id>/competitive-positioning/", opportunity_competitive_positioning)' in urls, "competitive-positioning API route is missing")
+command_center = (ROOT / "backend/core/capture_command_center.py").read_text()
+require('"competitive_positioning": competitive' in command_center, "Capture Command Center does not include competitive positioning")
+command_ui = (ROOT / "frontend/components/capture-command-center.tsx").read_text()
+for needle in ("QUALIFICATION", "AGENCY BUYING HISTORY", "COMPETITOR DOSSIERS", "WIN THEMES"):
+    require(needle in command_ui, f"Capture Command Center UI missing: {needle}")
+vendor_profile = (ROOT / "frontend/app/participants/vendors/profile/page.tsx").read_text()
+require("COMPETITIVE PROFILE" in vendor_profile, "vendor profile lacks competitive-history panel")
+require("award_vendor =" in (ROOT / "backend/core/views.py").read_text(), "award-history-only competitors cannot resolve to vendor intelligence")
+require("/participants/vendors/profile?name=" in command_ui, "competitor dossiers do not link to unified vendor profiles")
+require((ROOT / "backend/core/migrations/0031_capture_competitive_positioning.py").exists(), "v3.1.3 competitive-positioning migration is missing")
 
 if errors:
     print("Private beta launch source audit FAILED:")

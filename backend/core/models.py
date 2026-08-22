@@ -1033,6 +1033,26 @@ class PursuitDecisionSnapshot(TimeStampedModel):
         indexes = [models.Index(fields=["organization", "opportunity", "-created_at"], name="pdec_org_opp_time_idx")]
 
 
+class CompetitivePositionSnapshot(TimeStampedModel):
+    """Persistent competitive-positioning record for capture reviews and trend analysis."""
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="competitive_position_snapshots")
+    opportunity = models.ForeignKey(Opportunity, on_delete=models.CASCADE, related_name="competitive_position_snapshots")
+    qualification_score = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    recommendation = models.CharField(max_length=40)
+    agency_profile = models.JSONField(default=dict, blank=True)
+    incumbent = models.JSONField(default=dict, blank=True)
+    competitors = models.JSONField(default=list, blank=True)
+    win_themes = models.JSONField(default=list, blank=True)
+    capture_gaps = models.JSONField(default=list, blank=True)
+    evidence = models.JSONField(default=dict, blank=True)
+    recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="recorded_competitive_position_snapshots")
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["organization", "opportunity", "-created_at"], name="cpos_org_opp_time_idx")]
+
+
 class TeamingActivity(TimeStampedModel):
     class ActivityType(models.TextChoices):
         NOTE = "note", "Note"

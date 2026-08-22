@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Activity, AlertTriangle, Brain, CalendarClock, CheckCircle2, CircleDollarSign, Clock3, FileWarning, Gauge, Handshake, History, LoaderCircle, NotebookPen, RefreshCw, ShieldCheck, Target, UsersRound } from "lucide-react";
+import { Activity, AlertTriangle, Brain, CalendarClock, CheckCircle2, FileWarning, Gauge, History, LoaderCircle, NotebookPen, RefreshCw, ShieldCheck, Target, UsersRound } from "lucide-react";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
 
@@ -16,6 +16,14 @@ type CommandCenterPayload = {
   risks:Array<{key:string;label:string;score:number;severity:string;reason:string;mitigation:string}>;
   readiness:Array<{key:string;label:string;status:string;detail:string}>;
   competition:{incumbent:Record<string,unknown>;competitors:Array<Record<string,unknown>>;similar_contracts:Array<Record<string,unknown>>};
+  competitive_positioning:{
+    qualification:{score:number;recommendation:string;factors:Array<{key:string;label:string;score:number;weight:number;detail:string}>;conditions:string[];warning:string};
+    agency_buying_history:{agency?:string;award_count:number;vendor_count:number;obligated_amount:number;repeat_vendor_share:number;top_vendors:Array<{name:string;award_count:number;obligated_amount:number;share_of_obligations:number}>;common_naics:Array<{code:string;award_count:number}>;common_psc:Array<{code:string;award_count:number}>;classification:string;warning:string};
+    competitor_profiles:Array<{name:string;confidence:number;historical_award_count:number;historical_obligated_amount:number;agency_award_count:number;agency_obligation_share:number;known_signals:string[];questions_to_validate:string[];classification:string}>;
+    win_themes:Array<{title:string;message:string;proof_points:string[];customer_basis:string[];status:string;classification:string}>;
+    capture_gaps:string[];
+    warnings:string[];
+  };
   teaming:Array<Record<string,unknown>>;
   compliance:Array<{key:string;requirement:string;category:string;source:string;status:string;owner:string;evidence:string}>;
   pricing_readiness:{score?:number;status?:string;warning?:string};
@@ -43,6 +51,8 @@ export function CaptureCommandCenter({noticeId}:{noticeId:string}){
   const health=Number(data.scores.health??0);const win=Number(data.scores.win_probability??0);const ready=Number(data.scores.proposal_readiness??0);
   const decision=text(data.bid_decision.recommendation,"hold").replaceAll("_"," ");
   const incumbent=text(data.competition.incumbent.recipient_name||data.competition.incumbent.name,"No reliable signal");
+  const competitive=data.competitive_positioning;
+  const agency=competitive.agency_buying_history;
   return <section className="capture-command-shell">
     <header className="capture-command-header"><div><span className="eyebrow">CAPTURE COMMAND CENTER</span><h2>Run the pursuit from one screen</h2><p>Capture decision support, win strategy, proposal work, collaboration memory, and official market evidence in one operational view.</p></div><button className="secondary-button" disabled={busy} onClick={()=>void load()}>{busy?<LoaderCircle className="spin" size={16}/>:<RefreshCw size={16}/>} Refresh command center</button></header>
     {message&&<p className="inline-message">{message}</p>}
@@ -69,6 +79,16 @@ export function CaptureCommandCenter({noticeId}:{noticeId:string}){
     <div className="capture-command-grid">
       <section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">RISK WATCH</span><h3>Capture risks</h3></div><FileWarning size={20}/></div><div className="command-risk-grid">{data.risks.map(row=><article className={row.severity} key={row.key}><div><strong>{row.label}</strong><span>{row.severity}</span></div><p>{row.reason}</p><small>{row.mitigation}</small></article>)}</div></section>
       <section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">MARKET + TEAMING</span><h3>Competitive position</h3></div><UsersRound size={20}/></div><div className="command-market-grid"><article><span>Likely incumbent signal</span><strong>{incumbent}</strong><small>{text(data.competition.incumbent.classification,"Evidence unavailable").replaceAll("_"," ")}</small></article><article><span>Likely competitors</span><strong>{data.competition.competitors.length}</strong><small>Historical-award inference</small></article><article><span>Teaming matches</span><strong>{data.teaming.length}</strong><small>ForgeGov Network</small></article><article><span>Pricing readiness</span><strong>{Number(data.pricing_readiness.score??0)}%</strong><small>{text(data.pricing_readiness.status,"unknown").replaceAll("_"," ")}</small></article></div></section>
+    </div>
+
+    <div className="capture-command-grid competitive-position-grid">
+      <section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">QUALIFICATION</span><h3>Should we keep investing?</h3></div><Target size={20}/></div><div className={`competitive-score ${scoreTone(competitive.qualification.score)}`}><strong>{competitive.qualification.score}<small>/100</small></strong><span>{competitive.qualification.recommendation.replaceAll("_"," ")}</span></div><div className="competitive-factor-list">{competitive.qualification.factors.map(row=><article key={row.key}><div><strong>{row.label}</strong><span>{row.score}/100 · {row.weight}%</span></div><p>{row.detail}</p></article>)}</div>{competitive.qualification.conditions.length?<div className="competitive-conditions"><strong>Conditions / gaps</strong>{competitive.qualification.conditions.slice(0,6).map((row,index)=><p key={index}>• {row}</p>)}</div>:null}<small>{competitive.qualification.warning}</small></section>
+      <section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">AGENCY BUYING HISTORY</span><h3>{text(agency.agency,"Customer")} market signals</h3></div><History size={20}/></div><div className="command-market-grid"><article><span>Stored awards</span><strong>{agency.award_count}</strong><small>Official historical records</small></article><article><span>Known vendors</span><strong>{agency.vendor_count}</strong><small>Recipients in stored history</small></article><article><span>Obligated history</span><strong>{new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",notation:"compact",maximumFractionDigits:1}).format(Number(agency.obligated_amount||0))}</strong><small>Stored federal awards</small></article><article><span>Repeat-vendor share</span><strong>{agency.repeat_vendor_share}%</strong><small>Historical pattern only</small></article></div><div className="competitive-vendor-list">{agency.top_vendors.slice(0,5).map(row=><article key={row.name}><div><strong>{row.name}</strong><span>{row.share_of_obligations}% of stored obligations</span></div><p>{row.award_count} award(s) · {new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",notation:"compact",maximumFractionDigits:1}).format(Number(row.obligated_amount||0))}</p></article>)}</div><small>{agency.warning}</small></section>
+    </div>
+
+    <div className="capture-command-grid competitive-position-grid">
+      <section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">COMPETITOR DOSSIERS</span><h3>Historical competitive signals</h3></div><UsersRound size={20}/></div><div className="competitor-dossier-list">{competitive.competitor_profiles.length?competitive.competitor_profiles.slice(0,6).map(row=><article key={row.name}><div className="competitor-dossier-head"><strong><Link href={`/participants/vendors/profile?name=${encodeURIComponent(row.name)}`}>{row.name}</Link></strong><span>{row.confidence}% signal confidence</span></div><div className="competitor-dossier-metrics"><span>{row.historical_award_count} stored awards</span><span>{row.agency_award_count} with this agency</span><span>{row.agency_obligation_share}% agency-history share</span></div>{row.known_signals.slice(0,3).map((signal,index)=><p key={index}>• {signal}</p>)}<small>{row.classification.replaceAll("_"," ")}</small></article>):<div className="table-state compact-state"><UsersRound/><strong>No reliable competitor dossier yet</strong><p>Synchronize more award history or validate predecessor information before assuming competition.</p></div>}</div></section>
+      <section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">WIN THEMES</span><h3>Evidence-backed positioning hypotheses</h3></div><Brain size={20}/></div><div className="win-theme-list">{competitive.win_themes.map((row,index)=><article key={`${row.title}-${index}`}><div><strong>{row.title}</strong><span>{row.status.replaceAll("_"," ")}</span></div><p>{row.message}</p>{row.proof_points.slice(0,3).map((point,pindex)=><small key={pindex}>• {point}</small>)}</article>)}</div><small>These are capture hypotheses, not solicitation facts. Validate each theme against Section M/customer evidence and company proof points.</small></section>
     </div>
 
     <section className="data-panel"><div className="panel-title-row"><div><span className="eyebrow">INTELLIGENCE TIMELINE</span><h3>Acquisition + capture activity</h3></div><History size={20}/></div><div className="command-timeline">{data.timeline.slice(0,16).map((row,index)=><article key={`${row.label}-${index}`}><span className={`timeline-marker ${row.category??"capture"}`}/><div><strong>{row.label}</strong><p>{row.source}</p></div><time>{row.date?new Date(row.date).toLocaleString():"Date unavailable"}</time></article>)}</div></section>

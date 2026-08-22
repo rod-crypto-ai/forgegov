@@ -7,6 +7,7 @@ from django.utils import timezone
 from .capture_intelligence import build_capture_assessment
 from .models import OpportunityAnalysis, PipelineItem, ProjectRoomActivity, ProjectRoomNote, ProjectRoomTask, Task
 from .win_strategy import build_win_strategy
+from .competitive_positioning import build_competitive_positioning
 
 
 def _iso(value):
@@ -68,6 +69,7 @@ def _project_room_payload(pipeline: PipelineItem | None) -> dict[str, Any] | Non
 def build_capture_command_center(*, organization, opportunity) -> dict[str, Any]:
     assessment = build_capture_assessment(organization=organization, opportunity=opportunity, include_ai=False)
     win = build_win_strategy(organization=organization, opportunity=opportunity)
+    competitive = build_competitive_positioning(organization=organization, opportunity=opportunity, assessment=assessment, win=win)
     pipeline = PipelineItem.objects.filter(organization=organization, opportunity=opportunity).select_related("project_room", "owner").order_by("-updated_at").first()
     room = _project_room_payload(pipeline)
 
@@ -154,6 +156,7 @@ def build_capture_command_center(*, organization, opportunity) -> dict[str, Any]
         "next_actions": next_actions,
         "risks": assessment.get("risks", []),
         "readiness": readiness,
+        "competitive_positioning": competitive,
         "competition": {
             "incumbent": win.get("incumbent", {}),
             "competitors": win.get("competitors", [])[:6],

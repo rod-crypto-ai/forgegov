@@ -141,6 +141,7 @@ from .capture_intelligence import build_capture_assessment
 from .win_strategy import build_win_strategy
 from .capture_command_center import build_capture_command_center
 from .pursuit_decision import build_pursuit_decision, record_pursuit_decision
+from .competitive_positioning import build_competitive_positioning, record_competitive_positioning
 from .proposal_workspace import build_proposal_workspace
 from .proposal_execution import proposal_execution_payload, ensure_proposal_execution, update_plan, update_requirement, update_review, update_finding
 from .submission_control import build_submission_control, create_submission_snapshot, update_closeout, export_submission_control
@@ -1226,6 +1227,21 @@ def agency_intelligence(request):
             .annotate(obligated=Sum("obligated_amount"), awards=Count("id"))
             .order_by("-obligated")[:5]
         )
+        top_psc = list(
+            awards.exclude(psc_code="")
+            .values("psc_code")
+            .annotate(obligated=Sum("obligated_amount"), awards=Count("id"))
+            .order_by("-obligated")[:5]
+        )
+        top_offices = list(
+            awards.exclude(awarding_office="")
+            .values("awarding_office")
+            .annotate(obligated=Sum("obligated_amount"), awards=Count("id"))
+            .order_by("-obligated")[:5]
+        )
+        totals = awards.aggregate(total=Sum("obligated_amount"), awards=Count("id"))
+        award_total = totals["total"] or 0
+        award_count = totals["awards"] or 0
         results.append({
             "id": agency.id,
             "name": agency.name,
@@ -1249,6 +1265,23 @@ def vendor_intelligence(request):
     if name:
         base = base.filter(Q(name__icontains=name) | Q(uei__icontains=name) | Q(cage_code__icontains=name))
     vendors = list(base.order_by("name")[:50])
+    if name and not vendors:
+        award_vendor = (
+            Award.objects.exclude(recipient_name="")
+            .filter(recipient_name__icontains=name)
+            .values("recipient_name", "recipient_uei", "recipient_cage")
+            .annotate(total=Sum("obligated_amount"), awards=Count("id"))
+            .order_by("-total", "recipient_name")
+            .first()
+        )
+        if award_vendor:
+            vendors = [Vendor(
+                name=award_vendor["recipient_name"],
+                uei=award_vendor.get("recipient_uei") or "",
+                cage_code=award_vendor.get("recipient_cage") or "",
+                award_count=award_vendor.get("awards") or 0,
+                obligated_amount=award_vendor.get("total") or 0,
+            )]
     results = []
     for vendor in vendors:
         awards = Award.objects.filter(recipient_name=vendor.name)
@@ -1264,6 +1297,24 @@ def vendor_intelligence(request):
             .annotate(obligated=Sum("obligated_amount"), awards=Count("id"))
             .order_by("-obligated")[:5]
         )
+        top_psc = list(
+            awards.exclude(psc_code="")
+            .values("psc_code")
+            .annotate(obligated=Sum("obligated_amount"), awards=Count("id"))
+            .order_by("-obligated")[:5]
+        )
+        top_offices = list(
+            awards.exclude(awarding_office="")
+            .values("awarding_office")
+            .annotate(obligated=Sum("obligated_amount"), awards=Count("id"))
+            .order_by("-obligated")[:5]
+        )
+        totals = awards.aggregate(
+            total=Sum("obligated_amount"),
+            awards=Count("id"),
+        )
+        award_total = totals["total"] if totals["total"] is not None else (vendor.obligated_amount or Decimal("0"))
+        award_count = totals["awards"] or (vendor.award_count or 0)
         results.append({
             "id": vendor.id,
             "name": vendor.name,
@@ -1274,10 +1325,17 @@ def vendor_intelligence(request):
             "website": vendor.website,
             "socioeconomic_statuses": vendor.socioeconomic_statuses,
             "naics_codes": vendor.naics_codes,
-            "award_count": awards.count(),
-            "obligated_amount": awards.aggregate(total=Sum("obligated_amount"))["total"] or 0,
+            "award_count": award_count,
+            "obligated_amount": award_total,
+            "average_award_amount": (award_total / award_count) if award_count else 0,
+            "agency_count": awards.exclude(awarding_agency="").values("awarding_agency").distinct().count(),
+            "active_award_count": awards.filter(end_date__gte=timezone.now().date()).count(),
             "top_agencies": top_agencies,
             "top_naics": top_naics,
+            "top_psc": top_psc,
+            "top_offices": top_offices,
+            "classification": "vendor_profile_from_official_award_history",
+            "warning": "Vendor market position is derived from stored historical award records and does not prove current bidder intent or future performance.",
             "recent_awards": AwardSerializer(awards.order_by("-start_date", "-updated_at")[:10], many=True).data,
             "related_opportunities": OpportunitySerializer(
                 Opportunity.objects.filter(
@@ -2009,6 +2067,25 @@ def opportunity_win_strategy(request, source_id: str):
     if not opportunity:
         return Response({"detail": "Opportunity not found."}, status=status.HTTP_404_NOT_FOUND)
     return Response(build_win_strategy(organization=organization, opportunity=opportunity))
+
+
+@api_view(["GET", "POST"])
+@permission_classes([ReadOnlyOrContributor])
+def opportunity_competitive_positioning(request, source_id: str):
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(source_id)
+    if not opportunity:
+        return Response({"detail": "Opportunity not found."}, status=status.HTTP_404_NOT_FOUND)
+    if request.method == "POST":
+        snapshot = record_competitive_positioning(
+            organization=organization,
+            opportunity=opportunity,
+            user=request.user,
+        )
+        payload = build_competitive_positioning(organization=organization, opportunity=opportunity)
+        payload["recorded_snapshot_id"] = snapshot.id
+        return Response(payload, status=status.HTTP_201_CREATED)
+    return Response(build_competitive_positioning(organization=organization, opportunity=opportunity))
 
 
 @api_view(["GET"])
