@@ -73,6 +73,7 @@ from .models import (
     CollaborationNotification,
     NotificationPreference,
     NotificationDelivery,
+    UserPreference,
     AIConversation,
     AIMessage,
     OpportunityDocument,
@@ -142,6 +143,7 @@ from .win_strategy import build_win_strategy
 from .capture_command_center import build_capture_command_center
 from .pursuit_decision import build_pursuit_decision, record_pursuit_decision
 from .competitive_positioning import build_competitive_positioning, record_competitive_positioning
+from .capture_copilot import COPILOT_MODES, build_capture_copilot_brief, run_capture_copilot
 from .proposal_workspace import build_proposal_workspace
 from .proposal_execution import proposal_execution_payload, ensure_proposal_execution, update_plan, update_requirement, update_review, update_finding
 from .submission_control import build_submission_control, create_submission_snapshot, update_closeout, export_submission_control
@@ -409,7 +411,7 @@ def ai_chat(request):
             conversation = AIConversation.objects.create(organization=organization, project_room=project_room, title=message[:120], created_by=request.user)
         if conversation:
             AIMessage.objects.create(conversation=conversation, role=AIMessage.Role.USER, content=message)
-        result = ask_ai(message=message, history=history, organization=organization)
+        result = ask_ai(message=message, history=history, organization=organization, user=request.user)
         if conversation:
             AIMessage.objects.create(conversation=conversation, role=AIMessage.Role.ASSISTANT, content=result.get("answer", ""), sources=result.get("sources") or [], model=result.get("model", ""), provider=result.get("provider", ""))
             result["conversation_id"] = conversation.id
@@ -1461,6 +1463,42 @@ def notification_preferences(request):
     return Response(NotificationPreferenceSerializer(preference).data)
 
 
+@api_view(["GET", "PATCH"])
+def user_preferences(request):
+    preference, _ = UserPreference.objects.get_or_create(user=request.user)
+    if request.method == "PATCH":
+        allowed = {
+            "theme", "density", "reduce_motion", "sidebar_collapsed",
+            "ai_response_style", "ai_live_web_enabled", "ai_workspace_grounding_enabled",
+        }
+        unknown = sorted(set(request.data.keys()) - allowed)
+        if unknown:
+            return Response({"detail": f"Unsupported preference field(s): {', '.join(unknown)}"}, status=status.HTTP_400_BAD_REQUEST)
+        choice_fields = {
+            "theme": {value for value, _ in UserPreference.Theme.choices},
+            "density": {value for value, _ in UserPreference.Density.choices},
+            "ai_response_style": {value for value, _ in UserPreference.AIResponseStyle.choices},
+        }
+        boolean_fields = {"reduce_motion", "sidebar_collapsed", "ai_live_web_enabled", "ai_workspace_grounding_enabled"}
+        for key, value in request.data.items():
+            if key in choice_fields and value not in choice_fields[key]:
+                return Response({"detail": f"Invalid value for {key}."}, status=status.HTTP_400_BAD_REQUEST)
+            if key in boolean_fields and not isinstance(value, bool):
+                return Response({"detail": f"{key} must be true or false."}, status=status.HTTP_400_BAD_REQUEST)
+            setattr(preference, key, value)
+        preference.save()
+    return Response({
+        "theme": preference.theme,
+        "density": preference.density,
+        "reduce_motion": preference.reduce_motion,
+        "sidebar_collapsed": preference.sidebar_collapsed,
+        "ai_response_style": preference.ai_response_style,
+        "ai_live_web_enabled": preference.ai_live_web_enabled,
+        "ai_workspace_grounding_enabled": preference.ai_workspace_grounding_enabled,
+        "updated_at": preference.updated_at,
+    })
+
+
 @api_view(["GET"])
 def notification_delivery_history(request):
     organization = _request_organization(request)
@@ -1908,7 +1946,7 @@ def opportunity_briefing(request, source_id: str):
     if cached and not request.data.get("refresh"):
         return Response(OpportunityAnalysisSerializer(cached).data)
     prompt = f"Opportunity: {opportunity.title}\nSolicitation: {opportunity.solicitation_number}\nAgency: {opportunity.agency}\n\nTASK\n{ANALYSIS_PROMPTS[analysis_type]}\n\nAUTHORIZED OPPORTUNITY AND DOCUMENT CONTEXT\n{context}\n\nCite every document-supported claim using the exact [DOC-*] labels. Clearly label unknowns and inferences."
-    result = ask_ai(message=prompt, history=[], organization=organization)
+    result = ask_ai(message=prompt, history=[], organization=organization, user=request.user)
     analysis, _ = OpportunityAnalysis.objects.update_or_create(organization=organization, opportunity=opportunity, project_room=None, analysis_type=analysis_type, input_fingerprint=fingerprint, defaults={"content": result.get("answer", ""), "sources": sources, "model": result.get("model", ""), "created_by": request.user})
     return Response(OpportunityAnalysisSerializer(analysis).data)
 
@@ -1964,7 +2002,7 @@ def opportunity_document_question(request, source_id: str):
     )
 
     try:
-        result = ask_ai(message=prompt, history=[], organization=organization)
+        result = ask_ai(message=prompt, history=[], organization=organization, user=request.user)
     except OpenAIIntegrationError as exc:
         # Preserve useful evidence even if the hosted model fails to emit prose.
         contacts = _opportunity_contacts(opportunity.raw_data if isinstance(opportunity.raw_data, dict) else {})
@@ -2097,6 +2135,67 @@ def opportunity_capture_command_center(request, source_id: str):
     payload = build_capture_command_center(organization=organization, opportunity=opportunity)
     payload["pursuit_decision"] = build_pursuit_decision(organization=organization, opportunity=opportunity)
     return Response(payload)
+
+
+@api_view(["GET", "POST"])
+@throttle_classes([OpenAIChatThrottle])
+@permission_classes([ReadOnlyOrContributor])
+def opportunity_capture_copilot(request, source_id: str):
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(source_id)
+    if not opportunity:
+        return Response({"detail": "Opportunity not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    membership = active_membership(request.user)
+    capabilities = membership_capabilities(membership)
+    include_financial = bool(capabilities.get("financial_read"))
+
+    if request.method == "GET":
+        brief = build_capture_copilot_brief(
+            organization=organization,
+            opportunity=opportunity,
+            include_financial=include_financial,
+        )
+        history = OpportunityAnalysis.objects.filter(
+            organization=organization,
+            opportunity=opportunity,
+            analysis_type=OpportunityAnalysis.AnalysisType.CAPTURE_COPILOT,
+            created_by=request.user,
+        )
+        if not include_financial:
+            history = history.filter(contains_financial=False)
+        history = history.order_by("-updated_at")[:8]
+        return Response({
+            "brief": brief,
+            "modes": [{"key": key, "description": value} for key, value in COPILOT_MODES.items()],
+            "history": OpportunityAnalysisSerializer(history, many=True).data,
+        })
+
+    mode = str(request.data.get("mode") or "question").strip()
+    question = str(request.data.get("question") or "").strip()
+    if mode not in COPILOT_MODES:
+        return Response({"detail": "Unsupported Copilot mode."}, status=status.HTTP_400_BAD_REQUEST)
+    if len(question) > 12000:
+        return Response({"detail": "Copilot questions are limited to 12,000 characters."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        return Response(run_capture_copilot(
+            organization=organization,
+            opportunity=opportunity,
+            user=request.user,
+            mode=mode,
+            question=question,
+            refresh=_truthy(str(request.data.get("refresh") or "false")),
+            include_financial=include_financial,
+        ))
+    except OpenAIIntegrationError as exc:
+        return Response({
+            "detail": str(exc),
+            "brief": build_capture_copilot_brief(
+                organization=organization,
+                opportunity=opportunity,
+                include_financial=include_financial,
+            ),
+        }, status=exc.status_code)
 
 
 @api_view(["GET", "PATCH", "POST"])

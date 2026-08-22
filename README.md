@@ -1,4 +1,4 @@
-# ForgeGov v3.1.2
+# ForgeGov v3.2.0
 
 ForgeGov is a government-contracting intelligence and capture-management platform built with Django, Django REST Framework, PostgreSQL, Redis, Celery, Next.js, TypeScript, and Docker.
 
@@ -10,7 +10,9 @@ ForgeGov is a government-contracting intelligence and capture-management platfor
 - SAM.gov subaward intelligence, USAspending awards and contract vehicles, federal forecasts, agency profiles, company profiles, teaming, alerts, pipeline, and pursuits.
 - Interactive links for opportunities, grants, companies, agencies, awards, vehicles, and forecasts.
 - Unified in-app/email intelligence notifications with saved-search matches, opportunity changes, deadlines, Project Room activity, and daily/weekly briefs.
-- ForgeGov AI grounded in organization-scoped workspace records, government data, and optional live web research.
+- ForgeAI Capture Copilot with evidence-backed pursuit posture, competitor review, bid-decision challenge, proposal strategy, red-team review, and next-action planning.
+- Persistent Settings Center with system/light/dark themes, density, reduced motion, sidebar preference, AI behavior controls, notifications, account/workspace links, and security links.
+- ForgeGov AI grounded in role-authorized organization workspace records, government data, and optional live web research.
 - OpenAI or self-hosted Ollama model provider.
 - Private local SearXNG service for live web search.
 
@@ -33,6 +35,7 @@ Open:
 - Grants: `http://localhost:3000/opportunities/federal-grants`
 - Subcontracting: `http://localhost:3000/opportunities/subcontracting`
 - ForgeGov AI: `http://localhost:3000/assistant`
+- Settings Center: `http://localhost:3000/settings`
 
 ## Enable live web research
 
@@ -82,12 +85,12 @@ OpenAI remains available as an optional hosted provider by setting `AI_PROVIDER=
 The validator checks Django, migrations, all backend tests, TypeScript, ESLint, the production Next.js build, SearXNG JSON search, and running containers. Do not tag or deploy the release unless it ends with:
 
 ```text
-ForgeGov v2.0.3 validation completed successfully.
+ForgeGov v3.2.0 validation completed successfully.
 ```
 
 ## Production notes
 
-- Public registration should remain disabled unless self-service signup is intentional.
+- Registration mode is runtime-controlled by the Creator/Platform Owner; verify the intended public/private-beta/invite-only/closed mode before production changes.
 - Configure production CORS, CSRF, allowed hosts, secure cookies, HSTS, and frontend/API URLs.
 - Hosted deployments must supply a private `SEARXNG_URL`; the local Docker hostname is not valid outside Docker Compose.
 - External official-source links remain available when an upstream site blocks safe embedding.

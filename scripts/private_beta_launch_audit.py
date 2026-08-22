@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED = "3.1.3"
+EXPECTED = "3.2.0"
 errors: list[str] = []
 
 
@@ -14,12 +14,12 @@ def require(condition: bool, message: str):
         errors.append(message)
 
 
-require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.1.3")
+require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.2.0")
 require(not (ROOT / "INSTALL.command").exists(), "obsolete root INSTALL.command must be removed")
 require(not (ROOT / "VERIFY.command").exists(), "obsolete root VERIFY.command must be removed")
 package = json.loads((ROOT / "frontend/package.json").read_text())
-require(package.get("version") == EXPECTED, "frontend package version is not 3.1.3")
-require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.1.3")
+require(package.get("version") == EXPECTED, "frontend package version is not 3.2.0")
+require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.2.0")
 
 # Historical migrations must never depend on a moving target.
 for migration in ROOT.glob("backend/*/migrations/*.py"):
@@ -150,6 +150,46 @@ require("COMPETITIVE PROFILE" in vendor_profile, "vendor profile lacks competiti
 require("award_vendor =" in (ROOT / "backend/core/views.py").read_text(), "award-history-only competitors cannot resolve to vendor intelligence")
 require("/participants/vendors/profile?name=" in command_ui, "competitor dossiers do not link to unified vendor profiles")
 require((ROOT / "backend/core/migrations/0031_capture_competitive_positioning.py").exists(), "v3.1.3 competitive-positioning migration is missing")
+
+
+# v3.2.0 ForgeAI Capture Copilot + Settings Center requirements.
+require("class UserPreference" in models, "persistent user preference model is missing")
+for field in ("theme", "density", "reduce_motion", "sidebar_collapsed", "ai_response_style", "ai_live_web_enabled", "ai_workspace_grounding_enabled"):
+    require(field in models, f"user preference field missing: {field}")
+require("contains_financial = models.BooleanField" in models, "Copilot analysis financial-scope marker is missing")
+require("uses_workspace_context = models.BooleanField" in models, "Copilot workspace-context marker is missing")
+require((ROOT / "backend/core/migrations/0032_capture_copilot_user_preferences.py").exists(), "v3.2.0 settings/Copilot migration is missing")
+
+copilot = (ROOT / "backend/core/capture_copilot.py").read_text()
+for needle in ("build_capture_copilot_brief", "run_capture_copilot", "include_financial", "workspace_grounding_enabled", "created_by=user", "contains_financial=include_financial", "uses_workspace_context=include_workspace"):
+    require(needle in copilot, f"Capture Copilot security/runtime requirement missing: {needle}")
+require("Financial context is excluded" in copilot, "Copilot financial-context redaction is missing")
+require("Private ForgeGov workspace records were excluded" in copilot, "Copilot private-workspace grounding guard is missing")
+ai_source = (ROOT / "backend/core/ai.py").read_text()
+require("include_financial: bool = False" in ai_source, "general ForgeGov AI grounding does not default to financial redaction")
+require("_user_can_read_financial" in ai_source, "general ForgeGov AI lacks financial-role grounding enforcement")
+require('path("ai/opportunities/<str:source_id>/capture-copilot/", opportunity_capture_copilot)' in urls, "Capture Copilot API route is missing")
+require('path("settings/preferences/", user_preferences)' in urls, "persistent settings API route is missing")
+views = (ROOT / "backend/core/views.py").read_text()
+require('history = history.filter(contains_financial=False)' in views, "Copilot history does not hide prior financial analyses from non-financial roles")
+require('created_by=request.user' in views, "Copilot analysis history is not user-scoped")
+
+theme_provider = (ROOT / "frontend/components/theme-provider.tsx").read_text()
+for needle in ("system", "light", "dark", "forgegov-ui-preferences", "dataset.theme", "dataset.density"):
+    require(needle in theme_provider, f"theme provider requirement missing: {needle}")
+settings_page = (ROOT / "frontend/app/settings/page.tsx").read_text()
+for needle in ("Appearance", "ForgeGov AI & Capture Copilot", "Notifications", "Account & workspace", "Security"):
+    require(needle in settings_page, f"Settings Center section missing: {needle}")
+copilot_ui = (ROOT / "frontend/components/capture-copilot.tsx").read_text()
+require("FORGEAI CAPTURE COPILOT · v3.2.0" in copilot_ui, "Capture Copilot UI release identity is missing")
+require('brief.economics.restricted?"Restricted"' in copilot_ui, "Capture Copilot UI does not honor financial redaction")
+opportunity_page = (ROOT / "frontend/app/opportunities/federal-contracts/[noticeId]/page.tsx").read_text()
+require("Capture Copilot" in opportunity_page and '"copilot"' in opportunity_page, "opportunity workspace Capture Copilot tab is missing")
+layout = (ROOT / "frontend/app/layout.tsx").read_text()
+require("ThemeProvider" in layout, "app-wide ThemeProvider is missing")
+regression = (ROOT / "backend/core/test_v320_capture_copilot_settings.py").read_text()
+for needle in ("financial_context_is_redacted", "private_workspace_grounding_preference", "history_is_hidden_after_role_loses_financial_access"):
+    require(needle in regression, f"v3.2.0 security regression coverage missing: {needle}")
 
 if errors:
     print("Private beta launch source audit FAILED:")

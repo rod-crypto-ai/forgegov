@@ -1430,6 +1430,34 @@ class NotificationPreference(TimeStampedModel):
         ]
 
 
+class UserPreference(TimeStampedModel):
+    class Theme(models.TextChoices):
+        SYSTEM = "system", "System"
+        LIGHT = "light", "Light"
+        DARK = "dark", "Dark"
+
+    class Density(models.TextChoices):
+        COMFORTABLE = "comfortable", "Comfortable"
+        COMPACT = "compact", "Compact"
+
+    class AIResponseStyle(models.TextChoices):
+        CONCISE = "concise", "Concise"
+        BALANCED = "balanced", "Balanced"
+        DETAILED = "detailed", "Detailed"
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="forgegov_preferences")
+    theme = models.CharField(max_length=20, choices=Theme.choices, default=Theme.SYSTEM)
+    density = models.CharField(max_length=20, choices=Density.choices, default=Density.COMFORTABLE)
+    reduce_motion = models.BooleanField(default=False)
+    sidebar_collapsed = models.BooleanField(default=False)
+    ai_response_style = models.CharField(max_length=20, choices=AIResponseStyle.choices, default=AIResponseStyle.BALANCED)
+    ai_live_web_enabled = models.BooleanField(default=True)
+    ai_workspace_grounding_enabled = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["user_id"]
+
+
 class NotificationDelivery(TimeStampedModel):
     class Status(models.TextChoices):
         SENT = "sent", "Sent"
@@ -1533,6 +1561,7 @@ class OpportunityAnalysis(TimeStampedModel):
         BID_NO_BID = "bid_no_bid", "Bid / No-Bid"
         COMPLIANCE = "compliance_matrix", "Compliance Matrix"
         AMENDMENTS = "amendment_comparison", "Amendment Comparison"
+        CAPTURE_COPILOT = "capture_copilot", "Capture Copilot"
 
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="opportunity_analyses")
     opportunity = models.ForeignKey(Opportunity, on_delete=models.CASCADE, related_name="analyses")
@@ -1542,6 +1571,8 @@ class OpportunityAnalysis(TimeStampedModel):
     sources = models.JSONField(default=list, blank=True)
     model = models.CharField(max_length=120, blank=True)
     input_fingerprint = models.CharField(max_length=64)
+    contains_financial = models.BooleanField(default=False)
+    uses_workspace_context = models.BooleanField(default=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_opportunity_analyses")
 
     class Meta:

@@ -3,7 +3,6 @@ import {
   BadgeDollarSign,
   BarChart3,
   Bell,
-  BookOpenCheck,
   Bot,
   BriefcaseBusiness,
   Building2,
@@ -20,6 +19,7 @@ import {
   Map,
   Network,
   Search,
+  Settings,
   ShieldCheck,
   Shapes,
   Tags,
@@ -137,7 +137,7 @@ export const navigationGroups: NavGroup[] = [
 
 export const utilityItems: NavItem[] = [
   { href: "/workspace", label: "Workspace", icon: Users, apiPath: "/organizations/", recordLabel: "workspace" },
-  { href: "/settings", label: "Settings", icon: BookOpenCheck },
+  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 export const allNavigationItems = [

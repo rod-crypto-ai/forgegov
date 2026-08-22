@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 import { AuthProvider } from "@/components/auth-provider";
+import { ThemeProvider } from "@/components/theme-provider";
 
 export const metadata: Metadata = {
   title: "ForgeGov",
@@ -10,9 +11,12 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{__html:`(()=>{try{const p=JSON.parse(localStorage.getItem('forgegov-ui-preferences')||'{}');const pref=p.theme||'system';const dark=pref==='dark'||(pref==='system'&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.dataset.theme=dark?'dark':'light';document.documentElement.dataset.themePreference=pref;document.documentElement.dataset.density=p.density||'comfortable';document.documentElement.dataset.reduceMotion=p.reduce_motion?'true':'false';document.documentElement.style.colorScheme=dark?'dark':'light'}catch(e){}})();`}} />
+      </head>
       <body>
-        <AuthProvider><AppShell>{children}</AppShell></AuthProvider>
+        <AuthProvider><ThemeProvider><AppShell>{children}</AppShell></ThemeProvider></AuthProvider>
       </body>
     </html>
   );

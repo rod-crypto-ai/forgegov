@@ -433,7 +433,7 @@ class OpportunityDocumentSerializer(serializers.ModelSerializer):
 class OpportunityAnalysisSerializer(serializers.ModelSerializer):
     class Meta:
         model = OpportunityAnalysis
-        fields = ("id", "opportunity", "project_room", "analysis_type", "content", "sources", "model", "input_fingerprint", "created_at", "updated_at")
+        fields = ("id", "opportunity", "project_room", "analysis_type", "content", "sources", "model", "input_fingerprint", "contains_financial", "uses_workspace_context", "created_at", "updated_at")
         read_only_fields = fields
 
 

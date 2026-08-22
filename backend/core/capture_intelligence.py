@@ -295,7 +295,7 @@ def build_capture_assessment(*, organization, opportunity, include_ai: bool = Fa
             + "\n".join(source_context)
         )
         try:
-            ai_result = ask_ai(message=prompt, history=[], organization=organization)
+            ai_result = ask_ai(message=prompt, history=[], organization=organization, user=user)
             cached_ai, _ = OpportunityAnalysis.objects.update_or_create(
                 organization=organization,
                 opportunity=opportunity,
