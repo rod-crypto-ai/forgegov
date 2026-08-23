@@ -58,3 +58,8 @@ After deployment:
 6. Use **Microsoft 365** from an opportunity workspace to send Outlook email, create an Outlook calendar event, or share to Teams.
 
 Connections are user/workspace scoped. ForgeGov administrators do not automatically gain access to an employee's Microsoft mailbox or Teams account.
+
+
+## Connection verification
+
+After Microsoft redirects back to ForgeGov, v3.2.1.2 verifies the saved delegated authorization against Microsoft Graph `/me`. Settings should display **Connected · Verified** and the signed-in account. If authorization fails, the callback error is displayed in Settings instead of being silently discarded.

@@ -47,6 +47,8 @@ type MicrosoftConnection = {
   provider:string;
   configured:boolean;
   connected:boolean;
+  verified:boolean;
+  verified_at?:string|null;
   status:string;
   account_email:string;
   scopes:string[];
@@ -79,7 +81,22 @@ export default function SettingsPage(){
   const [selectedTeam,setSelectedTeam]=useState("");
   const [selectedChannel,setSelectedChannel]=useState("");
 
-  useEffect(()=>{let active=true;apiGet<NotificationPreference>("/notifications/preferences/").then(row=>{if(active)setNotification(row)}).catch(()=>{});apiGet<MicrosoftConnection>("/integrations/microsoft/status/").then(row=>{if(!active)return;setMicrosoft(row);setSelectedTeam(row.default_team_id??"");setSelectedChannel(row.default_channel_id??"");}).catch(()=>{});return()=>{active=false}},[]);
+  useEffect(()=>{
+    let active=true;
+    apiGet<NotificationPreference>("/notifications/preferences/").then(row=>{if(active)setNotification(row)}).catch(()=>{});
+    const params=new URLSearchParams(window.location.search);
+    const callbackState=params.get("microsoft");
+    const callbackDetail=params.get("detail")??"";
+    const loadStatus=()=>apiGet<MicrosoftConnection>("/integrations/microsoft/status/").then(row=>{if(!active)return row;setMicrosoft(row);setSelectedTeam(row.default_team_id??"");setSelectedChannel(row.default_channel_id??"");return row;});
+    if(callbackState==="connected"){
+      apiPost<MicrosoftConnection>("/integrations/microsoft/verify/",{}).then(row=>{if(!active)return;setMicrosoft(row);setSelectedTeam(row.default_team_id??"");setSelectedChannel(row.default_channel_id??"");setMessage(`Microsoft 365 connected and verified${row.account_email?` as ${row.account_email}`:""}.`)}).catch(error=>{if(!active)return;setMessage(`Microsoft sign-in returned, but ForgeGov could not verify the connection: ${error instanceof Error?error.message:"Unknown verification error"}`);void loadStatus().catch(()=>{})});
+    }else{
+      void loadStatus().catch(()=>{});
+      if(callbackState==="error")Promise.resolve().then(()=>{if(active)setMessage(`Microsoft 365 connection failed: ${callbackDetail||"Microsoft did not complete authorization."}`)});
+    }
+    if(callbackState)window.history.replaceState({},"",`${window.location.pathname}#integrations`);
+    return()=>{active=false};
+  },[]);
   useEffect(()=>{if(!microsoft?.connected)return;apiGet<{results:MicrosoftTarget[]}>("/integrations/microsoft/teams/").then(row=>setTeams(row.results??[])).catch(()=>setTeams([]))},[microsoft?.connected]);
   useEffect(()=>{if(!microsoft?.connected||!selectedTeam)return;apiGet<{results:MicrosoftTarget[]}>(`/integrations/microsoft/channels/?team_id=${encodeURIComponent(selectedTeam)}`).then(row=>setChannels(row.results??[])).catch(()=>setChannels([]))},[microsoft?.connected,selectedTeam]);
 
@@ -90,6 +107,7 @@ export default function SettingsPage(){
   async function toggleNotification(key:keyof NotificationPreference){if(!notification)return;const next={...notification,[key]:!notification[key]};setNotification(next);setBusy("notification");try{const remote=await apiPatch<NotificationPreference>("/notifications/preferences/",{[key]:next[key]});setNotification(remote);setMessage("Notification preference saved.")}catch(error){setNotification(notification);setMessage(error instanceof Error?error.message:"Notification preference could not be saved")}finally{setBusy("")}}
 
   async function connectMicrosoft(){setBusy("microsoft");setMessage("");try{const row=await apiPost<{authorization_url:string}>("/integrations/microsoft/connect/",{});window.location.assign(row.authorization_url)}catch(error){setMessage(error instanceof Error?error.message:"Microsoft 365 connection could not be started");setBusy("")}}
+  async function verifyMicrosoft(){setBusy("microsoft-verify");setMessage("");try{const row=await apiPost<MicrosoftConnection>("/integrations/microsoft/verify/",{});setMicrosoft(row);setMessage(`Microsoft 365 connection verified${row.account_email?` as ${row.account_email}`:""}.`)}catch(error){setMessage(error instanceof Error?error.message:"Microsoft 365 connection could not be verified")}finally{setBusy("")}}
   async function disconnectMicrosoft(){if(!window.confirm("Disconnect your Microsoft 365 account from ForgeGov?"))return;setBusy("microsoft");try{await apiPost("/integrations/microsoft/disconnect/",{});const row=await apiGet<MicrosoftConnection>("/integrations/microsoft/status/");setMicrosoft(row);setTeams([]);setChannels([]);setMessage("Microsoft 365 disconnected.")}catch(error){setMessage(error instanceof Error?error.message:"Microsoft 365 could not be disconnected")}finally{setBusy("")}}
   async function saveMicrosoftDefaults(){if(!selectedTeam||!selectedChannel)return;const team=teams.find(row=>row.id===selectedTeam);const channel=channels.find(row=>row.id===selectedChannel);setBusy("microsoft-defaults");try{await apiPatch("/integrations/microsoft/defaults/",{default_team_id:selectedTeam,default_team_name:team?.name??"",default_channel_id:selectedChannel,default_channel_name:channel?.name??""});const row=await apiGet<MicrosoftConnection>("/integrations/microsoft/status/");setMicrosoft(row);setMessage("Default Teams destination saved.")}catch(error){setMessage(error instanceof Error?error.message:"Teams destination could not be saved")}finally{setBusy("")}}
 
@@ -140,8 +158,9 @@ export default function SettingsPage(){
         <section id="integrations" className="data-panel settings-section">
           <div className="panel-heading"><PlugZap/><div><h2>Connected Apps</h2><p>Connect external work tools without giving ForgeGov organization-wide mailbox access.</p></div></div>
           <article className="connected-app-card">
-            <div className="connected-app-heading"><div className="connected-app-icon"><span>M</span></div><div><strong>Microsoft 365</strong><p>Outlook email, Outlook Calendar, and Microsoft Teams actions directly from opportunity workspaces.</p></div><span className={`connected-app-state ${microsoft?.connected?"connected":microsoft?.configured?"available":"unavailable"}`}>{microsoft?.connected?"Connected":microsoft?.configured?"Ready to connect":"Admin setup required"}</span></div>
-            {microsoft?.connected?<><div className="connected-app-account"><div><span>Signed in account</span><strong>{microsoft.account_email}</strong></div><div className="connected-app-capabilities"><span><Mail/>Send Outlook mail</span><span><CalendarDays/>Create calendar events</span><span><MessagesSquare/>Share to Teams</span></div></div>
+            <div className="connected-app-heading"><div className="connected-app-icon"><span>M</span></div><div><strong>Microsoft 365</strong><p>Outlook email, Outlook Calendar, and Microsoft Teams actions directly from opportunity workspaces.</p></div><span className={`connected-app-state ${microsoft?.connected?"connected":microsoft?.configured?"available":"unavailable"}`}>{microsoft?.connected?(microsoft.verified?"Connected · Verified":"Connected · Verify"):microsoft?.configured?"Ready to connect":"Admin setup required"}</span></div>
+            {microsoft?.connected?<><div className="connected-app-account"><div><span>Signed in account</span><strong>{microsoft.account_email||"Microsoft account"}</strong><small>{microsoft.verified?`Verified${microsoft.verified_at?` · ${new Date(microsoft.verified_at).toLocaleString()}`:""}`:"Connection saved, live verification still required"}</small></div><div className="connected-app-capabilities"><span><Mail/>Send Outlook mail</span><span><CalendarDays/>Create calendar events</span><span><MessagesSquare/>Share to Teams</span></div></div>
+              {!microsoft.verified&&<div className="settings-footer"><span>Verify the saved Microsoft authorization against Microsoft Graph before using opportunity actions.</span><button className="secondary-button" disabled={busy==="microsoft-verify"} onClick={()=>void verifyMicrosoft()}><RefreshCw size={15}/>{busy==="microsoft-verify"?"Verifying…":"Verify connection"}</button></div>}
               <div className="settings-row microsoft-default-row"><div><strong>Default Teams destination</strong><p>ForgeGov uses this channel when you choose Share to Teams from an opportunity.</p></div><div className="microsoft-destination-controls"><select value={selectedTeam} onChange={e=>{setSelectedTeam(e.target.value);setSelectedChannel("");setChannels([])}}><option value="">Choose Team</option>{teams.map(row=><option key={row.id} value={row.id}>{row.name}</option>)}</select><select value={selectedChannel} onChange={e=>setSelectedChannel(e.target.value)} disabled={!selectedTeam}><option value="">Choose channel</option>{channels.map(row=><option key={row.id} value={row.id}>{row.name}</option>)}</select><button className="secondary-button" disabled={!selectedTeam||!selectedChannel||busy==="microsoft-defaults"} onClick={()=>void saveMicrosoftDefaults()}>Save destination</button></div></div>
               {microsoft.last_error&&<div className="system-banner warning">Last Microsoft error: {microsoft.last_error}</div>}
               <div className="settings-footer"><span>Delegated permissions only · tokens encrypted server-side</span><button className="secondary-button danger-button" disabled={busy==="microsoft"} onClick={()=>void disconnectMicrosoft()}><Unplug size={15}/>Disconnect Microsoft 365</button></div></>:<div className="connected-app-connect"><div><strong>{microsoft?.configured?"Connect your Microsoft account":"Administrator configuration required"}</strong><p>{microsoft?.configured?"You will sign in through Microsoft and choose the account ForgeGov may use for delegated actions.":"Set MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET, and the callback URI in the ForgeGov deployment before users can connect."}</p></div><button className="primary-button" disabled={!microsoft?.configured||busy==="microsoft"} onClick={()=>void connectMicrosoft()}><PlugZap size={15}/>{busy==="microsoft"?"Opening Microsoft…":"Connect Microsoft 365"}</button></div>}

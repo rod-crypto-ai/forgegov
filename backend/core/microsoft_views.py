@@ -20,6 +20,7 @@ from .microsoft_graph import (
     list_channels,
     list_teams,
     public_status,
+    verify_connection,
     send_channel_message,
     send_mail,
 )
@@ -73,6 +74,18 @@ def microsoft_callback(request):
         return redirect(f"{frontend}?microsoft=connected")
     except MicrosoftIntegrationError as exc:
         return redirect(f"{frontend}?{urlencode({'microsoft': 'error', 'detail': str(exc)[:500]})}")
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def microsoft_verify(request):
+    try:
+        membership = _membership(request)
+        connection = connection_for(user=request.user, organization=membership.organization)
+        verify_connection(connection)
+        return Response(public_status(user=request.user, organization=membership.organization))
+    except MicrosoftIntegrationError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(["POST"])

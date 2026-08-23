@@ -1,5 +1,6 @@
 import os
 from datetime import date
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -85,6 +86,7 @@ class IntegrationsSubcontractUXV3211Tests(TestCase):
         )
         payload = self.api_client().get("/api/integrations/microsoft/status/").json()
         self.assertTrue(payload["connected"])
+        self.assertFalse(payload["verified"])
         self.assertEqual(payload["account_email"], "owner@microsoft.example")
         self.assertNotIn("access_token", payload)
         self.assertNotIn("refresh_token", payload)
@@ -114,6 +116,67 @@ class IntegrationsSubcontractUXV3211Tests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIn("/settings?microsoft=connected", response.url)
         complete.assert_called_once_with(state="state123", code="code123")
+
+    @patch.dict(os.environ, {"MICROSOFT_CLIENT_ID": "client-id", "MICROSOFT_CLIENT_SECRET": "client-secret", "MICROSOFT_TENANT_ID": "organizations", "MICROSOFT_REDIRECT_URI": "https://api.example.com/api/integrations/microsoft/callback/"}, clear=False)
+    @patch("core.microsoft_graph._raw_graph")
+    @patch("core.microsoft_graph._token_post")
+    def test_microsoft_real_callback_persists_verified_connection(self, token_post, raw_graph):
+        token_post.return_value = {
+            "access_token": "ACCESS-TOKEN",
+            "refresh_token": "REFRESH-TOKEN",
+            "expires_in": 3600,
+            "scope": "User.Read Mail.Send Calendars.ReadWrite ChannelMessage.Send Team.ReadBasic.All Channel.ReadBasic.All",
+        }
+        raw_graph.return_value = {"id": "microsoft-user-123", "mail": "owner@contoso.example", "userPrincipalName": "owner@contoso.example"}
+        start = self.api_client().post("/api/integrations/microsoft/connect/", {}, format="json")
+        self.assertEqual(start.status_code, 200)
+        state = parse_qs(urlparse(start.json()["authorization_url"]).query)["state"][0]
+
+        callback = self.client.get(f"/api/integrations/microsoft/callback/?state={state}&code=code123")
+        self.assertEqual(callback.status_code, 302)
+        self.assertIn("/settings?microsoft=connected", callback.url)
+
+        row = ConnectedApp.objects.get(organization=self.org, user=self.user, provider=ConnectedApp.Provider.MICROSOFT)
+        self.assertEqual(row.status, ConnectedApp.Status.CONNECTED)
+        self.assertEqual(row.account_email, "owner@contoso.example")
+        self.assertTrue((row.metadata or {}).get("verified_at"))
+        payload = self.api_client().get("/api/integrations/microsoft/status/").json()
+        self.assertTrue(payload["connected"])
+        self.assertTrue(payload["verified"])
+        self.assertTrue(payload["capabilities"]["outlook_mail"])
+        self.assertTrue(payload["capabilities"]["outlook_calendar"])
+        self.assertTrue(payload["capabilities"]["teams_channel_message"])
+
+    @patch("core.microsoft_views.complete_authorization", side_effect=Exception("should not be used"))
+    def test_microsoft_callback_surfaces_provider_error_to_settings(self, complete):
+        response = self.client.get("/api/integrations/microsoft/callback/?error=access_denied&error_description=Consent%20was%20not%20granted")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("microsoft=error", response.url)
+        self.assertIn("Consent", response.url)
+        complete.assert_not_called()
+
+    @patch("core.microsoft_graph.graph_request")
+    def test_microsoft_verify_marks_existing_connection_verified(self, graph_request_mock):
+        graph_request_mock.return_value = {"id": "microsoft-user-verified", "mail": "verified@contoso.example"}
+        ConnectedApp.objects.create(
+            organization=self.org,
+            user=self.user,
+            provider=ConnectedApp.Provider.MICROSOFT,
+            status=ConnectedApp.Status.CONNECTED,
+            account_email="old@contoso.example",
+            scopes=["User.Read", "Mail.Send"],
+            access_token_encrypted=encrypt_secret("SECRET ACCESS TOKEN"),
+            refresh_token_encrypted=encrypt_secret("SECRET REFRESH TOKEN"),
+            token_expires_at=timezone.now() + timezone.timedelta(hours=1),
+            connected_at=timezone.now(),
+        )
+        response = self.api_client().post("/api/integrations/microsoft/verify/", {}, format="json")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["connected"])
+        self.assertTrue(payload["verified"])
+        self.assertEqual(payload["account_email"], "verified@contoso.example")
+        self.assertIsNotNone(payload["verified_at"])
 
     def test_subcontract_workspace_has_prime_contact_parent_and_capture_context(self):
         response = self.api_client().get(f"/api/live/sba/subnet/{self.subnet.source_id}/")

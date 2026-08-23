@@ -156,6 +156,14 @@ def complete_authorization(*, state: str, code: str) -> ConnectedApp:
             "disconnected_at": None,
         },
     )
+    metadata = dict(connection.metadata or {})
+    metadata.update({
+        "verified_at": timezone.now().isoformat(),
+        "verified_account_id": connection.external_account_id,
+        "verified_account_email": connection.account_email,
+    })
+    connection.metadata = metadata
+    connection.save(update_fields=["metadata", "updated_at"])
     return connection
 
 
@@ -169,13 +177,17 @@ def connection_for(*, user, organization: Organization, require_connected: bool 
 def public_status(*, user, organization: Organization) -> dict:
     row = connection_for(user=user, organization=organization, require_connected=False)
     metadata = dict(row.metadata or {}) if row else {}
+    scopes = list(row.scopes or []) if row else []
+    scope_names = {str(scope).lower() for scope in scopes}
     return {
         "provider": "microsoft",
         "configured": configured(),
         "connected": bool(row and row.status == ConnectedApp.Status.CONNECTED),
+        "verified": bool(row and row.status == ConnectedApp.Status.CONNECTED and metadata.get("verified_at")),
+        "verified_at": metadata.get("verified_at"),
         "status": row.status if row else "not_connected",
         "account_email": row.account_email if row else "",
-        "scopes": row.scopes if row else [],
+        "scopes": scopes,
         "connected_at": row.connected_at if row else None,
         "last_error": row.last_error if row else "",
         "default_team_id": metadata.get("default_team_id", ""),
@@ -183,11 +195,32 @@ def public_status(*, user, organization: Organization) -> dict:
         "default_channel_id": metadata.get("default_channel_id", ""),
         "default_channel_name": metadata.get("default_channel_name", ""),
         "capabilities": {
-            "outlook_mail": True,
-            "outlook_calendar": True,
-            "teams_channel_message": True,
+            "outlook_mail": "mail.send" in scope_names,
+            "outlook_calendar": "calendars.readwrite" in scope_names,
+            "teams_channel_message": "channelmessage.send" in scope_names,
         },
     }
+
+
+def verify_connection(row: ConnectedApp) -> ConnectedApp:
+    profile = graph_request(row, "GET", "/me")
+    account_email = str(profile.get("mail") or profile.get("userPrincipalName") or "")[:254]
+    external_account_id = str(profile.get("id") or "")[:255]
+    metadata = dict(row.metadata or {})
+    metadata.update({
+        "verified_at": timezone.now().isoformat(),
+        "verified_account_id": external_account_id,
+        "verified_account_email": account_email,
+    })
+    row.metadata = metadata
+    if account_email:
+        row.account_email = account_email
+    if external_account_id:
+        row.external_account_id = external_account_id
+    row.status = ConnectedApp.Status.CONNECTED
+    row.last_error = ""
+    row.save(update_fields=["metadata", "account_email", "external_account_id", "status", "last_error", "updated_at"])
+    return row
 
 
 def disconnect(*, user, organization: Organization) -> None:

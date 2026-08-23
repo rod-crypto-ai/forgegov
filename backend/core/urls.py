@@ -155,7 +155,7 @@ from .views import (
 )
 
 from .microsoft_views import (
-    microsoft_status, microsoft_connect, microsoft_callback, microsoft_disconnect,
+    microsoft_status, microsoft_connect, microsoft_callback, microsoft_verify, microsoft_disconnect,
     microsoft_teams, microsoft_channels, microsoft_defaults, microsoft_send_mail,
     microsoft_create_event, microsoft_send_teams,
 )
@@ -237,6 +237,7 @@ urlpatterns = [
     path("integrations/microsoft/status/", microsoft_status),
     path("integrations/microsoft/connect/", microsoft_connect),
     path("integrations/microsoft/callback/", microsoft_callback),
+    path("integrations/microsoft/verify/", microsoft_verify),
     path("integrations/microsoft/disconnect/", microsoft_disconnect),
     path("integrations/microsoft/teams/", microsoft_teams),
     path("integrations/microsoft/channels/", microsoft_channels),

@@ -2,12 +2,16 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { CalendarPlus, Check, Mail, MessageSquare, PanelsTopLeft, Send, X } from "lucide-react";
+import { CalendarPlus, Check, Mail, MessageSquare, PanelsTopLeft, RefreshCw, Send, X } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
 
 type MicrosoftStatus = {
   configured:boolean;
   connected:boolean;
+  verified:boolean;
+  verified_at?:string|null;
+  status?:string;
+  last_error?:string;
   account_email:string;
   default_team_name?:string;
   default_channel_name?:string;
@@ -44,7 +48,7 @@ export function MicrosoftActions({title,summary="",sourceUrl="",deadline="",agen
   const [busy,setBusy]=useState(false);
   const [message,setMessage]=useState("");
 
-  useEffect(()=>{let active=true;apiGet<MicrosoftStatus>("/integrations/microsoft/status/").then(row=>{if(active)setStatus(row)}).catch(()=>{if(active)setStatus({configured:false,connected:false,account_email:""})});return()=>{active=false}},[]);
+  useEffect(()=>{let active=true;apiGet<MicrosoftStatus>("/integrations/microsoft/status/").then(row=>{if(active)setStatus(row)}).catch(()=>{if(active)setStatus({configured:false,connected:false,verified:false,account_email:""})});return()=>{active=false}},[]);
 
   const defaultBody=useMemo(()=>[
     title,
@@ -55,7 +59,7 @@ export function MicrosoftActions({title,summary="",sourceUrl="",deadline="",agen
     sourceUrl?`Source: ${sourceUrl}`:"",
   ].filter(Boolean).join("\n\n"),[title,agency,solicitationNumber,deadline,summary,sourceUrl]);
 
-  function show(next:Mode){setMode(next);setBody(defaultBody);setMessage("");setOpen(true)}
+  function show(next:Mode){setMode(next);setBody(defaultBody);setMessage("");setOpen(true);setStatus(null);apiGet<MicrosoftStatus>("/integrations/microsoft/status/").then(async row=>{if(row.connected&&!row.verified){try{const verified=await apiPost<MicrosoftStatus>("/integrations/microsoft/verify/",{});setStatus(verified);return}catch(error){setMessage(error instanceof Error?error.message:"Microsoft 365 verification failed.")}}setStatus(row)}).catch(error=>{setStatus({configured:false,connected:false,verified:false,account_email:""});setMessage(error instanceof Error?error.message:"Microsoft 365 connection status could not be loaded.")})}
   function changeStart(value:string){setStart(value);const date=new Date(value);if(Number.isNaN(date.getTime())){setEnd("");return;}date.setMinutes(date.getMinutes()+30);setEnd(localDateTime(date.toISOString()))}
   async function submit(){
     setBusy(true);setMessage("");
@@ -70,8 +74,8 @@ export function MicrosoftActions({title,summary="",sourceUrl="",deadline="",agen
   return <>
     <button className="secondary-button microsoft-action-trigger" onClick={()=>show("mail")}><PanelsTopLeft size={16}/>Microsoft 365</button>
     {open&&<div className="document-viewer-backdrop" role="dialog" aria-modal="true"><div className="record-modal microsoft-action-modal">
-      <header><div><span className="eyebrow">CONNECTED APP</span><h2>Microsoft 365</h2><p>{status?.connected?`Connected as ${status.account_email}`:"Connect Outlook and Teams to work without leaving ForgeGov."}</p></div><button className="icon-button" onClick={()=>setOpen(false)}><X/></button></header>
-      {!status?.configured?<div className="table-state"><PanelsTopLeft/><strong>Microsoft 365 administrator setup required.</strong><p>Your ForgeGov administrator must add the Microsoft Entra application credentials.</p></div>:!status.connected?<div className="table-state"><PanelsTopLeft/><strong>Connect your Microsoft account</strong><p>Connections are personal and use delegated Microsoft permissions.</p><Link className="primary-button" href="/settings#integrations">Open Connected Apps</Link></div>:<>
+      <header><div><span className="eyebrow">CONNECTED APP</span><h2>Microsoft 365</h2><p>{status?.connected?`${status.verified?"Verified":"Connected"} as ${status.account_email||"Microsoft account"}`:"Connect Outlook and Teams to work without leaving ForgeGov."}</p></div><button className="icon-button" onClick={()=>setOpen(false)}><X/></button></header>
+      {status===null?<div className="table-state"><RefreshCw className="spin"/><strong>Checking Microsoft 365 connection…</strong><p>ForgeGov is verifying your saved Microsoft authorization.</p></div>:!status.configured?<div className="table-state"><PanelsTopLeft/><strong>Microsoft 365 administrator setup required.</strong><p>Your ForgeGov administrator must add the Microsoft Entra application credentials.</p></div>:!status.connected?<div className="table-state"><PanelsTopLeft/><strong>Connect your Microsoft account</strong><p>{status.last_error||"Connections are personal and use delegated Microsoft permissions."}</p><Link className="primary-button" href="/settings#integrations">Open Connected Apps</Link></div>:<>
         <div className="microsoft-mode-tabs"><button className={mode==="mail"?"active":""} onClick={()=>setMode("mail")}><Mail/>Outlook email</button><button className={mode==="calendar"?"active":""} onClick={()=>setMode("calendar")}><CalendarPlus/>Calendar</button><button className={mode==="teams"?"active":""} onClick={()=>setMode("teams")}><MessageSquare/>Teams</button></div>
         <div className="microsoft-action-form">
           {mode!=="teams"&&<label><span>{mode==="mail"?"Recipients":"Attendees (optional)"}</span><input value={to} onChange={e=>setTo(e.target.value)} placeholder="name@example.com, teammate@example.com"/></label>}

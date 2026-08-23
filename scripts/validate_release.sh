@@ -2,22 +2,22 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-EXPECTED_VERSION="3.2.1.1"
+EXPECTED_VERSION="3.2.1.2"
 
 echo "[1/24] Source + release identity"
 python3 -m compileall -q backend
 python3 - <<'PY2'
 import json, pathlib
 root=pathlib.Path('.')
-assert (root/'VERSION').read_text().strip() == '3.2.1.1'
+assert (root/'VERSION').read_text().strip() == '3.2.1.2'
 package=json.loads((root/'frontend/package.json').read_text())
-assert package['version'] == '3.2.1-1'
+assert package['version'] == '3.2.1-2'
 assert package['dependencies']['next'] == '16.3.1'
-assert 'VERSION = "3.2.1.1"' in (root/'backend/core/version.py').read_text()
+assert 'VERSION = "3.2.1.2"' in (root/'backend/core/version.py').read_text()
 lock=json.loads((root/'frontend/package-lock.json').read_text())
 assert lock['packages']['']['dependencies']['next'] == '16.3.1', 'secure Next.js lockfile baseline is missing'
 assert lock['packages']['node_modules/next']['version'] == '16.3.1', 'installed Next.js lock entry is not the validated secure baseline'
-print('Release identity: 3.2.1.1 (frontend npm 3.2.1-1)')
+print('Release identity: 3.2.1.2 (frontend npm 3.2.1-2)')
 PY2
 
 echo "[2/24] Release source + production architecture audit"
@@ -66,7 +66,7 @@ docker compose exec backend python manage.py test core.test_v320_capture_copilot
 echo "[16/24] v3.2.1 proposal automation + live-web tests"
 docker compose exec backend python manage.py test core.test_v321_proposal_live_web --verbosity 2
 
-echo "[17/24] v3.2.1.1 Microsoft 365 + subcontract + UX integration tests"
+echo "[17/24] v3.2.1.2 Microsoft connection verification + integration regression tests"
 docker compose exec backend python manage.py test core.test_v3211_integrations_ux --verbosity 2
 
 echo "[18/24] Live Web runtime connectivity"
@@ -82,7 +82,7 @@ docker compose run --rm \
   -e RUN_MIGRATIONS=false \
   -e COLLECTSTATIC=false \
   -e DJANGO_DEBUG=false \
-  -e DJANGO_SECRET_KEY='ForgeGov-V3211-Temporary-Deploy-Check-864c5f20cb0a42fa918bf9fd' \
+  -e DJANGO_SECRET_KEY='ForgeGov-V32112-Temporary-Deploy-Check-864c5f20cb0a42fa918bf9fd' \
   -e DJANGO_ALLOWED_HOSTS='forge-gov.com' \
   -e FRONTEND_URL='https://forge-gov.com' \
   -e CORS_ALLOWED_ORIGINS='https://forge-gov.com' \
@@ -119,4 +119,4 @@ echo "[24/24] Health + readiness + container status"
 EXPECTED_VERSION="$EXPECTED_VERSION" ./scripts/release_smoke.sh
 docker compose ps
 
-echo "ForgeGov v3.2.1.1 validation completed successfully."
+echo "ForgeGov v3.2.1.2 validation completed successfully."

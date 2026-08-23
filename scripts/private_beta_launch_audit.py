@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED = "3.2.1.1"
-FRONTEND_EXPECTED = "3.2.1-1"
+EXPECTED = "3.2.1.2"
+FRONTEND_EXPECTED = "3.2.1-2"
 errors: list[str] = []
 
 
@@ -15,12 +15,12 @@ def require(condition: bool, message: str):
         errors.append(message)
 
 
-require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.2.1.1")
+require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.2.1.2")
 require(not (ROOT / "INSTALL.command").exists(), "obsolete root INSTALL.command must be removed")
 require(not (ROOT / "VERIFY.command").exists(), "obsolete root VERIFY.command must be removed")
 package = json.loads((ROOT / "frontend/package.json").read_text())
-require(package.get("version") == FRONTEND_EXPECTED, "frontend package version is not 3.2.1-1")
-require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.2.1.1")
+require(package.get("version") == FRONTEND_EXPECTED, "frontend package version is not 3.2.1-2")
+require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.2.1.2")
 
 # Historical migrations must never depend on a moving target.
 for migration in ROOT.glob("backend/*/migrations/*.py"):
@@ -252,16 +252,19 @@ for needle in ("code_challenge_method", "S256", "encrypt_secret", "decrypt_secre
     require(needle in microsoft_graph, f"Microsoft 365 least-privilege/OAuth requirement missing: {needle}")
 require("workspace access changed before Microsoft authorization completed" in microsoft_graph, "Microsoft OAuth callback does not re-check ForgeGov workspace access")
 require('path("integrations/microsoft/status/", microsoft_status)' in urls, "Microsoft Connected Apps status route is missing")
+require('path("integrations/microsoft/verify/", microsoft_verify)' in urls, "Microsoft live verification route is missing")
+require('"verified_at": timezone.now().isoformat()' in microsoft_graph, "Microsoft callback does not record live verification metadata")
+require('def verify_connection(row: ConnectedApp)' in microsoft_graph, "Microsoft saved-connection verification service is missing")
 require('path("integrations/microsoft/send-mail/", microsoft_send_mail)' in urls, "Outlook send route is missing")
 require('path("integrations/microsoft/calendar-event/", microsoft_create_event)' in urls, "Outlook Calendar route is missing")
 require('path("integrations/microsoft/teams-message/", microsoft_send_teams)' in urls, "Teams send route is missing")
 require("MICROSOFT_CLIENT_SECRET" in render and "sync: false" in render, "Microsoft client secret is not externalized in Render")
 require("MICROSOFT_CLIENT_SECRET=" in (ROOT / ".env.example").read_text(), "Microsoft deployment variables are not documented")
 settings_page = (ROOT / "frontend/app/settings/page.tsx").read_text()
-for needle in ("Connected Apps", "Microsoft 365", "Default Teams destination", "Connect Microsoft 365"):
+for needle in ("Connected Apps", "Microsoft 365", "Default Teams destination", "Connect Microsoft 365", "Microsoft 365 connected and verified", "Microsoft 365 connection failed"):
     require(needle in settings_page, f"Settings Connected Apps UI missing: {needle}")
 ms_actions = (ROOT / "frontend/components/microsoft-actions.tsx").read_text()
-for needle in ("Outlook email", "Calendar", "Teams", "ForgeGov never exposes your Microsoft access token"):
+for needle in ("Outlook email", "Calendar", "Teams", "ForgeGov never exposes your Microsoft access token", "Checking Microsoft 365 connection"):
     require(needle in ms_actions, f"Microsoft opportunity action UI missing: {needle}")
 subcontract_source = (ROOT / "backend/core/subcontract_intelligence.py").read_text()
 for needle in ("prime_contractor", "parent_contract_candidates", "official_historical_award_intelligence", "PipelineItem.objects.filter(organization=organization"):
@@ -277,7 +280,7 @@ responsive_css = (ROOT / "frontend/app/globals.css").read_text()
 for needle in ("@media(max-width:1280px)", "@media(max-width:1080px)", "@media(max-width:900px)", "@media(max-width:680px)", "@media(max-width:430px)", "overflow-wrap:anywhere"):
     require(needle in responsive_css, f"responsive congestion-system requirement missing: {needle}")
 regression_3211 = (ROOT / "backend/core/test_v3211_integrations_ux.py").read_text()
-for needle in ("test_microsoft_status_is_user_scoped_and_does_not_expose_tokens", "test_viewer_cannot_send_external_microsoft_actions", "test_subcontract_capture_context_is_workspace_isolated"):
+for needle in ("test_microsoft_status_is_user_scoped_and_does_not_expose_tokens", "test_microsoft_real_callback_persists_verified_connection", "test_microsoft_verify_marks_existing_connection_verified", "test_viewer_cannot_send_external_microsoft_actions", "test_subcontract_capture_context_is_workspace_isolated"):
     require(needle in regression_3211, f"v3.2.1.1 regression coverage missing: {needle}")
 
 if errors:
