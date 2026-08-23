@@ -1567,6 +1567,41 @@ class UserPreference(TimeStampedModel):
         ordering = ["user_id"]
 
 
+class ConnectedApp(TimeStampedModel):
+    class Provider(models.TextChoices):
+        MICROSOFT = "microsoft", "Microsoft 365"
+
+    class Status(models.TextChoices):
+        CONNECTED = "connected", "Connected"
+        ERROR = "error", "Error"
+        DISCONNECTED = "disconnected", "Disconnected"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="connected_apps")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="forgegov_connected_apps")
+    provider = models.CharField(max_length=40, choices=Provider.choices)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.CONNECTED)
+    external_account_id = models.CharField(max_length=255, blank=True)
+    account_email = models.EmailField(blank=True)
+    tenant_id = models.CharField(max_length=255, blank=True)
+    scopes = models.JSONField(default=list, blank=True)
+    access_token_encrypted = models.TextField(blank=True)
+    refresh_token_encrypted = models.TextField(blank=True)
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    last_error = models.CharField(max_length=1000, blank=True)
+    connected_at = models.DateTimeField(null=True, blank=True)
+    disconnected_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["provider", "user_id"]
+        constraints = [
+            models.UniqueConstraint(fields=("organization", "user", "provider"), name="uniq_connected_app_user_provider"),
+        ]
+        indexes = [
+            models.Index(fields=["organization", "provider", "status"], name="connapp_org_prov_idx"),
+        ]
+
+
 class NotificationDelivery(TimeStampedModel):
     class Status(models.TextChoices):
         SENT = "sent", "Sent"

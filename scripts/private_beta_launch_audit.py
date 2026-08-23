@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED = "3.2.1"
+EXPECTED = "3.2.1.1"
+FRONTEND_EXPECTED = "3.2.1-1"
 errors: list[str] = []
 
 
@@ -14,12 +15,12 @@ def require(condition: bool, message: str):
         errors.append(message)
 
 
-require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.2.1")
+require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.2.1.1")
 require(not (ROOT / "INSTALL.command").exists(), "obsolete root INSTALL.command must be removed")
 require(not (ROOT / "VERIFY.command").exists(), "obsolete root VERIFY.command must be removed")
 package = json.loads((ROOT / "frontend/package.json").read_text())
-require(package.get("version") == EXPECTED, "frontend package version is not 3.2.1")
-require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.2.1")
+require(package.get("version") == FRONTEND_EXPECTED, "frontend package version is not 3.2.1-1")
+require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.2.1.1")
 
 # Historical migrations must never depend on a moving target.
 for migration in ROOT.glob("backend/*/migrations/*.py"):
@@ -242,6 +243,42 @@ require('searxng/searxng:2026.8.17-374939b88' in (ROOT / "docker-compose.yml").r
 require('LIVE_WEB_SEARCH_RATE' in settings and 'LiveWebSearchThrottle' in (ROOT / "backend/core/throttles.py").read_text() and 'from .throttles import LiveWebSearchThrottle' in views, "direct live-web API rate limiting is missing or not imported")
 require('Run live-web test' in admin_page, "Creator Live Web test control is missing")
 require('payload["live_web"] = live_web_status(probe=True)' in admin_views, "Platform system operations do not expose Live Web health")
+
+# v3.2.1.1 Microsoft 365 Connected Apps + subcontract parity + responsive UX.
+require("class ConnectedApp" in models, "Connected Apps persistence model is missing")
+require((ROOT / "backend/core/migrations/0034_connected_apps.py").exists(), "v3.2.1.1 Connected Apps migration is missing")
+microsoft_graph = (ROOT / "backend/core/microsoft_graph.py").read_text()
+for needle in ("code_challenge_method", "S256", "encrypt_secret", "decrypt_secret", "Mail.Send", "Calendars.ReadWrite", "ChannelMessage.Send", "Team.ReadBasic.All", "Channel.ReadBasic.All"):
+    require(needle in microsoft_graph, f"Microsoft 365 least-privilege/OAuth requirement missing: {needle}")
+require("workspace access changed before Microsoft authorization completed" in microsoft_graph, "Microsoft OAuth callback does not re-check ForgeGov workspace access")
+require('path("integrations/microsoft/status/", microsoft_status)' in urls, "Microsoft Connected Apps status route is missing")
+require('path("integrations/microsoft/send-mail/", microsoft_send_mail)' in urls, "Outlook send route is missing")
+require('path("integrations/microsoft/calendar-event/", microsoft_create_event)' in urls, "Outlook Calendar route is missing")
+require('path("integrations/microsoft/teams-message/", microsoft_send_teams)' in urls, "Teams send route is missing")
+require("MICROSOFT_CLIENT_SECRET" in render and "sync: false" in render, "Microsoft client secret is not externalized in Render")
+require("MICROSOFT_CLIENT_SECRET=" in (ROOT / ".env.example").read_text(), "Microsoft deployment variables are not documented")
+settings_page = (ROOT / "frontend/app/settings/page.tsx").read_text()
+for needle in ("Connected Apps", "Microsoft 365", "Default Teams destination", "Connect Microsoft 365"):
+    require(needle in settings_page, f"Settings Connected Apps UI missing: {needle}")
+ms_actions = (ROOT / "frontend/components/microsoft-actions.tsx").read_text()
+for needle in ("Outlook email", "Calendar", "Teams", "ForgeGov never exposes your Microsoft access token"):
+    require(needle in ms_actions, f"Microsoft opportunity action UI missing: {needle}")
+subcontract_source = (ROOT / "backend/core/subcontract_intelligence.py").read_text()
+for needle in ("prime_contractor", "parent_contract_candidates", "official_historical_award_intelligence", "PipelineItem.objects.filter(organization=organization"):
+    require(needle in subcontract_source, f"Subcontract workspace intelligence missing/isolation regressed: {needle}")
+require('path("live/sba/subnet/<path:source_id>/", subcontract_workspace_detail)' in urls, "detailed SUBNet workspace API route is missing")
+subcontract_page = ROOT / "frontend/app/opportunities/subcontracting/[sourceId]/page.tsx"
+require(subcontract_page.exists(), "detailed subcontract opportunity workspace page is missing")
+if subcontract_page.exists():
+    subcontract_ui = subcontract_page.read_text()
+    for needle in ("Prime & parent contract", "Capture intelligence", "Collaboration", "MicrosoftActions"):
+        require(needle in subcontract_ui, f"subcontract workspace UI missing: {needle}")
+responsive_css = (ROOT / "frontend/app/globals.css").read_text()
+for needle in ("@media(max-width:1280px)", "@media(max-width:1080px)", "@media(max-width:900px)", "@media(max-width:680px)", "@media(max-width:430px)", "overflow-wrap:anywhere"):
+    require(needle in responsive_css, f"responsive congestion-system requirement missing: {needle}")
+regression_3211 = (ROOT / "backend/core/test_v3211_integrations_ux.py").read_text()
+for needle in ("test_microsoft_status_is_user_scoped_and_does_not_expose_tokens", "test_viewer_cannot_send_external_microsoft_actions", "test_subcontract_capture_context_is_workspace_isolated"):
+    require(needle in regression_3211, f"v3.2.1.1 regression coverage missing: {needle}")
 
 if errors:
     print("Private beta launch source audit FAILED:")

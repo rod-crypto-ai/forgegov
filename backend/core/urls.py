@@ -154,6 +154,14 @@ from .views import (
     award_intelligence_view,
 )
 
+from .microsoft_views import (
+    microsoft_status, microsoft_connect, microsoft_callback, microsoft_disconnect,
+    microsoft_teams, microsoft_channels, microsoft_defaults, microsoft_send_mail,
+    microsoft_create_event, microsoft_send_teams,
+)
+
+from .subcontract_views import subcontract_workspace_detail
+
 router = DefaultRouter()
 router.register("organizations", OrganizationViewSet, basename="organization")
 router.register("opportunities", OpportunityViewSet, basename="opportunity")
@@ -226,6 +234,16 @@ urlpatterns = [
     path("reports/portfolio-intelligence/", portfolio_intelligence_view),
     path("dashboard/command-center/", command_center),
     path("integrations/status/", integration_status),
+    path("integrations/microsoft/status/", microsoft_status),
+    path("integrations/microsoft/connect/", microsoft_connect),
+    path("integrations/microsoft/callback/", microsoft_callback),
+    path("integrations/microsoft/disconnect/", microsoft_disconnect),
+    path("integrations/microsoft/teams/", microsoft_teams),
+    path("integrations/microsoft/channels/", microsoft_channels),
+    path("integrations/microsoft/defaults/", microsoft_defaults),
+    path("integrations/microsoft/send-mail/", microsoft_send_mail),
+    path("integrations/microsoft/calendar-event/", microsoft_create_event),
+    path("integrations/microsoft/teams-message/", microsoft_send_teams),
     path("live-web/status/", live_web_status_view),
     path("live-web/search/", live_web_search_view),
     path("intelligence/connectors/", intelligence_connectors),
@@ -240,6 +258,7 @@ urlpatterns = [
     path("live/sam/contract-awards/", live_sam_contract_awards),
     path("live/sam/subawards/", live_sam_subaward_search),
     path("live/sba/subnet/", live_sba_subnet_search),
+    path("live/sba/subnet/<path:source_id>/", subcontract_workspace_detail),
     path("live/sam/opportunities/<str:notice_id>/documents/", sam_opportunity_documents),
     path("live/grants/opportunities/", live_grants_search),
     path("live/grants/opportunities/<str:opportunity_id>/", live_grants_detail),
