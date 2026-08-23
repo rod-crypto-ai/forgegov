@@ -280,11 +280,15 @@ def run_capture_copilot(*, organization, opportunity, user, mode: str, question:
         }
 
     ai_brief = _prompt_brief(brief, include_workspace=include_workspace, include_financial=include_financial)
+    public_web_query = " ".join(part for part in [
+        opportunity.agency, opportunity.solicitation_number, opportunity.title, mode.replace("_", " ")
+    ] if part)[:500]
     result = ask_ai(
         message=_copilot_prompt(mode=mode, question=question, brief=ai_brief),
         history=[],
         organization=organization,
         user=user,
+        web_query=public_web_query,
     )
     analysis, _ = OpportunityAnalysis.objects.update_or_create(
         organization=organization,

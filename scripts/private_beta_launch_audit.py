@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED = "3.2.0"
+EXPECTED = "3.2.1"
 errors: list[str] = []
 
 
@@ -14,12 +14,12 @@ def require(condition: bool, message: str):
         errors.append(message)
 
 
-require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.2.0")
+require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.2.1")
 require(not (ROOT / "INSTALL.command").exists(), "obsolete root INSTALL.command must be removed")
 require(not (ROOT / "VERIFY.command").exists(), "obsolete root VERIFY.command must be removed")
 package = json.loads((ROOT / "frontend/package.json").read_text())
-require(package.get("version") == EXPECTED, "frontend package version is not 3.2.0")
-require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.2.0")
+require(package.get("version") == EXPECTED, "frontend package version is not 3.2.1")
+require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.2.1")
 
 # Historical migrations must never depend on a moving target.
 for migration in ROOT.glob("backend/*/migrations/*.py"):
@@ -181,7 +181,7 @@ settings_page = (ROOT / "frontend/app/settings/page.tsx").read_text()
 for needle in ("Appearance", "ForgeGov AI & Capture Copilot", "Notifications", "Account & workspace", "Security"):
     require(needle in settings_page, f"Settings Center section missing: {needle}")
 copilot_ui = (ROOT / "frontend/components/capture-copilot.tsx").read_text()
-require("FORGEAI CAPTURE COPILOT · v3.2.0" in copilot_ui, "Capture Copilot UI release identity is missing")
+require("FORGEAI CAPTURE COPILOT · v3.2.1" in copilot_ui, "Capture Copilot UI release identity is missing")
 require('brief.economics.restricted?"Restricted"' in copilot_ui, "Capture Copilot UI does not honor financial redaction")
 opportunity_page = (ROOT / "frontend/app/opportunities/federal-contracts/[noticeId]/page.tsx").read_text()
 require("Capture Copilot" in opportunity_page and '"copilot"' in opportunity_page, "opportunity workspace Capture Copilot tab is missing")
@@ -190,6 +190,58 @@ require("ThemeProvider" in layout, "app-wide ThemeProvider is missing")
 regression = (ROOT / "backend/core/test_v320_capture_copilot_settings.py").read_text()
 for needle in ("financial_context_is_redacted", "private_workspace_grounding_preference", "history_is_hidden_after_role_loses_financial_access"):
     require(needle in regression, f"v3.2.0 security regression coverage missing: {needle}")
+
+
+# v3.2.1 Proposal Automation + Production Live Web requirements.
+for model_name in ("ProposalVolume", "ProposalSection", "ProposalSectionRequirement", "ProposalSectionRevision", "ProposalLibraryEntry"):
+    require(f"class {model_name}" in models, f"v3.2.1 proposal production model missing: {model_name}")
+require((ROOT / "backend/core/migrations/0033_proposal_automation_live_web.py").exists(), "v3.2.1 proposal production migration is missing")
+proposal_automation = (ROOT / "backend/core/proposal_automation.py").read_text()
+for needle in ("ensure_proposal_production", "draft_section", "package_validation", "save_section_revision", "VALIDATION REQUIRED"):
+    require(needle in proposal_automation, f"proposal automation engine missing: {needle}")
+require("Financial authorization is required to draft the pricing proposal section" in proposal_automation, "proposal pricing AI drafting is not financial-role gated")
+require('path("ai/opportunities/<str:source_id>/proposal-production/", opportunity_proposal_production)' in urls, "proposal production API route is missing")
+require('proposal-package-validation/' in urls and 'proposal-sections/<int:section_id>/revisions/' in urls, "proposal validation/revision routes are missing")
+proposal_ui = (ROOT / "frontend/components/proposal-workspace.tsx").read_text()
+for needle in ("PROPOSAL AUTOMATION + PRODUCTION", "Requirement traceability", "Evidence-grounded ForgeAI draft", "Proposal library", "VERSION HISTORY"):
+    require(needle in proposal_ui, f"proposal production UI missing: {needle}")
+
+live_web_source = (ROOT / "backend/core/live_web.py").read_text()
+for needle in ('"live"', '"degraded"', '"unavailable"', '"not_configured"', "cached_fallback_available", "resilient_request"):
+    require(needle in live_web_source, f"production live-web service missing: {needle}")
+require('path("live-web/status/", live_web_status_view)' in urls, "live-web status API route is missing")
+require('path("live-web/search/", live_web_search_view)' in urls, "live-web search API route is missing")
+require('path("live-web/test/", views.live_web_test)' in admin_urls, "Creator live-web test route is missing")
+require('@permission_classes([IsPlatformCreator])\ndef live_web_test' in admin_views, "Creator live-web test is not Creator-only")
+require("type: pserv\n  name: forgegov-searxng" in render, "Render private SearXNG service is missing")
+require("property: hostport" in render and "SEARXNG_HOSTPORT" in render, "Render private SearXNG host wiring is missing")
+searx_settings = (ROOT / "searxng/settings.yml").read_text()
+require("- json" in searx_settings, "SearXNG JSON search output is not enabled")
+require((ROOT / "searxng/Dockerfile").exists(), "SearXNG private-service Dockerfile is missing")
+require("live_web_search(" in (ROOT / "backend/core/integrations.py").read_text(), "SBA web fallback is not routed through shared live-web service")
+require("Live Web Connected" in (ROOT / "frontend/components/assistant-workspace.tsx").read_text(), "explicit live-web connected state is missing from ForgeAI UI")
+require("Live Web Unavailable" in (ROOT / "frontend/components/dashboard-home.tsx").read_text(), "explicit live-web unavailable state is missing from dashboard")
+
+# v3.2.1 release-hardening: approval integrity, pricing boundaries, and web-query privacy.
+require('can_approve: bool = False' in proposal_automation, "proposal production lacks explicit approval authority")
+require('Proposal approval authority is required to approve or lock a section' in proposal_automation, "proposal section approval gate is missing")
+require('links = [] if restricted' in proposal_automation, "restricted pricing requirement traceability is not hidden")
+require('pricing_entry' in proposal_automation and 'if pricing_entry and not can_financial' in proposal_automation, "restricted pricing library content is not filtered")
+require('Proposal approval authority is required to approve reusable content' in views, "reusable proposal content approval gate is missing")
+require('substantive_change and entry.status == ProposalLibraryEntry.Status.APPROVED' in views, "approved reusable content is not invalidated after edits")
+require('"permissions": {"can_financial": can_financial, "can_approve": can_approve}' in proposal_automation, "proposal workspace does not expose safe capability flags")
+require('Link requirement' in proposal_ui and 'Approve for reuse' in proposal_ui, "proposal UI lacks traceability/approval controls")
+require('web_query: str | None = None' in ai_source, "AI layer cannot separate private prompts from public web queries")
+require('web_query=public_web_query' in proposal_automation, "proposal drafting does not use a sanitized live-web query")
+require('web_query=public_web_query' in copilot, "Capture Copilot does not use a sanitized live-web query")
+require('SEARXNG_URL = (f"http://{SEARXNG_HOSTPORT}" if SEARXNG_HOSTPORT else' in settings, "Render private SearXNG host does not take precedence over manual URL")
+api_render_block = render.split('- type: web\n  name: forgegov-api', 1)[1].split('- type: worker\n  name: forgegov-worker', 1)[0] if '- type: web\n  name: forgegov-api' in render else ''
+require('SEARXNG_URL' not in api_render_block, "Render API blueprint still defines a manual SEARXNG_URL that can override private-service wiring")
+require('searxng/searxng:2026.8.17-374939b88' in (ROOT / "searxng/Dockerfile").read_text(), "production SearXNG image is not pinned")
+require('searxng/searxng:2026.8.17-374939b88' in (ROOT / "docker-compose.yml").read_text(), "local SearXNG image does not match the pinned production version")
+require('LIVE_WEB_SEARCH_RATE' in settings and 'LiveWebSearchThrottle' in (ROOT / "backend/core/throttles.py").read_text() and 'from .throttles import LiveWebSearchThrottle' in views, "direct live-web API rate limiting is missing or not imported")
+require('Run live-web test' in admin_page, "Creator Live Web test control is missing")
+require('payload["live_web"] = live_web_status(probe=True)' in admin_views, "Platform system operations do not expose Live Web health")
 
 if errors:
     print("Private beta launch source audit FAILED:")

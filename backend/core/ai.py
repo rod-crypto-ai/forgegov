@@ -7,10 +7,10 @@ from uuid import uuid4
 
 import requests
 from django.conf import settings
-from django.core.cache import cache
 from django.db.models import F
 
 from .models import Award, Contact, FileRecord, Membership, Opportunity, PipelineItem, Pursuit, Task, UserPreference
+from . import live_web
 
 
 class OpenAIIntegrationError(RuntimeError):
@@ -276,7 +276,7 @@ def _style_instruction(style: str) -> str:
     }.get(style, "Use a balanced level of detail.")
 
 
-def ask_openai(*, message: str, history: list[dict[str, str]], organization, user=None) -> dict[str, Any]:
+def ask_openai(*, message: str, history: list[dict[str, str]], organization, user=None, web_query: str | None = None) -> dict[str, Any]:
     if not settings.OPENAI_API_KEY:
         raise OpenAIIntegrationError(
             "OPENAI_API_KEY is not configured in the backend environment.",
@@ -290,7 +290,7 @@ def ask_openai(*, message: str, history: list[dict[str, str]], organization, use
         include_financial=_user_can_read_financial(user, organization),
     )
     if preferences["live_web_enabled"]:
-        web_context, web_sources, web_reachable, web_status = _run_live_web_search(message)
+        web_context, web_sources, web_reachable, web_status = _run_live_web_search(web_query if web_query is not None else message)
     else:
         web_context, web_sources, web_reachable, web_status = "", [], False, "disabled_by_user"
     sources.extend(web_sources)
@@ -429,10 +429,7 @@ def ask_openai(*, message: str, history: list[dict[str, str]], organization, use
 
 
 def _live_web_configured() -> bool:
-    return bool(
-        getattr(settings, "AI_WEB_SEARCH_ENABLED", True)
-        and getattr(settings, "SEARXNG_URL", "")
-    )
+    return live_web.configured()
 
 
 def _web_search_query(message: str) -> str:
@@ -458,30 +455,19 @@ def _web_search_query(message: str) -> str:
 
 def _run_live_web_search(query: str, *, limit: int = 8, timeout: int = 18) -> tuple[str, list[GroundingSource], bool, str]:
     if not _live_web_configured():
-        return "", [], False, "disabled"
-    try:
-        response = requests.get(
-            settings.SEARXNG_URL.rstrip("/") + "/search",
-            params={"q": _web_search_query(query), "format": "json", "language": "en-US", "safesearch": 1},
-            timeout=timeout,
-            headers={"User-Agent": "ForgeGov/2.0.3"},
-        )
-        response.raise_for_status()
-        payload = response.json()
-        rows = payload.get("results")
-        if not isinstance(rows, list):
-            return "", [], False, "invalid_response"
-    except (requests.RequestException, ValueError, AttributeError):
-        return "", [], False, "unavailable"
+        return "", [], False, "not_configured"
+    result = live_web.search(_web_search_query(query), limit=limit, timeout=timeout)
     lines: list[str] = []
     sources: list[GroundingSource] = []
-    for index, row in enumerate(rows[:max(1, min(limit, 12))], 1):
+    for index, row in enumerate(result.get("results") or [], 1):
         if not isinstance(row, dict):
             continue
-        label=f"[WEB-{index}]"; title=_text(row.get("title"),300) or "Live web result"; url=_text(row.get("url"),1000)
-        lines.append(_record_line(label,{"title":title,"url":url,"snippet":_text(row.get("content"),900)}))
-        sources.append(GroundingSource(label,"web",title,url))
-    return "\n".join(lines), sources, True, "live"
+        label = f"[WEB-{index}]"
+        title = _text(row.get("title"), 300) or "Live web result"
+        url = _text(row.get("url"), 1000)
+        lines.append(_record_line(label, {"title": title, "url": url, "snippet": _text(row.get("snippet"), 900)}))
+        sources.append(GroundingSource(label.strip("[]"), "web", title, url))
+    return "\n".join(lines), sources, bool(result.get("reachable")), str(result.get("status") or "unavailable")
 
 
 def search_live_web(query: str) -> tuple[str, list[GroundingSource]]:
@@ -490,37 +476,9 @@ def search_live_web(query: str) -> tuple[str, list[GroundingSource]]:
 
 
 def live_web_status(*, probe: bool = False) -> dict[str, Any]:
-    """Return SearXNG configuration and reachability status.
+    return live_web.status(probe=probe)
 
-    An explicit probe must always perform a fresh JSON search. This prevents a
-    previously cached healthy result from masking an outage and keeps the
-    integration-status endpoint truthful. Non-probe callers may reuse the most
-    recent probe result for lightweight status display.
-    """
-    configured = _live_web_configured()
-    result: dict[str, Any] = {
-        "configured": configured,
-        "reachable": None,
-        "status": "disabled" if not configured else "configured",
-    }
-    if not configured:
-        return result
-
-    cache_key = "forgegov:searxng:health:v2"
-    if not probe:
-        cached = cache.get(cache_key)
-        return cached if isinstance(cached, dict) else result
-
-    _, _, reachable, status = _run_live_web_search(
-        "federal contracting acquisition forecast",
-        limit=1,
-        timeout=8,
-    )
-    result.update({"reachable": reachable, "status": status})
-    cache.set(cache_key, result, 60)
-    return result
-
-def ask_ollama(*, message: str, history: list[dict[str, str]], organization, user=None) -> dict[str, Any]:
+def ask_ollama(*, message: str, history: list[dict[str, str]], organization, user=None, web_query: str | None = None) -> dict[str, Any]:
     preferences = _user_ai_preferences(user)
     grounding, sources = build_grounding_context(
         organization,
@@ -528,7 +486,7 @@ def ask_ollama(*, message: str, history: list[dict[str, str]], organization, use
         include_financial=_user_can_read_financial(user, organization),
     )
     if preferences["live_web_enabled"]:
-        web_context, web_sources, web_reachable, web_status = _run_live_web_search(message)
+        web_context, web_sources, web_reachable, web_status = _run_live_web_search(web_query if web_query is not None else message)
     else:
         web_context, web_sources, web_reachable, web_status = "", [], False, "disabled_by_user"
     sources.extend(web_sources)
@@ -555,9 +513,10 @@ def ask_ollama(*, message: str, history: list[dict[str, str]], organization, use
     return {"answer":answer,"model":settings.OLLAMA_MODEL,"provider":"ollama","sources":[source.as_dict() for source in sources],"web_enabled":web_reachable,"web_configured":_live_web_configured(),"web_status":web_status}
 
 
-def ask_ai(*, message: str, history: list[dict[str, str]], organization, user=None) -> dict[str, Any]:
+def ask_ai(*, message: str, history: list[dict[str, str]], organization, user=None, web_query: str | None = None) -> dict[str, Any]:
     provider=getattr(settings,"AI_PROVIDER","openai").lower()
     if provider == "ollama":
-        return ask_ollama(message=message,history=history,organization=organization,user=user)
-    # Include optional self-hosted web results in the hosted-provider prompt too.
-    return ask_openai(message=message,history=history,organization=organization,user=user)
+        return ask_ollama(message=message,history=history,organization=organization,user=user,web_query=web_query)
+    # web_query lets private workflows provide sanitized public search terms instead
+    # of forwarding the full private AI prompt to external search engines.
+    return ask_openai(message=message,history=history,organization=organization,user=user,web_query=web_query)

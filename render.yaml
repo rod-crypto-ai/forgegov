@@ -7,6 +7,19 @@ services:
   name: forgegov-redis
   ipAllowList: []
   maxmemoryPolicy: noeviction
+- type: pserv
+  name: forgegov-searxng
+  runtime: docker
+  rootDir: searxng
+  dockerfilePath: ./Dockerfile
+  plan: starter
+  envVars:
+  - key: SEARXNG_SECRET
+    generateValue: true
+  - key: SEARXNG_LIMITER
+    value: 'false'
+  - key: SEARXNG_PUBLIC_INSTANCE
+    value: 'false'
 - type: web
   name: forgegov-api
   runtime: docker
@@ -84,10 +97,15 @@ services:
     value: '13'
   - key: AI_PROVIDER
     value: openai
-  - key: SEARXNG_URL
-    sync: false
+  - key: SEARXNG_HOSTPORT
+    fromService:
+      type: pserv
+      name: forgegov-searxng
+      property: hostport
   - key: AI_WEB_SEARCH_ENABLED
     value: 'true'
+  - key: LIVE_WEB_CACHE_SECONDS
+    value: '600'
   - key: SBA_SUBNET_FALLBACK_URL
     sync: false
 - type: worker
@@ -131,6 +149,15 @@ services:
       type: web
       name: forgegov-api
       envVarKey: OPENAI_API_KEY
+  - key: SEARXNG_HOSTPORT
+    fromService:
+      type: pserv
+      name: forgegov-searxng
+      property: hostport
+  - key: AI_WEB_SEARCH_ENABLED
+    value: 'true'
+  - key: LIVE_WEB_CACHE_SECONDS
+    value: '600'
   - key: EMAIL_BACKEND
     fromService:
       type: web

@@ -56,6 +56,10 @@ services:
   worker:
     build: ./backend
     env_file: .env
+    environment:
+      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
+      AI_WEB_SEARCH_ENABLED: ${AI_WEB_SEARCH_ENABLED:-true}
+      LIVE_WEB_CACHE_SECONDS: ${LIVE_WEB_CACHE_SECONDS:-600}
     command: celery -A forgegov worker --loglevel=INFO --concurrency=1 --max-tasks-per-child=50
     volumes:
     - ./backend:/app
@@ -93,7 +97,7 @@ services:
       backend:
         condition: service_healthy
   searxng:
-    image: searxng/searxng:latest
+    image: searxng/searxng:2026.8.17-374939b88
     restart: unless-stopped
     environment:
       SEARXNG_SECRET: ${SEARXNG_SECRET:-forgegov-local-development-secret-change-me}

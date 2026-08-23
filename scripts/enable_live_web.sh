@@ -16,7 +16,10 @@ path=Path('.env')
 lines=path.read_text().splitlines()
 updates={
     'SEARXNG_URL':'http://searxng:8080',
+    # Render-only private host wiring must not override the local Compose URL.
+    'SEARXNG_HOSTPORT':'',
     'AI_WEB_SEARCH_ENABLED':'true',
+    'LIVE_WEB_CACHE_SECONDS':'600',
 }
 values={}
 for line in lines:
@@ -40,7 +43,7 @@ docker compose up -d --force-recreate backend
 echo "Waiting for SearXNG JSON search..."
 for attempt in $(seq 1 30); do
   if curl -fsS --get 'http://127.0.0.1:8080/search' --data-urlencode 'q=federal contracting' --data 'format=json' >/dev/null; then
-    if docker compose exec -T backend python manage.py shell -c 'from django.core.cache import cache; from core.ai import live_web_status; cache.delete("forgegov:searxng:health:v1"); result=live_web_status(probe=True); assert result.get("reachable"), result; print(result)' >/dev/null; then
+    if docker compose exec -T backend python manage.py shell -c 'from core.live_web import status; result=status(probe=True); assert result.get("reachable"), result; print(result)' >/dev/null; then
       echo "ForgeGov live web search is enabled."
       exit 0
     fi

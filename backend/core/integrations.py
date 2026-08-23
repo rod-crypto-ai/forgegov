@@ -10,6 +10,7 @@ from django.utils.dateparse import parse_date, parse_datetime
 
 from .models import Opportunity
 from .integration_resilience import fingerprint_payload, quarantine_record, record_source_version, resilient_request
+from .live_web import search as live_web_search
 
 
 class IntegrationError(RuntimeError):
@@ -1392,27 +1393,24 @@ def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: i
         except (requests.RequestException,IntegrationError):
             continue
 
-    searx=str(getattr(settings,"SEARXNG_URL","") or "").strip()
-    if searx and bool(getattr(settings,"AI_WEB_SEARCH_ENABLED",True)):
+    if bool(getattr(settings,"AI_WEB_SEARCH_ENABLED",True)):
         terms=['site:sba.gov/opportunity "subcontracting opportunity"']
         if query.strip(): terms.append(query.strip())
         if state.strip() and state.strip().lower()!="all": terms.append(state.strip())
-        try:
-            wr=resilient_request("searxng", "GET", searx.rstrip("/")+"/search", params={"q":" ".join(terms),"format":"json","language":"en-US","safesearch":1}, timeout=18, headers={"User-Agent":"ForgeGov/2.5.0"}); wr.raise_for_status(); rows=wr.json().get("results"); indexed=[]
-            if isinstance(rows,list):
-                for row in rows:
-                    if not isinstance(row,dict): continue
-                    href=_safe_text(row.get("url"),max_length=1500); title=_safe_text(row.get("title"),max_length=500)
-                    if "sba.gov/opportunity/" not in href.lower() or not title: continue
-                    identity=sha1(f"{href}|{title}".encode()).hexdigest()[:20]
-                    indexed.append({"source_id":f"sba-subnet:{identity}","title":title,"prime_contractor":"","description":_safe_text(row.get("content"),max_length=4000),"closing_date":"","performance_start":"","place_of_performance":state.strip(),"naics":"","point_of_contact":"","source_url":href})
-                    if len(indexed)>=page_size * (page + 1): break
-            if indexed:
-                persist(indexed)
-                start = page * page_size
-                page_rows = indexed[start:start + page_size]
-                return {"total_records":len(indexed),"page_size":page_size,"results":page_rows,"source_url":str(getattr(settings,"SBA_SUBNET_URL","") or ""),"source_name":"SBA opportunity web index","page":page,"has_next":len(indexed) > start + page_size,"status":"indexed","reachable":False,"warning":"Direct SBA directory access is reconnecting. Showing official SBA opportunity pages discovered through live web search."}
-        except (requests.RequestException,ValueError,AttributeError): pass
+        web_result = live_web_search(" ".join(terms), limit=12, timeout=18)
+        indexed=[]
+        for row in web_result.get("results") or []:
+            if not isinstance(row,dict): continue
+            href=_safe_text(row.get("url"),max_length=1500); title=_safe_text(row.get("title"),max_length=500)
+            if "sba.gov/opportunity/" not in href.lower() or not title: continue
+            identity=sha1(f"{href}|{title}".encode()).hexdigest()[:20]
+            indexed.append({"source_id":f"sba-subnet:{identity}","title":title,"prime_contractor":"","description":_safe_text(row.get("snippet"),max_length=4000),"closing_date":"","performance_start":"","place_of_performance":state.strip(),"naics":"","point_of_contact":"","source_url":href})
+            if len(indexed)>=page_size * (page + 1): break
+        if indexed:
+            persist(indexed)
+            start = page * page_size
+            page_rows = indexed[start:start + page_size]
+            return {"total_records":len(indexed),"page_size":page_size,"results":page_rows,"source_url":str(getattr(settings,"SBA_SUBNET_URL","") or ""),"source_name":"SBA opportunity web index","page":page,"has_next":len(indexed) > start + page_size,"status":"indexed","reachable":bool(web_result.get("reachable")),"warning":"Direct SBA directory access is unavailable. Showing official SBA opportunity pages discovered through ForgeGov live web search."}
 
     cached=cache.get(cache_key) or cache.get(snapshot_key)
     if cached:

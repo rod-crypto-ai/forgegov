@@ -132,33 +132,33 @@ export function AssistantWorkspace() {
 
   const webLabel =
     webStatus === "live" || webReachable
-      ? "Live web on"
-      : webStatus === "invalid_response"
-        ? "Invalid response"
+      ? "Live Web Connected"
+      : webStatus === "degraded"
+        ? "Live Web Degraded"
         : webStatus === "unavailable"
-          ? "Live web unavailable"
+          ? "Live Web Unavailable"
           : webConfigured
-            ? "Live web configured"
-            : "Web search off";
+            ? "Live Web Configured"
+            : "Live Web Not Configured";
   const webDetail =
     webStatus === "live" || webReachable
-      ? "SearXNG live search connected"
-      : webStatus === "invalid_response"
-        ? "SearXNG responded, but the response was not valid JSON search data."
+      ? "ForgeGov private SearXNG search is connected."
+      : webStatus === "degraded"
+        ? "The live service is recovering; cached web intelligence may be used when available."
         : webStatus === "unavailable"
-          ? "SearXNG is configured but currently unreachable."
+          ? "Live web is unavailable. Government connectors and stored ForgeGov intelligence remain active."
           : webConfigured
-            ? "SearXNG is configured and waiting for a health probe."
-            : "Run the bundled live-web setup or configure SEARXNG_URL";
+            ? "The private live-web service is configured and awaiting a successful health probe."
+            : "Provision the ForgeGov private SearXNG service or configure SEARXNG_URL.";
 
   return <div className="assistant-layout modern-ai-layout">
     <section className="assistant-main">
-      <header className="assistant-heading"><span className="assistant-mark"><Sparkles size={24} /></span><div><span className="eyebrow">RESEARCH + CAPTURE COPILOT</span><h1>ForgeGov AI</h1><p>Ask naturally. ForgeGov separates facts, analysis, risk, and recommended action.</p></div><div className="ai-heading-actions"><div className="ai-mode-badges"><span>{provider === "ollama" ? "Open-source model" : "Hosted model"}</span><span className={webStatus === "live" || webReachable ? "live" : webStatus === "unavailable" || webStatus === "invalid_response" ? "reconnecting" : "pending"}>{webLabel}</span></div>{messages.length > 0 && <button className="ai-clear-button" type="button" onClick={clearConversation}><Trash2 size={15}/> Clear</button>}</div></header>
+      <header className="assistant-heading"><span className="assistant-mark"><Sparkles size={24} /></span><div><span className="eyebrow">RESEARCH + CAPTURE COPILOT</span><h1>ForgeGov AI</h1><p>Ask naturally. ForgeGov separates facts, analysis, risk, and recommended action.</p></div><div className="ai-heading-actions"><div className="ai-mode-badges"><span>{provider === "ollama" ? "Open-source model" : "Hosted model"}</span><span className={webStatus === "live" || webReachable ? "live" : webStatus === "degraded" || webStatus === "unavailable" ? "reconnecting" : "pending"}>{webLabel}</span></div>{messages.length > 0 && <button className="ai-clear-button" type="button" onClick={clearConversation}><Trash2 size={15}/> Clear</button>}</div></header>
       {!messages.length ? <div className="assistant-empty"><div className="ai-orb"><Bot size={36} /></div><h2>What are you working on?</h2><p>Start with an opportunity, a capture decision, a teaming gap, or a market question. The assistant will lead with the answer and show evidence separately.</p><div className="prompt-grid">{prompts.map((item) => { const Icon = item.icon; return <button key={item.title} onClick={() => setPrompt(item.text)}><Icon size={20} /><strong>{item.title}</strong><span>{item.text}</span></button>; })}</div></div>
         : <div className="chat-thread" ref={threadRef}>{messages.map((message, index) => <article key={`${message.createdAt ?? index}-${index}`} className={`chat-message ${message.role}`}><header><strong>{message.role === "user" ? "You" : "ForgeGov AI"}</strong><div>{message.createdAt && <time>{new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>}{message.role === "assistant" && <button type="button" onClick={() => void copyMessage(index, message.content)} aria-label="Copy answer">{copied === index ? <Check size={14}/> : <Clipboard size={14}/>}</button>}</div></header>{message.role === "assistant" ? <StructuredAnswer content={message.content} /> : <p>{message.content}</p>}{message.sources?.length ? <details className="ai-source-list"><summary>Sources ({message.sources.length})</summary>{message.sources.slice(0, 12).map((source) => source.url ? <a key={`${source.label}-${source.url}`} href={source.url} target="_blank" rel="noreferrer"><b>{source.label}</b>{source.title}<ExternalLink size={12} /></a> : <div key={`${source.label}-${source.title}`}><b>{source.label}</b>{source.title}</div>)}</details> : null}</article>)}{loading && <div className="chat-message assistant"><strong>ForgeGov AI</strong><p className="ai-thinking"><LoaderCircle className="spin" size={17} /> Reviewing authorized records and available live sources…</p></div>}</div>}
       {error && <p className="assistant-error">{error}</p>}
       <form className="assistant-composer" onSubmit={submit}><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="Ask about an opportunity, agency, competitor, clause, partner, risk, or next action…" disabled={loading} maxLength={50000} /><div><span><ShieldCheck size={15} /> Enter to send · Shift+Enter for a new line</span><button type="submit" aria-label="Send" disabled={loading || !prompt.trim()}>{loading ? <LoaderCircle className="spin" size={18} /> : <ArrowUp size={18} />}</button></div></form>
     </section>
-    <aside className="assistant-context"><span className="eyebrow">ACTIVE CONTEXT</span><h2>Research sources</h2><div className="context-source"><span className={`status-dot ${configured ? "live" : "pending"}`} /><div><strong>{provider === "ollama" ? "Self-hosted Ollama" : "OpenAI API"}</strong><small>{configured ? `${model || "Configured model"} ready` : "Provider needs configuration"}</small></div></div><div className="context-source"><span className={`status-dot ${webStatus === "live" || webReachable ? "live" : webStatus === "unavailable" || webStatus === "invalid_response" ? "reconnecting" : "pending"}`} /><div><strong>Live web research</strong><small>{webDetail}</small></div></div><div className="context-source"><span className="status-dot live" /><div><strong>ForgeGov workspace</strong><small>Pipeline, pursuits, tasks, contacts, files, and rooms</small></div></div><div className="context-source"><span className="status-dot live" /><div><strong>Government records</strong><small>SAM.gov, Grants.gov, USAspending, and forecasts</small></div></div><div className="context-warning"><ShieldCheck size={18} /><p>Private organization data stays scoped to authorized workspace access. Missing evidence is identified instead of invented.</p></div></aside>
+    <aside className="assistant-context"><span className="eyebrow">ACTIVE CONTEXT</span><h2>Research sources</h2><div className="context-source"><span className={`status-dot ${configured ? "live" : "pending"}`} /><div><strong>{provider === "ollama" ? "Self-hosted Ollama" : "OpenAI API"}</strong><small>{configured ? `${model || "Configured model"} ready` : "Provider needs configuration"}</small></div></div><div className="context-source"><span className={`status-dot ${webStatus === "live" || webReachable ? "live" : webStatus === "degraded" || webStatus === "unavailable" ? "reconnecting" : "pending"}`} /><div><strong>Live web research</strong><small>{webDetail}</small></div></div><div className="context-source"><span className="status-dot live" /><div><strong>ForgeGov workspace</strong><small>Pipeline, pursuits, tasks, contacts, files, and rooms</small></div></div><div className="context-source"><span className="status-dot live" /><div><strong>Government records</strong><small>SAM.gov, Grants.gov, USAspending, and forecasts</small></div></div><div className="context-warning"><ShieldCheck size={18} /><p>Private organization data stays scoped to authorized workspace access. Missing evidence is identified instead of invented.</p></div></aside>
   </div>;
 }

@@ -25,6 +25,7 @@ from .tenant_security import (
     enforce_governance_step_up,
 )
 from .ai import OpenAIIntegrationError, ask_ai, live_web_status
+from .live_web import search as live_web_search
 
 from .integrations import (
     IntegrationError,
@@ -93,6 +94,11 @@ from .models import (
     ProposalFinding,
     ProposalSubmissionSnapshot,
     ProposalCloseout,
+    ProposalVolume,
+    ProposalSection,
+    ProposalSectionRequirement,
+    ProposalSectionRevision,
+    ProposalLibraryEntry,
     PricingPlan,
     BetaFeedback,
 )
@@ -136,7 +142,7 @@ from .serializers import (
     ProjectRoomInvitationSerializer,
     OrganizationJoinRequestSerializer,
 )
-from .throttles import OpenAIChatThrottle, SamLiveSearchThrottle
+from .throttles import LiveWebSearchThrottle, OpenAIChatThrottle, SamLiveSearchThrottle
 from .document_intelligence import DocumentIngestionError, capture_readiness_summary, chunk_sections, download_document, extract_document, extract_structured_intelligence, sha256
 from .capture_intelligence import build_capture_assessment
 from .win_strategy import build_win_strategy
@@ -146,6 +152,7 @@ from .competitive_positioning import build_competitive_positioning, record_compe
 from .capture_copilot import COPILOT_MODES, build_capture_copilot_brief, run_capture_copilot
 from .proposal_workspace import build_proposal_workspace
 from .proposal_execution import proposal_execution_payload, ensure_proposal_execution, update_plan, update_requirement, update_review, update_finding
+from .proposal_automation import production_payload, update_section, draft_section, package_validation, ensure_proposal_production
 from .submission_control import build_submission_control, create_submission_snapshot, update_closeout, export_submission_control
 from .pricing_engine import ensure_pricing_plan, pricing_payload, mutate_pricing_plan, ensure_pricing_profile
 from .price_to_win import build_price_to_win, record_price_to_win
@@ -249,6 +256,26 @@ def connector_registry_view(request):
 
 
 @api_view(["GET"])
+@throttle_classes([LiveWebSearchThrottle])
+def live_web_status_view(request):
+    probe = _truthy(request.query_params.get("probe"))
+    return Response(live_web_status(probe=probe))
+
+
+@api_view(["GET"])
+@throttle_classes([LiveWebSearchThrottle])
+def live_web_search_view(request):
+    query = str(request.query_params.get("q") or "").strip()
+    if not query:
+        return Response({"detail": "q is required."}, status=400)
+    try:
+        limit = max(1, min(int(request.query_params.get("limit") or 8), 12))
+    except (TypeError, ValueError):
+        return Response({"detail": "limit must be an integer from 1 to 12."}, status=400)
+    return Response(live_web_search(query, limit=limit))
+
+
+@api_view(["GET"])
 def award_intelligence_view(request):
     return Response(award_intelligence_summary(
         agency=str(request.query_params.get("agency") or ""),
@@ -287,9 +314,14 @@ def integration_status(request):
             "model": settings.OLLAMA_MODEL if settings.AI_PROVIDER == "ollama" else settings.OPENAI_MODEL,
             "configured": bool(settings.OLLAMA_BASE_URL) if settings.AI_PROVIDER == "ollama" else bool(settings.OPENAI_API_KEY),
             "web_search": bool(web_status.get("reachable")) if probe else bool(web_status.get("configured")),
+            "web_search_provider": web_status.get("provider"),
             "web_search_configured": bool(web_status.get("configured")),
             "web_search_reachable": web_status.get("reachable"),
             "web_search_status": web_status.get("status"),
+            "web_search_latency_ms": web_status.get("latency_ms"),
+            "web_search_last_success_at": web_status.get("last_success_at"),
+            "web_search_last_error_category": web_status.get("last_error_category"),
+            "web_search_cached_fallback_available": bool(web_status.get("cached_fallback_available")),
         },
         "expansion": {
             "forecast_directory": "https://www.acquisition.gov/procurement-forecasts",
@@ -1946,7 +1978,8 @@ def opportunity_briefing(request, source_id: str):
     if cached and not request.data.get("refresh"):
         return Response(OpportunityAnalysisSerializer(cached).data)
     prompt = f"Opportunity: {opportunity.title}\nSolicitation: {opportunity.solicitation_number}\nAgency: {opportunity.agency}\n\nTASK\n{ANALYSIS_PROMPTS[analysis_type]}\n\nAUTHORIZED OPPORTUNITY AND DOCUMENT CONTEXT\n{context}\n\nCite every document-supported claim using the exact [DOC-*] labels. Clearly label unknowns and inferences."
-    result = ask_ai(message=prompt, history=[], organization=organization, user=request.user)
+    public_web_query = " ".join(part for part in [opportunity.agency, opportunity.solicitation_number, opportunity.title, ANALYSIS_PROMPTS[analysis_type]] if part)[:500]
+    result = ask_ai(message=prompt, history=[], organization=organization, user=request.user, web_query=public_web_query)
     analysis, _ = OpportunityAnalysis.objects.update_or_create(organization=organization, opportunity=opportunity, project_room=None, analysis_type=analysis_type, input_fingerprint=fingerprint, defaults={"content": result.get("answer", ""), "sources": sources, "model": result.get("model", ""), "created_by": request.user})
     return Response(OpportunityAnalysisSerializer(analysis).data)
 
@@ -2002,7 +2035,8 @@ def opportunity_document_question(request, source_id: str):
     )
 
     try:
-        result = ask_ai(message=prompt, history=[], organization=organization, user=request.user)
+        public_web_query = " ".join(part for part in [opportunity.agency, opportunity.solicitation_number, opportunity.title, question] if part)[:500]
+        result = ask_ai(message=prompt, history=[], organization=organization, user=request.user, web_query=public_web_query)
     except OpenAIIntegrationError as exc:
         # Preserve useful evidence even if the hosted model fails to emit prose.
         contacts = _opportunity_contacts(opportunity.raw_data if isinstance(opportunity.raw_data, dict) else {})
@@ -2419,6 +2453,198 @@ def proposal_finding_detail(request, source_id: str, finding_id: int):
         return Response({"detail": "Proposal finding not found."}, status=404)
     update_finding(finding, request.data, organization)
     return Response(proposal_execution_payload(organization=organization, opportunity=finding.plan.opportunity, user=request.user))
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsProposalMember])
+def opportunity_proposal_production(request, source_id: str):
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(source_id)
+    if not opportunity:
+        return Response({"detail": "Opportunity not found."}, status=404)
+    membership = active_membership(request.user)
+    capabilities = membership_capabilities(membership)
+    can_financial = bool(capabilities.get("financial_read"))
+    can_approve = bool(membership and membership.role in {Membership.Role.OWNER, Membership.Role.ADMIN, Membership.Role.PROPOSAL})
+    plan = ensure_proposal_production(organization=organization, opportunity=opportunity, user=request.user)
+    if request.method == "POST":
+        action = str(request.data.get("action") or "").strip()
+        try:
+            if action == "create_volume":
+                title = str(request.data.get("title") or "").strip()
+                if not title:
+                    return Response({"detail": "Volume title is required."}, status=400)
+                key = str(request.data.get("key") or f"volume-{plan.volumes.count()+1}").strip()[:120]
+                if plan.volumes.filter(key=key).exists():
+                    return Response({"detail": "A proposal volume with that key already exists."}, status=409)
+                ProposalVolume.objects.create(plan=plan, key=key, title=title[:500], sort_order=plan.volumes.count())
+            elif action == "create_section":
+                volume = plan.volumes.filter(pk=request.data.get("volume_id")).first()
+                if not volume:
+                    return Response({"detail": "Proposal volume not found."}, status=404)
+                title = str(request.data.get("title") or "").strip()
+                if not title:
+                    return Response({"detail": "Section title is required."}, status=400)
+                section_type = str(request.data.get("section_type") or ProposalSection.SectionType.OTHER)
+                if section_type not in {value for value, _ in ProposalSection.SectionType.choices}:
+                    return Response({"detail": "Invalid proposal section type."}, status=400)
+                if section_type == ProposalSection.SectionType.PRICING and not can_financial:
+                    return Response({"detail": "Financial authorization is required to create pricing proposal sections."}, status=403)
+                key = str(request.data.get("key") or f"section-{volume.sections.count()+1}").strip()[:120]
+                if volume.sections.filter(key=key).exists():
+                    return Response({"detail": "A proposal section with that key already exists in this volume."}, status=409)
+                ProposalSection.objects.create(volume=volume, key=key, title=title[:500], section_type=section_type, sort_order=volume.sections.count())
+            elif action == "link_requirement":
+                section = ProposalSection.objects.filter(pk=request.data.get("section_id"), volume__plan=plan).first()
+                requirement = plan.requirements.filter(pk=request.data.get("requirement_id")).first()
+                if not section or not requirement:
+                    return Response({"detail": "Proposal section or requirement not found."}, status=404)
+                if section.section_type == ProposalSection.SectionType.PRICING and not can_financial:
+                    return Response({"detail": "Financial authorization is required to manage pricing requirement traceability."}, status=403)
+                ProposalSectionRequirement.objects.get_or_create(section=section, requirement=requirement)
+            elif action == "unlink_requirement":
+                section = ProposalSection.objects.filter(pk=request.data.get("section_id"), volume__plan=plan).first()
+                if section and section.section_type == ProposalSection.SectionType.PRICING and not can_financial:
+                    return Response({"detail": "Financial authorization is required to manage pricing requirement traceability."}, status=403)
+                ProposalSectionRequirement.objects.filter(section__volume__plan=plan, section_id=request.data.get("section_id"), requirement_id=request.data.get("requirement_id")).delete()
+            elif action == "create_library_entry":
+                title = str(request.data.get("title") or "").strip()
+                content = str(request.data.get("content") or "").strip()
+                if not title or not content:
+                    return Response({"detail": "Library title and content are required."}, status=400)
+                source_section = ProposalSection.objects.filter(pk=request.data.get("source_section_id"), volume__plan=plan).first() if request.data.get("source_section_id") else None
+                category = str(request.data.get("category") or "general")[:80]
+                if (category == ProposalSection.SectionType.PRICING or (source_section and source_section.section_type == ProposalSection.SectionType.PRICING)) and not can_financial:
+                    return Response({"detail": "Financial authorization is required to reuse pricing content."}, status=403)
+                ProposalLibraryEntry.objects.create(
+                    organization=organization,
+                    title=title[:500],
+                    category=category,
+                    content=content,
+                    tags=request.data.get("tags") if isinstance(request.data.get("tags"), list) else [],
+                    source_section=source_section,
+                    created_by=request.user,
+                )
+            elif action == "update_library_entry":
+                entry = ProposalLibraryEntry.objects.filter(pk=request.data.get("entry_id"), organization=organization).first()
+                if not entry:
+                    return Response({"detail": "Proposal library entry not found."}, status=404)
+                if (entry.category == ProposalSection.SectionType.PRICING or (entry.source_section and entry.source_section.section_type == ProposalSection.SectionType.PRICING)) and not can_financial:
+                    return Response({"detail": "Financial authorization is required to manage pricing content."}, status=403)
+                allowed = {value for value, _ in ProposalLibraryEntry.Status.choices}
+                if request.data.get("status") in allowed:
+                    next_status = request.data["status"]
+                    if next_status == ProposalLibraryEntry.Status.APPROVED and not can_approve:
+                        return Response({"detail": "Proposal approval authority is required to approve reusable content."}, status=403)
+                    entry.status = next_status
+                    if entry.status == ProposalLibraryEntry.Status.APPROVED:
+                        entry.approved_at = timezone.now(); entry.approved_by = request.user
+                    else:
+                        entry.approved_at = None; entry.approved_by = None
+                substantive_change = False
+                if "title" in request.data:
+                    next_title = str(request.data.get("title") or entry.title)[:500]
+                    substantive_change = substantive_change or next_title != entry.title
+                    entry.title = next_title
+                if "content" in request.data:
+                    next_content = str(request.data.get("content") or "")
+                    substantive_change = substantive_change or next_content != entry.content
+                    entry.content = next_content
+                if "tags" in request.data and isinstance(request.data.get("tags"), list):
+                    next_tags = request.data.get("tags")
+                    substantive_change = substantive_change or next_tags != entry.tags
+                    entry.tags = next_tags
+                if substantive_change and entry.status == ProposalLibraryEntry.Status.APPROVED and request.data.get("status") != ProposalLibraryEntry.Status.APPROVED:
+                    entry.status = ProposalLibraryEntry.Status.DRAFT
+                    entry.approved_at = None
+                    entry.approved_by = None
+                entry.save()
+            elif action and action != "sync":
+                return Response({"detail": "Unsupported proposal-production action."}, status=400)
+        except (ValueError, PermissionError) as exc:
+            return Response({"detail": str(exc)}, status=403 if isinstance(exc, PermissionError) else 400)
+    return Response(production_payload(organization=organization, opportunity=opportunity, user=request.user, can_financial=can_financial, can_approve=can_approve))
+
+
+@api_view(["PATCH"])
+@permission_classes([IsProposalMember])
+def proposal_section_detail(request, source_id: str, section_id: int):
+    organization = _request_organization(request)
+    membership = active_membership(request.user)
+    capabilities = membership_capabilities(membership)
+    can_approve = bool(membership and membership.role in {Membership.Role.OWNER, Membership.Role.ADMIN, Membership.Role.PROPOSAL})
+    section = ProposalSection.objects.filter(pk=section_id, volume__plan__organization=organization, volume__plan__opportunity__source_id=source_id).select_related("volume__plan__opportunity").first()
+    if not section:
+        return Response({"detail": "Proposal section not found."}, status=404)
+    try:
+        update_section(section=section, organization=organization, user=request.user, payload=request.data, can_financial=bool(capabilities.get("financial_write")), can_approve=can_approve)
+    except PermissionError as exc:
+        return Response({"detail": str(exc)}, status=403)
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=400)
+    return Response(production_payload(organization=organization, opportunity=section.volume.plan.opportunity, user=request.user, can_financial=bool(capabilities.get("financial_read")), can_approve=can_approve))
+
+
+@api_view(["POST"])
+@permission_classes([IsProposalMember])
+def proposal_section_draft(request, source_id: str, section_id: int):
+    organization = _request_organization(request)
+    capabilities = membership_capabilities(active_membership(request.user))
+    section = ProposalSection.objects.filter(pk=section_id, volume__plan__organization=organization, volume__plan__opportunity__source_id=source_id).select_related("volume__plan__opportunity").first()
+    if not section:
+        return Response({"detail": "Proposal section not found."}, status=404)
+    try:
+        result = draft_section(
+            section=section,
+            organization=organization,
+            opportunity=section.volume.plan.opportunity,
+            user=request.user,
+            instruction=str(request.data.get("instruction") or ""),
+            can_financial=bool(capabilities.get("financial_read")),
+            persist=_truthy(request.data.get("persist")),
+        )
+        return Response(result)
+    except PermissionError as exc:
+        return Response({"detail": str(exc)}, status=403)
+    except OpenAIIntegrationError as exc:
+        return Response({"detail": str(exc)}, status=exc.status_code)
+
+
+@api_view(["GET"])
+@permission_classes([IsProposalMember])
+def proposal_section_revisions(request, source_id: str, section_id: int):
+    organization = _request_organization(request)
+    capabilities = membership_capabilities(active_membership(request.user))
+    section = ProposalSection.objects.filter(pk=section_id, volume__plan__organization=organization, volume__plan__opportunity__source_id=source_id).first()
+    if not section:
+        return Response({"detail": "Proposal section not found."}, status=404)
+    if section.section_type == ProposalSection.SectionType.PRICING and not capabilities.get("financial_read"):
+        return Response({"detail": "Financial authorization is required to view pricing revisions."}, status=403)
+    rows = [{
+        "id": row.id,
+        "revision": row.revision,
+        "content": row.content,
+        "change_summary": row.change_summary,
+        "ai_generated": row.ai_generated,
+        "provider": row.provider,
+        "model": row.model,
+        "created_by": row.created_by.get_full_name() or row.created_by.username if row.created_by else "",
+        "created_at": row.created_at.isoformat(),
+        "source_snapshot": row.source_snapshot,
+    } for row in section.revisions.select_related("created_by").all()[:50]]
+    return Response({"results": rows})
+
+
+@api_view(["GET"])
+@permission_classes([IsProposalMember])
+def proposal_package_validation(request, source_id: str):
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(source_id)
+    if not opportunity:
+        return Response({"detail": "Opportunity not found."}, status=404)
+    capabilities = membership_capabilities(active_membership(request.user))
+    plan = ensure_proposal_production(organization=organization, opportunity=opportunity, user=request.user)
+    return Response(package_validation(plan=plan, can_financial=bool(capabilities.get("financial_read"))))
 
 
 @api_view(["GET", "POST"])

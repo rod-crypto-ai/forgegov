@@ -824,6 +824,115 @@ class ProposalCloseout(TimeStampedModel):
         ordering = ["-updated_at"]
 
 
+class ProposalVolume(TimeStampedModel):
+    class Status(models.TextChoices):
+        PLANNING = "planning", "Planning"
+        DRAFTING = "drafting", "Drafting"
+        REVIEW = "review", "Review"
+        APPROVED = "approved", "Approved"
+
+    plan = models.ForeignKey(ProposalPlan, on_delete=models.CASCADE, related_name="volumes")
+    key = models.CharField(max_length=120)
+    title = models.CharField(max_length=500)
+    instructions = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PLANNING)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="owned_proposal_volumes")
+    due_at = models.DateTimeField(null=True, blank=True)
+    page_limit = models.PositiveIntegerField(null=True, blank=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+        constraints = [models.UniqueConstraint(fields=("plan", "key"), name="uniq_proposal_volume_key")]
+        indexes = [models.Index(fields=["plan", "status", "sort_order"], name="propvol_plan_stat_idx")]
+
+
+class ProposalSection(TimeStampedModel):
+    class Status(models.TextChoices):
+        PLANNING = "planning", "Planning"
+        DRAFTING = "drafting", "Drafting"
+        REVIEW = "review", "Review"
+        APPROVED = "approved", "Approved"
+        LOCKED = "locked", "Locked"
+
+    class SectionType(models.TextChoices):
+        COVER = "cover", "Cover / Executive"
+        TECHNICAL = "technical", "Technical"
+        MANAGEMENT = "management", "Management / Staffing"
+        PAST_PERFORMANCE = "past_performance", "Past Performance"
+        PRICING = "pricing", "Pricing / Cost"
+        OTHER = "other", "Other"
+
+    volume = models.ForeignKey(ProposalVolume, on_delete=models.CASCADE, related_name="sections")
+    key = models.CharField(max_length=120)
+    title = models.CharField(max_length=500)
+    section_type = models.CharField(max_length=30, choices=SectionType.choices, default=SectionType.OTHER)
+    instructions = models.TextField(blank=True)
+    content = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PLANNING)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="owned_proposal_sections")
+    due_at = models.DateTimeField(null=True, blank=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="approved_proposal_sections")
+    last_ai_provider = models.CharField(max_length=80, blank=True)
+    last_ai_model = models.CharField(max_length=120, blank=True)
+
+    class Meta:
+        ordering = ["volume__sort_order", "sort_order", "id"]
+        constraints = [models.UniqueConstraint(fields=("volume", "key"), name="uniq_proposal_section_key")]
+        indexes = [models.Index(fields=["volume", "status", "sort_order"], name="propsec_vol_stat_idx")]
+
+
+class ProposalSectionRequirement(TimeStampedModel):
+    section = models.ForeignKey(ProposalSection, on_delete=models.CASCADE, related_name="requirement_links")
+    requirement = models.ForeignKey(ProposalRequirement, on_delete=models.CASCADE, related_name="section_links")
+    notes = models.CharField(max_length=1000, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("section", "requirement"), name="uniq_prop_section_requirement")]
+        indexes = [models.Index(fields=["section", "requirement"], name="propsec_req_idx")]
+
+
+class ProposalSectionRevision(TimeStampedModel):
+    section = models.ForeignKey(ProposalSection, on_delete=models.CASCADE, related_name="revisions")
+    revision = models.PositiveIntegerField(default=1)
+    content = models.TextField(blank=True)
+    change_summary = models.CharField(max_length=1000, blank=True)
+    source_snapshot = models.JSONField(default=dict, blank=True)
+    ai_generated = models.BooleanField(default=False)
+    provider = models.CharField(max_length=80, blank=True)
+    model = models.CharField(max_length=120, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="proposal_section_revisions")
+
+    class Meta:
+        ordering = ["-revision", "-id"]
+        constraints = [models.UniqueConstraint(fields=("section", "revision"), name="uniq_prop_section_revision")]
+        indexes = [models.Index(fields=["section", "-revision"], name="propsec_rev_idx")]
+
+
+class ProposalLibraryEntry(TimeStampedModel):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        APPROVED = "approved", "Approved"
+        RETIRED = "retired", "Retired"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="proposal_library_entries")
+    title = models.CharField(max_length=500)
+    category = models.CharField(max_length=80, default="general")
+    content = models.TextField()
+    tags = models.JSONField(default=list, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    source_section = models.ForeignKey(ProposalSection, null=True, blank=True, on_delete=models.SET_NULL, related_name="library_entries")
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="approved_proposal_library_entries")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_proposal_library_entries")
+
+    class Meta:
+        ordering = ["category", "title"]
+        indexes = [models.Index(fields=["organization", "status", "category"], name="proplib_org_stat_idx")]
+
+
 class PricingProfile(TimeStampedModel):
     """Organization-level pricing defaults reused across pursuits."""
 

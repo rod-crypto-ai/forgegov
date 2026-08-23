@@ -377,7 +377,23 @@ def system_operations(request):
         payload["connector_registry"] = connector_registry_payload(probe=True)
     except Exception:
         pass
+    try:
+        from core.live_web import status as live_web_status
+        payload["live_web"] = live_web_status(probe=True)
+    except Exception as exc:
+        payload["live_web"] = {"status": "unavailable", "reachable": False, "error": type(exc).__name__}
     return Response(payload)
+
+
+@api_view(["POST"])
+@permission_classes([IsPlatformCreator])
+def live_web_test(request):
+    from core.live_web import search, status as live_web_status
+    query = str(request.data.get("query") or "federal acquisition forecast").strip()[:500]
+    result = search(query, limit=3, timeout=10, allow_cached=False)
+    health = live_web_status(probe=False)
+    audit(request, "creator.live_web_test", target_type="connector", target_id="searxng", metadata={"status": result.get("status"), "reachable": result.get("reachable"), "result_count": len(result.get("results") or [])})
+    return Response({"health": health, "search": result})
 
 
 @api_view(["GET"])

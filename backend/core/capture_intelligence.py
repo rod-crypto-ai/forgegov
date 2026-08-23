@@ -295,7 +295,8 @@ def build_capture_assessment(*, organization, opportunity, include_ai: bool = Fa
             + "\n".join(source_context)
         )
         try:
-            ai_result = ask_ai(message=prompt, history=[], organization=organization, user=user)
+            public_web_query = " ".join(part for part in [opportunity.agency, opportunity.solicitation_number, opportunity.title, "capture market research"] if part)[:500]
+            ai_result = ask_ai(message=prompt, history=[], organization=organization, user=user, web_query=public_web_query)
             cached_ai, _ = OpportunityAnalysis.objects.update_or_create(
                 organization=organization,
                 opportunity=opportunity,

@@ -58,7 +58,7 @@ export function CaptureCopilot({noticeId}:{noticeId:string}){
   if(!brief)return <section className="data-panel table-state"><LoaderCircle className="spin"/><strong>Building Capture Copilot context…</strong><p>{message||"Assembling capture, competitive, proposal-readiness, and decision evidence."}</p></section>;
 
   return <section className="capture-copilot-shell">
-    <header className="copilot-hero"><div><span className="copilot-orb"><Sparkles/></span><div><span className="eyebrow">FORGEAI CAPTURE COPILOT · v3.2.0</span><h2>Decision support for the pursuit team</h2><p>ForgeGov assembles the deterministic evidence first, then lets AI challenge, explain, and turn it into action.</p></div></div><button className="secondary-button" onClick={()=>void load()}><RefreshCw size={15}/>Refresh evidence</button></header>
+    <header className="copilot-hero"><div><span className="copilot-orb"><Sparkles/></span><div><span className="eyebrow">FORGEAI CAPTURE COPILOT · v3.2.1</span><h2>Decision support for the pursuit team</h2><p>ForgeGov assembles the deterministic evidence first, then lets AI challenge, explain, and turn it into action.</p></div></div><button className="secondary-button" onClick={()=>void load()}><RefreshCw size={15}/>Refresh evidence</button></header>
     {message&&<div className="system-banner warning">{message}</div>}
 
     <div className="copilot-posture-grid">

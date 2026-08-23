@@ -1,7 +1,6 @@
 use_default_settings: true
 
 server:
-  secret_key: "forgegov-local-development-secret-change-me"
   limiter: false
   image_proxy: false
   method: GET

@@ -134,6 +134,7 @@ REST_FRAMEWORK = {
         "auth_login": os.getenv("AUTH_LOGIN_RATE", "10/minute"),
         "auth_register": os.getenv("AUTH_REGISTER_RATE", "5/hour"),
         "openai_chat": os.getenv("OPENAI_CHAT_RATE", "60/hour"),
+        "live_web": os.getenv("LIVE_WEB_SEARCH_RATE", "120/hour"),
     },
 }
 
@@ -212,8 +213,12 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
 AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").strip().lower()
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
-SEARXNG_URL = os.getenv("SEARXNG_URL", "").strip()
+SEARXNG_HOSTPORT = os.getenv("SEARXNG_HOSTPORT", "").strip()
+# Render injects the private-service host:port. Prefer it over any stale/manual
+# SEARXNG_URL so production cannot accidentally fall back to a Docker-only hostname.
+SEARXNG_URL = (f"http://{SEARXNG_HOSTPORT}" if SEARXNG_HOSTPORT else os.getenv("SEARXNG_URL", "").strip())
 AI_WEB_SEARCH_ENABLED = os.getenv("AI_WEB_SEARCH_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+LIVE_WEB_CACHE_SECONDS = max(60, int(os.getenv("LIVE_WEB_CACHE_SECONDS", "600")))
 OPENAI_TIMEOUT_SECONDS = int(os.getenv("OPENAI_TIMEOUT_SECONDS", "90"))
 OPENAI_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "1800"))
 

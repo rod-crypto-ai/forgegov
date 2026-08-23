@@ -743,23 +743,26 @@ class LiveWebIntegrationTests(TestCase):
         cache.clear()
 
     @override_settings(SEARXNG_URL="http://searxng:8080", AI_WEB_SEARCH_ENABLED=True)
-    @patch("core.ai.requests.get")
-    def test_live_web_status_probes_json_search(self, mock_get):
+    @patch("core.live_web.resilient_request")
+    def test_live_web_status_probes_json_search(self, mock_request):
         response = Mock()
+        response.status_code = 200
         response.raise_for_status.return_value = None
         response.json.return_value = {"results": [{"title": "Official source", "url": "https://example.gov", "content": "Current information"}]}
-        mock_get.return_value = response
+        mock_request.return_value = response
 
         result = live_web_status(probe=True)
 
         self.assertTrue(result["configured"])
         self.assertTrue(result["reachable"])
         self.assertEqual(result["status"], "live")
-        self.assertEqual(mock_get.call_args.kwargs["params"]["format"], "json")
+        self.assertEqual(mock_request.call_args.args[0], "searxng")
+        self.assertEqual(mock_request.call_args.args[1], "GET")
+        self.assertEqual(mock_request.call_args.kwargs["params"]["format"], "json")
 
     @override_settings(SEARXNG_URL="http://searxng:8080", AI_WEB_SEARCH_ENABLED=True)
-    @patch("core.ai.requests.get", side_effect=__import__("requests").RequestException("offline"))
-    def test_live_web_status_reports_reconnecting_without_false_live_claim(self, _mock_get):
+    @patch("core.live_web.resilient_request", side_effect=__import__("requests").RequestException("offline"))
+    def test_live_web_status_reports_unavailable_without_false_live_claim(self, _mock_request):
         result = live_web_status(probe=True)
         self.assertTrue(result["configured"])
         self.assertFalse(result["reachable"])
@@ -803,20 +806,18 @@ class SubnetFallbackTests(TestCase):
         SEARXNG_URL="http://searxng:8080",
         AI_WEB_SEARCH_ENABLED=True,
     )
-    @patch("core.integrations.requests.get")
-    def test_subnet_uses_official_sba_index_when_direct_directory_reconnects(self, mock_get):
-        def side_effect(url, **kwargs):
-            if "searxng" in url:
-                response = Mock()
-                response.raise_for_status.return_value = None
-                response.json.return_value = {"results": [{
-                    "title": "Aerial Structures Rehab",
-                    "url": "https://www.sba.gov/opportunity/aerial-structures-rehab",
-                    "content": "Subcontracting opportunity in Washington, DC",
-                }]}
-                return response
-            raise __import__("requests").RequestException("SBA connection reset")
-        mock_get.side_effect = side_effect
+    @patch("core.live_web.resilient_request")
+    @patch("core.integrations.requests.get", side_effect=__import__("requests").RequestException("SBA connection reset"))
+    def test_subnet_uses_official_sba_index_when_direct_directory_reconnects(self, _mock_get, mock_live_web_request):
+        response = Mock()
+        response.status_code = 200
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"results": [{
+            "title": "Aerial Structures Rehab",
+            "url": "https://www.sba.gov/opportunity/aerial-structures-rehab",
+            "content": "Subcontracting opportunity in Washington, DC",
+        }]}
+        mock_live_web_request.return_value = response
 
         result = search_sba_subnet_opportunities(query="structures", state="DC")
 
