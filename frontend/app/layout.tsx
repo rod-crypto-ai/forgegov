@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 import { AuthProvider } from "@/components/auth-provider";
@@ -16,7 +17,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <script dangerouslySetInnerHTML={{__html:`(()=>{try{const p=JSON.parse(localStorage.getItem('forgegov-ui-preferences')||'{}');const pref=p.theme||'system';const dark=pref==='dark'||(pref==='system'&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.dataset.theme=dark?'dark':'light';document.documentElement.dataset.themePreference=pref;document.documentElement.dataset.density=p.density||'comfortable';document.documentElement.dataset.reduceMotion=p.reduce_motion?'true':'false';document.documentElement.style.colorScheme=dark?'dark':'light'}catch(e){}})();`}} />
       </head>
       <body>
-        <AuthProvider><ThemeProvider><AppShell>{children}</AppShell></ThemeProvider></AuthProvider>
+        <AuthProvider><ThemeProvider><Suspense fallback={<>{children}</>}><AppShell>{children}</AppShell></Suspense></ThemeProvider></AuthProvider>
       </body>
     </html>
   );

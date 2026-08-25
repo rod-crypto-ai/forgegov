@@ -41,7 +41,7 @@ export function MicrosoftActions({title,summary="",sourceUrl="",deadline="",agen
   const [open,setOpen]=useState(false);
   const [mode,setMode]=useState<Mode>("mail");
   const [to,setTo]=useState("");
-  const [subject,setSubject]=useState(`ForgeGov opportunity: ${title}`);
+  const [subject,setSubject]=useState(`ForgeGov Capture Review — ${title}`);
   const [body,setBody]=useState("");
   const [start,setStart]=useState(localDateTime(deadline));
   const [end,setEnd]=useState("");
@@ -50,14 +50,18 @@ export function MicrosoftActions({title,summary="",sourceUrl="",deadline="",agen
 
   useEffect(()=>{let active=true;apiGet<MicrosoftStatus>("/integrations/microsoft/status/").then(row=>{if(active)setStatus(row)}).catch(()=>{if(active)setStatus({configured:false,connected:false,verified:false,account_email:""})});return()=>{active=false}},[]);
 
+  const forgeGovUrl=typeof window==="undefined"?"":window.location.href;
   const defaultBody=useMemo(()=>[
-    title,
-    agency?`Agency / prime: ${agency}`:"",
-    solicitationNumber?`Reference: ${solicitationNumber}`:"",
-    deadline?`Deadline: ${new Date(deadline).toLocaleString()}`:"",
-    summary?.slice(0,1500),
-    sourceUrl?`Source: ${sourceUrl}`:"",
-  ].filter(Boolean).join("\n\n"),[title,agency,solicitationNumber,deadline,summary,sourceUrl]);
+    "Shared from ForgeGov for capture review.",
+    `Opportunity: ${title}`,
+    agency?`Agency / Organization: ${agency}`:"",
+    solicitationNumber?`Solicitation / Reference: ${solicitationNumber}`:"",
+    deadline?`Response deadline: ${deadline}`:"",
+    summary?`Opportunity summary:\n${summary}`:"",
+    forgeGovUrl?`Open this record in ForgeGov:\n${forgeGovUrl}`:"",
+    sourceUrl?`Official source:\n${sourceUrl}`:"",
+    "Next action: Review the opportunity in ForgeGov, confirm capture ownership, and document the pursuit decision or follow-up.",
+  ].filter(Boolean).join("\n\n"),[title,agency,solicitationNumber,deadline,summary,sourceUrl,forgeGovUrl]);
 
   function show(next:Mode){setMode(next);setBody(defaultBody);setMessage("");setOpen(true);setStatus(null);apiGet<MicrosoftStatus>("/integrations/microsoft/status/").then(async row=>{if(row.connected&&!row.verified){try{const verified=await apiPost<MicrosoftStatus>("/integrations/microsoft/verify/",{});setStatus(verified);return}catch(error){setMessage(error instanceof Error?error.message:"Microsoft 365 verification failed.")}}setStatus(row)}).catch(error=>{setStatus({configured:false,connected:false,verified:false,account_email:""});setMessage(error instanceof Error?error.message:"Microsoft 365 connection status could not be loaded.")})}
   function changeStart(value:string){setStart(value);const date=new Date(value);if(Number.isNaN(date.getTime())){setEnd("");return;}date.setMinutes(date.getMinutes()+30);setEnd(localDateTime(date.toISOString()))}
@@ -74,7 +78,7 @@ export function MicrosoftActions({title,summary="",sourceUrl="",deadline="",agen
   return <>
     <button className="secondary-button microsoft-action-trigger" onClick={()=>show("mail")}><PanelsTopLeft size={16}/>Microsoft 365</button>
     {open&&<div className="document-viewer-backdrop" role="dialog" aria-modal="true"><div className="record-modal microsoft-action-modal">
-      <header><div><span className="eyebrow">CONNECTED APP</span><h2>Microsoft 365</h2><p>{status?.connected?`${status.verified?"Verified":"Connected"} as ${status.account_email||"Microsoft account"}`:"Connect Outlook and Teams to work without leaving ForgeGov."}</p></div><button className="icon-button" onClick={()=>setOpen(false)}><X/></button></header>
+      <header><div><span className="eyebrow">CONNECTED APP</span><h2>Microsoft 365</h2><p>{status?.connected?`${status.verified?"Verified":"Connected"} as ${status.account_email||"Microsoft account"}`:"Send a detailed ForgeGov capture brief through Outlook, Calendar, or Teams while keeping the opportunity context and direct ForgeGov link attached."}</p></div><button className="icon-button" onClick={()=>setOpen(false)}><X/></button></header>
       {status===null?<div className="table-state"><RefreshCw className="spin"/><strong>Checking Microsoft 365 connection…</strong><p>ForgeGov is verifying your saved Microsoft authorization.</p></div>:!status.configured?<div className="table-state"><PanelsTopLeft/><strong>Microsoft 365 administrator setup required.</strong><p>Your ForgeGov administrator must add the Microsoft Entra application credentials.</p></div>:!status.connected?<div className="table-state"><PanelsTopLeft/><strong>Connect your Microsoft account</strong><p>{status.last_error||"Connections are personal and use delegated Microsoft permissions."}</p><Link className="primary-button" href="/settings#integrations">Open Connected Apps</Link></div>:<>
         <div className="microsoft-mode-tabs"><button className={mode==="mail"?"active":""} onClick={()=>setMode("mail")}><Mail/>Outlook email</button><button className={mode==="calendar"?"active":""} onClick={()=>setMode("calendar")}><CalendarPlus/>Calendar</button><button className={mode==="teams"?"active":""} onClick={()=>setMode("teams")}><MessageSquare/>Teams</button></div>
         <div className="microsoft-action-form">
