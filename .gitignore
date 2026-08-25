@@ -34,3 +34,7 @@ frontend/**/*.before-frontend-fix
 
 # Local database backups
 backups/
+
+.venv-visual-qa/
+artifacts/visual-qa/
+artifacts/visual-qa-production/
