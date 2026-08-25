@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownToLine, ChevronLeft, ChevronRight, ExternalLink, FileSearch, LoaderCircle, Save, Search, Target } from "lucide-react";
+import { ArrowDownToLine, ChevronLeft, ChevronRight, ExternalLink, FileSearch, LoaderCircle, Check, Save, Search, Target } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { apiGet, apiPost } from "@/lib/api";
@@ -112,6 +112,7 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
   const [showingRecent, setShowingRecent] = useState(true);
   const [message, setMessage] = useState(live ? "Loading the most recent live opportunities…" : "This source uses a dedicated live workspace.");
   const [busyId, setBusyId] = useState("");
+  const [pipelineSourceIds,setPipelineSourceIds]=useState<Set<string>>(()=>new Set());
 
   const page = result ? Math.floor(result.offset / result.limit) + 1 : 1;
   const totalPages = result ? Math.max(1, Math.ceil(result.total_records / result.limit)) : 1;
@@ -184,7 +185,23 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not save search"); }
   }
 
-  function sourceId(row: LiveOpportunity) { return row.source_id ?? row.noticeId ?? (isGrants && row.id ? `grants.gov:${row.id}` : ""); }
+  const sourceId=useCallback((row:LiveOpportunity)=>row.source_id ?? row.noticeId ?? (isGrants && row.id ? `grants.gov:${row.id}` : ""),[isGrants]);
+
+  useEffect(()=>{
+    const ids=[...new Set(displayRows.map(row=>sourceId(row)).filter((value):value is string=>Boolean(value)))];
+    if(!ids.length){
+      const timer=window.setTimeout(()=>setPipelineSourceIds(new Set()),0);
+      return()=>window.clearTimeout(timer);
+    }
+    let active=true;
+    const params=new URLSearchParams();
+    ids.forEach(id=>params.append("source_id",id));
+    apiGet<{results:Array<{source_id:string;pipeline_id:number;stage:string}>}>(`/workflow/pipeline-status/?${params.toString()}`)
+      .then(data=>{if(active)setPipelineSourceIds(new Set((data.results??[]).map(row=>row.source_id)))})
+      .catch(()=>{});
+    return()=>{active=false};
+  },[displayRows,sourceId]);
+
 
   async function addToPipeline(row: LiveOpportunity) {
     const id = sourceId(row);
@@ -192,6 +209,7 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
     setBusyId(id);
     try {
       await apiPost("/workflow/opportunity-to-pipeline/", { source_id: id, stage: "reviewing" });
+      setPipelineSourceIds(current=>{const next=new Set(current);next.add(id);return next;});
       setMessage(`Added “${row.title ?? "opportunity"}” to the pipeline.`);
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not add to pipeline"); }
     finally { setBusyId(""); }
@@ -260,7 +278,7 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
             <div className="opportunity-result-actions">
               {href && <Link className="secondary-button" href={href}><FileSearch size={16} /> {isGrants ? "Grant workspace" : "Details & files"}</Link>}
               {url && <a className="secondary-button" href={url} target="_blank" rel="noreferrer"><ExternalLink size={16} /> Official source</a>}
-              <button className="primary-button" onClick={() => void addToPipeline(row)} disabled={!id || busyId === id}><Target size={16} />{busyId === id ? "Adding…" : "Add to pipeline"}</button>
+              {pipelineSourceIds.has(id)?<Link className="secondary-button pipeline-saved-button" href="/capture/pipelines"><Check size={15}/> In pipeline</Link>:<button className="primary-button" onClick={() => void addToPipeline(row)} disabled={!id || busyId === id}><Target size={16} />{busyId === id ? "Adding…" : "Add to pipeline"}</button>}
             </div>
           </article>;
         })}</div>

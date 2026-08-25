@@ -3354,3 +3354,41 @@ def beta_feedback(request):
         request_id=str(request.META.get("HTTP_X_REQUEST_ID") or "")[:120],
     )
     return Response({"id": row.id, "status": row.status, "detail": "Feedback received. Thank you for helping improve ForgeGov."}, status=status.HTTP_201_CREATED)
+
+# v3.2.1.3 UX repair: authoritative pipeline saved-state for opportunity lists.
+@api_view(["GET"])
+def pipeline_status(request):
+    organization = _request_organization(request)
+    source_ids = []
+    for raw in request.query_params.getlist("source_id"):
+        value = str(raw or "").strip()
+        if value and value not in source_ids:
+            source_ids.append(value)
+        if len(source_ids) >= 100:
+            break
+    if not source_ids:
+        return Response({"results": []})
+
+    rows = (
+        PipelineItem.objects.filter(
+            organization=organization,
+            opportunity__source_id__in=source_ids,
+        )
+        .select_related("opportunity")
+        .order_by("-id")
+    )
+    seen = set()
+    results = []
+    for row in rows:
+        source_id = str(row.opportunity.source_id or "")
+        if not source_id or source_id in seen:
+            continue
+        seen.add(source_id)
+        results.append(
+            {
+                "source_id": source_id,
+                "pipeline_id": row.id,
+                "stage": row.stage,
+            }
+        )
+    return Response({"results": results})

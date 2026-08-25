@@ -45,3 +45,7 @@ fi
 echo "Running responsive QA against production-style Next.js runtime..."
 FORGEGOV_QA_BASE_URL="$BASE_URL" \
   .venv-visual-qa/bin/python scripts/visual_qa_subcontracting.py
+
+echo "Running interactive shell/tablet UX QA..."
+FORGEGOV_QA_BASE_URL="$BASE_URL" \
+  .venv-visual-qa/bin/python scripts/visual_qa_shell.py

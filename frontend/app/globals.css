@@ -1342,3 +1342,32 @@ html[data-theme="dark"] .session-icon{background:#15273f}
   .subcontract-results-panel .panel-title-row{display:grid;grid-template-columns:minmax(0,1fr);gap:6px}
   .subcontract-results-panel .panel-title-row>small{justify-self:start}
 }
+
+/* v3.2.1.3 shell/pipeline UX repair */
+.forge-sidebar.collapsed .forge-nav-label,
+.forge-sidebar.collapsed .forge-footer-label{display:none!important}
+.forge-sidebar.collapsed .forge-nav-group>button>span{display:grid!important;place-items:center!important}
+.forge-sidebar.collapsed .forge-nav-group>button,
+.forge-sidebar.collapsed .forge-sidebar-footer a{overflow:hidden}
+.pipeline-saved-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap}
+
+@media (min-width:901px){
+  .forge-shell .mobile-only{display:none!important}
+  .forge-shell .desktop-sidebar-toggle{display:inline-grid!important}
+  .forge-shell .shell-backdrop{display:none!important}
+  .forge-sidebar.open{transform:none!important}
+}
+@media (max-width:900px){
+  .forge-shell .desktop-sidebar-toggle{display:none!important}
+  .forge-shell .mobile-only{display:inline-grid!important}
+}
+
+.project-room-grid,.project-rooms-grid,.rooms-grid{align-items:stretch}
+.project-room-card,.room-card{min-width:0;text-align:left;align-items:flex-start}
+.project-room-card h2,.project-room-card h3,.room-card h2,.room-card h3{
+  overflow-wrap:anywhere;
+  text-align:left;
+}
+@media (max-width:1180px) and (min-width:681px){
+  .project-room-grid,.project-rooms-grid,.rooms-grid{grid-template-columns:minmax(0,1fr)!important}
+}
