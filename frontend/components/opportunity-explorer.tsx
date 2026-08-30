@@ -5,6 +5,7 @@ import { ArrowDownToLine, ChevronLeft, ChevronRight, ExternalLink, FileSearch, L
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { apiGet, apiPost } from "@/lib/api";
+import { NaicsPicker } from "@/components/naics-picker";
 import { US_STATE_OPTIONS } from "@/lib/us-states";
 
 export type OpportunityMode = "federal-contracts" | "federal-forecasts" | "federal-vehicles" | "state-local" | "federal-grants";
@@ -247,7 +248,7 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
           <label><span>Funding instrument</span><input value={filters.funding_instruments} onChange={(event) => update("funding_instruments", event.target.value)} placeholder="G" /></label>
           <label><span>Status</span><select value={filters.statuses} onChange={(event) => update("statuses", event.target.value)}><option value="forecasted|posted">Forecasted + posted</option><option value="posted">Posted</option><option value="forecasted">Forecasted</option><option value="closed">Closed</option><option value="archived">Archived</option></select></label>
         </> : <>
-          <label><span>NAICS</span><input value={filters.naics} onChange={(event) => update("naics", event.target.value)} placeholder="811111" /></label>
+          <NaicsPicker value={filters.naics} onChange={(value)=>update("naics",value)} placeholder="Search 2022 NAICS code or industry title" />
           <label><span>PSC</span><input value={filters.psc} onChange={(event) => update("psc", event.target.value)} placeholder="J023" /></label>
           <label><span>State</span><select value={filters.state} onChange={(event) => update("state", event.target.value)}>{US_STATE_OPTIONS.map(([code, label]) => <option key={code || "all"} value={code}>{label}</option>)}</select></label>
           <label><span>Solicitation number</span><input value={filters.solnum} onChange={(event) => update("solnum", event.target.value)} placeholder="W91QVN-26-R-0001" /></label>

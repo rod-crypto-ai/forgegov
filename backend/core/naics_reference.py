@@ -4,7 +4,8 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 DATA_FILE = Path(__file__).resolve().parent / "data" / "naics_2022.json"
@@ -16,6 +17,7 @@ def _dataset() -> dict:
 
 
 @api_view(["GET"])
+@permission_classes([AllowAny])
 def naics_reference(request):
     payload = _dataset()
     query = str(request.query_params.get("q") or "").strip().lower()

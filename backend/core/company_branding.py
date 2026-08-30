@@ -49,10 +49,13 @@ def company_logo_public_by_name(request):
     name = str(request.query_params.get("name") or "").strip()
     if not name:
         return Response({"detail": "Company name is required."}, status=400)
-    organizations = list(Organization.objects.filter(name__iexact=name).values_list("id", flat=True)[:2])
-    if len(organizations) != 1:
-        return Response({"detail": "A unique company logo could not be resolved."}, status=404)
-    logo = CompanyLogo.objects.filter(organization_id=organizations[0]).first()
+    logo = (
+        CompanyLogo.objects
+        .filter(organization__name__iexact=name)
+        .select_related("organization")
+        .order_by("-updated_at", "-id")
+        .first()
+    )
     if not logo:
         return Response({"detail": "Company logo not found."}, status=404)
     return _logo_response(logo)
