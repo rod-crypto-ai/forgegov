@@ -184,7 +184,13 @@ router.register("project-rooms", ProjectRoomViewSet, basename="project-room")
 router.register("ai/conversations", AIConversationViewSet, basename="ai-conversation")
 router.register("collaboration/notifications", CollaborationNotificationViewSet, basename="collaboration-notification")
 
+from .company_branding import company_logo_manage, company_logo_public, company_logo_public_by_name
+from .naics_reference import naics_reference
 urlpatterns = [
+    path("reference/naics/", naics_reference),
+    path("network/profile/logo/", company_logo_manage),
+    path("network/company-logo/", company_logo_public_by_name),
+    path("network/organizations/<int:organization_id>/logo/", company_logo_public),
     path("platform-admin/", include("platform_admin.urls")),
     path("beta-feedback/", beta_feedback),
     path("notifications/preferences/", notification_preferences),

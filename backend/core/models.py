@@ -1863,3 +1863,19 @@ class BetaFeedback(TimeStampedModel):
             models.Index(fields=["status", "-created_at"], name="beta_feedback_status_idx"),
             models.Index(fields=["organization", "-created_at"], name="beta_feedback_org_idx"),
         ]
+
+
+class CompanyLogo(models.Model):
+    # Small company brand image persisted in PostgreSQL so Render deploys cannot erase it.
+    organization = models.OneToOneField(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="company_logo",
+    )
+    content = models.BinaryField()
+    content_type = models.CharField(max_length=32)
+    sha256 = models.CharField(max_length=64, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.organization.name} logo"
