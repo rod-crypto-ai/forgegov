@@ -9,11 +9,11 @@ import { useAuth } from "@/components/auth-provider";
 
 const API_BASE=(process.env.NEXT_PUBLIC_API_BASE_URL||"http://localhost:8000/api").replace(/\/$/,"");
 
-export function CompanyIdentity({name,organizationId,compact=false,href,className=""}:{name:string;organizationId?:number|string|null;compact?:boolean;href?:string;className?:string;}){
+export function CompanyIdentity({name,organizationId,compact=false,href,className="",showName=true}:{name:string;organizationId?:number|string|null;compact?:boolean;href?:string;className?:string;showName?:boolean;}){
   const [failedSrc,setFailedSrc]=useState("");
   const src=useMemo(()=>organizationId?`${API_BASE}/network/organizations/${organizationId}/logo/`:`${API_BASE}/network/company-logo/?name=${encodeURIComponent(name)}`,[name,organizationId]);
   const failed=failedSrc===src;
-  const body=<span className={`company-identity ${compact?"compact":""} ${className}`.trim()}><span className="company-logo-mark">{failed?<Building2/>:<img src={src} alt="" onError={()=>setFailedSrc(src)}/>}</span><span className="company-identity-name">{name}</span></span>;
+  const body=<span className={`company-identity ${compact?"compact":""} ${className}`.trim()}><span className="company-logo-mark">{failed?<Building2/>:<img src={src} alt="" onError={()=>setFailedSrc(src)}/>}</span>{showName&&<span className="company-identity-name">{name}</span>}</span>;
   return href?<Link className="company-identity-link" href={href}>{body}</Link>:body;
 }
 

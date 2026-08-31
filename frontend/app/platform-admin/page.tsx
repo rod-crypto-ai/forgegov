@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { CompanyIdentity } from "@/components/company-identity";
 import {
   Activity, Building2, Flag, Gauge, LockKeyhole, RefreshCw,
   ShieldCheck, Users, Wrench, ClipboardList, Mail
@@ -225,7 +226,7 @@ export default function PlatformAdminPage() {
     </main>}
 
     {tab==="beta" && <main className="platform-admin-stack"><section className="platform-admin-panel"><div className="platform-admin-table">{beta.map(b=><div className="platform-admin-record" key={b.id}>
-      <div><b>{b.organization_name}</b><span>{b.applicant_email||"No applicant email"} · submitted {new Date(b.submitted_at).toLocaleDateString()}</span></div>
+      <div><b><CompanyIdentity name={b.organization_name} compact/></b><span>{b.applicant_email||"No applicant email"} · submitted {new Date(b.submitted_at).toLocaleDateString()}</span></div>
       <em className={`state-${b.status}`}>{b.status.replaceAll("_"," ")}</em>
       <div className="platform-admin-actions">{superAdmin&&<>
         <button onClick={()=>void betaAction(b.id,"approve")}>Approve</button>

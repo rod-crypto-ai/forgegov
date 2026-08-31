@@ -1,6 +1,8 @@
 from __future__ import annotations
+from urllib.parse import quote
 
 import base64
+import json
 import hashlib
 import html
 import os
@@ -309,16 +311,96 @@ def graph_request(row: ConnectedApp, method: str, path: str, *, json_body: dict 
         raise
 
 
+
+
+# v3.2.1.3 external/shared Teams discovery
+def _forgegov_graph_collection(row: ConnectedApp, path: str) -> list[dict]:
+    results=[]
+    next_path=path
+    for _ in range(20):
+        payload=graph_request(row, "GET", next_path)
+        results.extend(payload.get("value") or [])
+        link=str(payload.get("@odata.nextLink") or "")
+        if not link:
+            break
+        prefix="https://graph.microsoft.com/v1.0"
+        if not link.startswith(prefix):
+            break
+        next_path=link[len(prefix):]
+    return results
+
+def _forgegov_token_tenant_id(row: ConnectedApp) -> str:
+    try:
+        token=decrypt_secret(row.access_token_encrypted)
+        part=token.split(".",2)[1]
+        part += "="*((4-len(part)%4)%4)
+        return str(json.loads(base64.urlsafe_b64decode(part.encode()).decode()).get("tid") or "")
+    except Exception:
+        return ""
+
+def _forgegov_channel_access(row: ConnectedApp, team_id: str, channel_id: str) -> bool:
+    user_id=str(row.external_account_id or "").strip()
+    if not user_id:
+        try:
+            user_id=str(graph_request(row,"GET","/me").get("id") or "").strip()
+        except MicrosoftIntegrationError:
+            return False
+    if not user_id:
+        return False
+    tid=_forgegov_token_tenant_id(row)
+    team=quote(str(team_id),safe="")
+    channel=quote(str(channel_id),safe="")
+    user=quote(user_id,safe="")
+    if tid:
+        tenant=quote(tid,safe="")
+        path=f"/teams/{team}/channels/{channel}/doesUserHaveAccess(userId='{user}',tenantId='{tenant}')"
+    else:
+        path=f"/teams/{team}/channels/{channel}/doesUserHaveAccess(userId='{user}')"
+    try:
+        return bool(graph_request(row,"GET",path).get("value"))
+    except MicrosoftIntegrationError:
+        return False
+
+
 def list_teams(row: ConnectedApp) -> list[dict]:
-    payload = graph_request(row, "GET", "/me/joinedTeams")
-    return [{"id": str(x.get("id") or ""), "name": str(x.get("displayName") or "")} for x in payload.get("value", []) if x.get("id")]
+    row=row
+    direct=_forgegov_graph_collection(row,"/me/joinedTeams")
+    direct_ids={str(x.get("id") or "") for x in direct if x.get("id")}
+    try:
+        associated=_forgegov_graph_collection(row,"/me/teamwork/associatedTeams")
+    except MicrosoftIntegrationError:
+        associated=direct
+    merged={}
+    for item in [*direct,*associated]:
+        team_id=str(item.get("id") or "").strip()
+        if not team_id:
+            continue
+        merged[team_id]={"id":team_id,"name":str(item.get("displayName") or item.get("name") or "Microsoft Team"),"tenant_id":str(item.get("tenantId") or ""),"access_type":"direct" if team_id in direct_ids else "shared_channel_host"}
+    return sorted(merged.values(),key=lambda x:(x["name"].lower(),x["id"]))
 
 
 def list_channels(row: ConnectedApp, team_id: str) -> list[dict]:
+    row=row
+    team_id=str(team_id or "").strip()
     if not team_id:
         return []
-    payload = graph_request(row, "GET", f"/teams/{team_id}/channels")
-    return [{"id": str(x.get("id") or ""), "name": str(x.get("displayName") or "")} for x in payload.get("value", []) if x.get("id")]
+    direct_ids={str(x.get("id") or "") for x in _forgegov_graph_collection(row,"/me/joinedTeams") if x.get("id")}
+    direct_team=team_id in direct_ids
+    safe_team=quote(team_id,safe="")
+    rows=_forgegov_graph_collection(row,f"/teams/{safe_team}/allChannels?$select=id,displayName,membershipType,tenantId,isArchived,webUrl")
+    results=[]
+    for item in rows:
+        channel_id=str(item.get("id") or "").strip()
+        if not channel_id or bool(item.get("isArchived")):
+            continue
+        membership=str(item.get("membershipType") or "standard")
+        allowed=direct_team and membership=="standard"
+        if not allowed:
+            allowed=_forgegov_channel_access(row,team_id,channel_id)
+        if not allowed:
+            continue
+        results.append({"id":channel_id,"name":str(item.get("displayName") or "Microsoft Teams channel"),"membership_type":membership,"tenant_id":str(item.get("tenantId") or ""),"web_url":str(item.get("webUrl") or ""),"external":not direct_team})
+    return sorted(results,key=lambda x:(x["name"].lower(),x["id"]))
 
 
 def configure_defaults(row: ConnectedApp, data: dict) -> dict:

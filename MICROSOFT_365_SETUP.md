@@ -63,3 +63,9 @@ Connections are user/workspace scoped. ForgeGov administrators do not automatica
 ## Connection verification
 
 After Microsoft redirects back to ForgeGov, v3.2.1.2 verifies the saved delegated authorization against Microsoft Graph `/me`. Settings should display **Connected · Verified** and the signed-in account. If authorization fails, the callback error is displayed in Settings instead of being silently discarded.
+
+## External organizations and shared Teams channels
+
+To allow Microsoft 365 users from other organizations to connect, configure the Microsoft Entra app registration for **Accounts in any organizational directory (Multitenant)** and keep `MICROSOFT_TENANT_ID=organizations`.
+
+ForgeGov uses delegated Microsoft Graph permissions. Team discovery uses `/me/teamwork/associatedTeams` so host teams for shared channels are included. Channel discovery uses `/teams/{team-id}/allChannels` and verifies access before showing non-standard/shared destinations. Microsoft Entra and Teams cross-tenant access policies remain authoritative.
