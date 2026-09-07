@@ -121,7 +121,7 @@ export function WorkspacePage({ feature }: { feature: NavItem }) {
       <div><span>Total</span><strong>{status === "ready" ? rows.length : "—"}</strong><small>Stored records</small></div>
       <div><span>Visible</span><strong>{status === "ready" ? filtered.length : "—"}</strong><small>Current result set</small></div>
       <div><span>Source</span><strong>{feature.apiPath ? "ForgeGov API" : "Configuration"}</strong><small>Traceable data</small></div>
-      <div><span>Workspace status</span><strong className={status === "error" ? "status-bad" : "status-good"}>{status === "error" ? "Unavailable" : status === "loading" ? "Checking" : "Operational"}</strong><small>API-backed module</small></div>
+      <div><span>Workspace status</span><strong className={status === "error" ? "status-bad" : "status-good"}>{status === "error" ? "Unavailable" : status === "loading" ? "Checking" : rows.length ? "Data loaded" : "No records returned"}</strong><small>Current API response</small></div>
     </section>
 
     <section className="data-panel workspace-panel">

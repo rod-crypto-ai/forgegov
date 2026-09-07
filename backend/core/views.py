@@ -5,7 +5,7 @@ from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import status, viewsets
-from rest_framework.decorators import api_view, throttle_classes, permission_classes
+from rest_framework.decorators import action, api_view, throttle_classes, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from .notifications import notify_organization_members, notify_project_room_participants, send_system_email
@@ -361,21 +361,17 @@ def portfolio_intelligence_view(request):
 def dashboard_summary(request):
     organization = _request_organization(request)
     pipeline_base = PipelineItem.objects.filter(organization=organization)
-    pursuit_base = Pursuit.objects.filter(organization=organization)
+    active_pipeline = pipeline_base.exclude(stage__in=[PipelineItem.Stage.LOST, PipelineItem.Stage.NO_BID, PipelineItem.Stage.ARCHIVED])
     task_base = Task.objects.filter(organization=organization)
     pipeline_counts = {
         row["stage"]: row["count"]
         for row in pipeline_base.values("stage").annotate(count=Count("id"))
     }
-    pursuit_counts = {
-        row["stage"]: row["count"]
-        for row in pursuit_base.values("stage").annotate(count=Count("id"))
-    }
     weighted_expression = ExpressionWrapper(
         F("estimated_value") * F("probability_of_win") / 100,
         output_field=DecimalField(max_digits=20, decimal_places=2),
     )
-    weighted_value = pursuit_base.exclude(estimated_value__isnull=True).aggregate(total=Sum(weighted_expression))["total"] or 0
+    weighted_value = active_pipeline.exclude(estimated_value__isnull=True).aggregate(total=Sum(weighted_expression))["total"] or 0
     award_totals = Award.objects.aggregate(total=Sum("obligated_amount"))
     now = timezone.now()
     return Response({
@@ -388,13 +384,13 @@ def dashboard_summary(request):
             "obligated_total": award_totals["total"] or 0,
         },
         "pipeline": {
-            "total": pipeline_base.count(),
+            "total": active_pipeline.count(),
             "by_stage": pipeline_counts,
             "weighted_value": weighted_value,
         },
         "pursuits": {
-            "total": pursuit_base.count(),
-            "by_stage": pursuit_counts,
+            "total": active_pipeline.count(),
+            "by_stage": pipeline_counts,
         },
         "tasks": {
             "open": task_base.filter(completed=False).count(),
@@ -1168,11 +1164,12 @@ def command_center(request):
         activity.append({"type":"alert","title":row.title,"subtitle":row.summary[:180],"created_at":row.created_at.isoformat(),"href":"/capture/alerts"})
     activity = sorted(activity, key=lambda row: row["created_at"], reverse=True)[:12]
 
-    pipeline = PipelineItem.objects.filter(organization=organization)
+    pipeline = PipelineItem.objects.filter(organization=organization).exclude(stage__in=[PipelineItem.Stage.LOST, PipelineItem.Stage.NO_BID, PipelineItem.Stage.ARCHIVED])
     open_tasks = Task.objects.filter(organization=organization, completed=False)
     active_rooms = rooms.filter(status__in=[ProjectRoom.Status.PLANNING, ProjectRoom.Status.ACTIVE])
+    ProjectRoomInvitation.objects.filter(status=ProjectRoomInvitation.Status.PENDING, expires_at__lte=now).update(status=ProjectRoomInvitation.Status.EXPIRED, responded_at=now)
     pending_connections = NetworkConnection.objects.filter(Q(requester=organization) | Q(recipient=organization), status=NetworkConnection.Status.PENDING).count()
-    pending_room_invites = ProjectRoomInvitation.objects.filter(invited_organization=organization, status=ProjectRoomInvitation.Status.PENDING).count()
+    pending_room_invites = ProjectRoomInvitation.objects.filter(invited_organization=organization, status=ProjectRoomInvitation.Status.PENDING).filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now)).count()
     unread_alerts = IntelligenceAlert.objects.filter(organization=organization, read=False, dismissed=False).count()
     overdue = open_tasks.filter(due_at__lt=now).count() + ProjectRoomTask.objects.filter(Q(project_room__owner_organization=organization) | Q(project_room__partners__organization=organization, visibility=ProjectRoomTask.Visibility.SHARED)).distinct().exclude(status=ProjectRoomTask.Status.DONE).filter(due_date__lt=today).count()
 
@@ -1247,8 +1244,15 @@ def agency_intelligence(request):
     agencies = list(base.order_by("name")[:50])
     results = []
     for agency in agencies:
-        awards = Award.objects.filter(Q(awarding_agency=agency.name) | Q(funding_agency=agency.name))
-        opportunities = Opportunity.objects.filter(Q(agency=agency.name) | Q(subagency=agency.name) | Q(organization_path__icontains=agency.name))
+        agency_names = {agency.name}
+        upper = agency.name.upper()
+        agency_names.add(upper.replace("DEPARTMENT OF", "DEPT OF"))
+        agency_names.add(upper.replace("DEPT OF", "DEPARTMENT OF"))
+        match = Q()
+        for agency_name in agency_names:
+            match |= Q(agency__iexact=agency_name) | Q(subagency__iexact=agency_name) | Q(organization_path__icontains=agency_name)
+        awards = Award.objects.filter(Q(awarding_agency__in=agency_names) | Q(funding_agency__in=agency_names))
+        opportunities = Opportunity.objects.filter(match)
         top_vendors = list(
             awards.exclude(recipient_name="")
             .values("recipient_name")
@@ -1452,6 +1456,11 @@ def category_market_intelligence(request):
     for row in award_rows:
         code = row.pop(code_field)
         results.append({"code": code, **row, "opportunity_count": opportunity_counts.get(code, 0)})
+    award_codes = {row["code"] for row in results}
+    for code, opportunity_count in opportunity_counts.items():
+        if code not in award_codes:
+            results.append({"code": code, "obligated": 0, "award_count": 0, "vendor_count": 0, "agency_count": 0, "opportunity_count": opportunity_count})
+    results.sort(key=lambda row: (row["obligated"], row["opportunity_count"]), reverse=True)
     return Response({"category_type": category_type, "total_records": len(results), "results": results})
 
 
@@ -1482,6 +1491,11 @@ class IntelligenceAlertViewSet(OrganizationScopedViewSetMixin, viewsets.ModelVie
         if dismissed is not None:
             queryset = queryset.filter(dismissed=_truthy(dismissed))
         return queryset
+
+    @action(detail=False, methods=["post"], url_path="mark-all-read")
+    def mark_all_read(self, request):
+        updated = self.get_queryset().filter(read=False, dismissed=False).update(read=True, updated_at=timezone.now())
+        return Response({"updated": updated})
 
 
 @api_view(["GET", "PATCH"])
@@ -3031,6 +3045,11 @@ def network_directory(request):
     certification = str(request.query_params.get("certification") or "").strip()
     state_filter = str(request.query_params.get("state") or "").strip()
     profiles = OrganizationProfile.objects.select_related("organization").filter(is_public=True).exclude(organization=organization)
+    if organization.uei:
+        profiles = profiles.exclude(organization__uei__iexact=organization.uei)
+    if organization.cage_code:
+        profiles = profiles.exclude(organization__cage_code__iexact=organization.cage_code)
+    profiles = profiles.exclude(organization__name__iexact=organization.name)
     if query:
         profiles = profiles.filter(Q(organization__name__icontains=query) | Q(tagline__icontains=query) | Q(description__icontains=query) | Q(capabilities__icontains=query) | Q(organization__cage_code__icontains=query) | Q(organization__uei__icontains=query))
     if certification:
@@ -3070,7 +3089,11 @@ def network_profile(request):
 def network_connections(request):
     organization = _request_organization(request)
     if request.method == "GET":
-        rows = NetworkConnection.objects.filter(Q(requester=organization) | Q(recipient=organization)).select_related("requester", "recipient")
+        rows = NetworkConnection.objects.filter(Q(requester=organization) | Q(recipient=organization)).exclude(
+            Q(requester__name__iexact=organization.name, recipient__name__iexact=organization.name)
+            | (Q(requester__uei__iexact=organization.uei, recipient__uei__iexact=organization.uei) if organization.uei else Q(pk__in=[]))
+            | (Q(requester__cage_code__iexact=organization.cage_code, recipient__cage_code__iexact=organization.cage_code) if organization.cage_code else Q(pk__in=[]))
+        ).select_related("requester", "recipient")
         status_filter = str(request.query_params.get("status") or "").strip()
         if status_filter:
             rows = rows.filter(status=status_filter)
@@ -3079,6 +3102,11 @@ def network_connections(request):
     recipient = Organization.objects.filter(pk=recipient_id).exclude(pk=organization.pk).first()
     if not recipient:
         return Response({"detail": "Company not found."}, status=status.HTTP_404_NOT_FOUND)
+    same_company = recipient.name.strip().casefold() == organization.name.strip().casefold()
+    same_company = same_company or bool(organization.uei and recipient.uei and organization.uei.casefold() == recipient.uei.casefold())
+    same_company = same_company or bool(organization.cage_code and recipient.cage_code and organization.cage_code.casefold() == recipient.cage_code.casefold())
+    if same_company:
+        return Response({"detail": "A company cannot connect to another workspace representing the same company."}, status=status.HTTP_400_BAD_REQUEST)
     existing = _network_connection_between(organization, recipient)
     if existing and existing.status in {NetworkConnection.Status.PENDING, NetworkConnection.Status.ACCEPTED}:
         return Response(NetworkConnectionSerializer(existing).data, status=status.HTTP_200_OK)
@@ -3151,6 +3179,7 @@ def project_room_invitations(request):
     organization = _request_organization(request)
     membership = active_membership(request.user)
     if request.method == "GET":
+        ProjectRoomInvitation.objects.filter(status=ProjectRoomInvitation.Status.PENDING, expires_at__lte=timezone.now()).update(status=ProjectRoomInvitation.Status.EXPIRED, responded_at=timezone.now())
         rows = ProjectRoomInvitation.objects.filter(Q(invited_organization=organization) | Q(project_room__owner_organization=organization)).select_related("project_room", "project_room__owner_organization", "invited_organization")
         return Response(ProjectRoomInvitationSerializer(rows, many=True).data)
     if not membership or membership.role not in {Membership.Role.OWNER, Membership.Role.ADMIN}:
