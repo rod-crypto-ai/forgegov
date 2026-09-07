@@ -12,23 +12,9 @@ HUNDRED = Decimal("100")
 
 
 def _stage_weight(stage: str, probability: int) -> Decimal:
-    if probability:
-        return Decimal(probability) / HUNDRED
-    defaults = {
-        PipelineItem.Stage.DISCOVERED: Decimal("0.05"),
-        PipelineItem.Stage.REVIEWING: Decimal("0.10"),
-        PipelineItem.Stage.QUALIFIED: Decimal("0.25"),
-        PipelineItem.Stage.BID_DECISION: Decimal("0.35"),
-        PipelineItem.Stage.CAPTURE: Decimal("0.45"),
-        PipelineItem.Stage.TEAMING: Decimal("0.50"),
-        PipelineItem.Stage.PROPOSAL: Decimal("0.65"),
-        PipelineItem.Stage.SUBMITTED: Decimal("0.80"),
-        PipelineItem.Stage.AWARDED: Decimal("1.00"),
-        PipelineItem.Stage.LOST: Decimal("0"),
-        PipelineItem.Stage.NO_BID: Decimal("0"),
-        PipelineItem.Stage.ARCHIVED: Decimal("0"),
-    }
-    return defaults.get(stage, Decimal("0.10"))
+    # Shared financial metrics always mean entered value × entered Pwin.
+    # Stage assumptions must be shown separately, never silently mixed in.
+    return Decimal(probability or 0) / HUNDRED
 
 
 def build_portfolio_intelligence(*, organization) -> dict[str, Any]:
@@ -184,6 +170,13 @@ def build_portfolio_intelligence(*, organization) -> dict[str, Any]:
             "title": "Liquidity-heavy pursuits",
             "detail": f"{risk_counts['critical'] + risk_counts['high']} active pursuit(s) have High or Critical working-capital risk.",
         })
+    priced_count = sum(1 for row in active_rows if row["pricing_revision"] is not None)
+    if active_rows and priced_count < len(active_rows):
+        risks.append({
+            "severity": "medium",
+            "title": "Incomplete financial evidence",
+            "detail": f"{len(active_rows) - priced_count} of {len(active_rows)} active pursuit(s) do not have a pricing model; portfolio financial conclusions are incomplete.",
+        })
     if not risks:
         risks.append({
             "severity": "success",
@@ -208,7 +201,7 @@ def build_portfolio_intelligence(*, organization) -> dict[str, Any]:
             "recommended_working_capital": money(working_capital),
             "working_capital_gap": money(working_capital_gap),
             "active_opportunity_count": len(active_rows),
-            "priced_opportunity_count": sum(1 for row in active_rows if row["pricing_revision"] is not None),
+            "priced_opportunity_count": priced_count,
         },
         "opportunities": active_rows,
         "agency_concentration": concentration_rows[:12],

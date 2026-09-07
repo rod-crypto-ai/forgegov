@@ -69,7 +69,9 @@ def connector_registry_payload(probe: bool = False) -> dict[str, Any]:
             "last_sync_at": row.last_sync_at,
             "record_count": row.record_count,
         })
-    return {"connectors": results, "summary": {"total": len(results), "enabled": sum(1 for r in results if r["enabled"]), "healthy": sum(1 for r in results if r["status"] == "healthy")}}
+    healthy = sum(1 for r in results if r["status"] == "healthy")
+    attention = sum(1 for r in results if r["status"] in {"degraded", "unavailable", "configuration_required", "failed"})
+    return {"connectors": results, "summary": {"total": len(results), "enabled": sum(1 for r in results if r["enabled"]), "healthy": healthy, "attention": attention}}
 
 
 def sync_usaspending_awards(*, start_date: str | None = None, end_date: str | None = None, pages: int = 1, limit: int = 100, keyword: str = "", agency: str = "", naics: str = "") -> AwardSyncRun:

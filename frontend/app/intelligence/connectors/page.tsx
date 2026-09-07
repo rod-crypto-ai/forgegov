@@ -71,9 +71,9 @@ export default function ConnectorManagerPage() {
 
     <section className="connector-summary-grid">
       <article><ServerCog/><span><small>Total connectors</small><strong>{data.summary.total}</strong></span></article>
-      <article><CheckCircle2/><span><small>Healthy</small><strong>{data.summary.healthy}</strong></span></article>
+      <article><CheckCircle2/><span><small>Live verified</small><strong>{data.summary.healthy}</strong></span></article>
       <article><TriangleAlert/><span><small>Needs attention</small><strong>{data.summary.attention}</strong></span></article>
-      <article><Activity/><span><small>Foundation health</small><strong>{healthyPercent}%</strong></span></article>
+      <article><Activity/><span><small>Live verification</small><strong>{healthyPercent}%</strong></span></article>
     </section>
 
     <section className="connector-grid">

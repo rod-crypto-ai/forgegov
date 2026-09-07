@@ -895,13 +895,21 @@ def search_sam_contract_awards(
         award_type = core.get("awardOrIDVType") or {}
         contracting = (core.get("federalOrganization") or {}).get("contractingInformation") or {}
         department = contracting.get("contractingDepartment") or {}
+        title_candidates = (
+            core.get("title"), details.get("descriptionOfContractRequirement"),
+            details.get("awardDescription"), details.get("description"),
+            record.get("title"), record.get("description"),
+        )
+        title = next((_clean_public_text(item, max_length=500) for item in title_candidates if _clean_public_text(item, max_length=500)), "")
+        if not title:
+            title = f"{('Contract vehicle' if record_type in {'idv', 'vehicles'} else 'Federal contract')} {contract_id.get('piid') or 'award'}"
         normalized.append({
             "piid": contract_id.get("piid", ""),
             "modification_number": contract_id.get("modificationNumber", ""),
             "referenced_idv": contract_id.get("referencedIDVPiid", ""),
             "award_or_idv": core.get("awardOrIDV", ""),
             "award_type": award_type.get("name", "") if isinstance(award_type, dict) else award_type,
-            "title": core.get("title", "") or details.get("descriptionOfContractRequirement", ""),
+            "title": title,
             "recipient_name": header.get("awardeeName", "") if isinstance(header, dict) else "",
             "awarding_agency": department.get("name", "") if isinstance(department, dict) else "",
             "date_signed": core.get("dateSigned", "") or details.get("dateSigned", ""),
@@ -914,12 +922,15 @@ def search_sam_contract_awards(
 
 
 def _clean_attachment_name(name: Any, url: Any = "", *, fallback: str = "Government attachment") -> str:
-    from urllib.parse import unquote, urlparse
+    from urllib.parse import parse_qs, unquote, urlparse
     import re
 
     raw = _safe_text(name, max_length=500).strip()
-    parsed_name = unquote(urlparse(str(url or "")).path.rsplit("/", 1)[-1]).strip()
-    candidates = [raw, parsed_name]
+    parsed = urlparse(str(url or ""))
+    parsed_name = unquote(parsed.path.rsplit("/", 1)[-1]).strip()
+    query = parse_qs(parsed.query)
+    query_name = next((values[0] for key in ("filename", "fileName", "name", "title") if (values := query.get(key))), "")
+    candidates = [raw, unquote(query_name), parsed_name]
     chosen = next((value for value in candidates if value and value.lower() not in {"download", "attachment", "file"}), fallback)
     chosen = unquote(chosen).replace("+", " ")
     chosen = re.sub(r"[\r\n\t]+", " ", chosen)
@@ -958,12 +969,14 @@ def fetch_sam_opportunity_documents(notice_id: str) -> dict[str, Any]:
     for index, link in enumerate(links if isinstance(links, list) else []):
         if isinstance(link, dict):
             url = link.get("url") or link.get("link") or link.get("href") or ""
-            name = link.get("name") or link.get("title") or link.get("filename") or link.get("description")
+            name = link.get("name") or link.get("title") or link.get("filename") or link.get("fileName") or link.get("resourceName") or link.get("documentName") or link.get("attachmentName") or link.get("description")
+            content_type = str(link.get("mimeType") or link.get("contentType") or link.get("type") or "").lower()
         else:
-            url, name = str(link), ""
+            url, name, content_type = str(link), "", ""
         if url:
             clean_name = _clean_attachment_name(name, url, fallback=f"Solicitation attachment {index + 1}")
-            documents.append({"name": clean_name, "url": url, "source": "sam.gov", "preview_available": url.lower().split("?", 1)[0].endswith((".pdf", ".txt", ".html", ".htm"))})
+            preview_available = content_type in {"application/pdf", "text/plain", "text/html"} or clean_name.lower().endswith((".pdf", ".txt", ".html", ".htm")) or url.lower().split("?", 1)[0].endswith((".pdf", ".txt", ".html", ".htm"))
+            documents.append({"name": clean_name, "url": url, "source": "sam.gov", "content_type": content_type, "preview_available": preview_available})
     description = _clean_public_text(description, max_length=200000)
     if opportunity and description and opportunity.description != description:
         opportunity.description = description

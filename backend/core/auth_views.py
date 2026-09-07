@@ -1096,6 +1096,7 @@ def pending_invitations(request):
     email = str(request.user.email or "").strip().lower()
     if not email:
         return Response([])
+    Invitation.objects.filter(email__iexact=email, status=Invitation.Status.PENDING, expires_at__lte=timezone.now()).update(status=Invitation.Status.EXPIRED, responded_at=timezone.now())
     rows = Invitation.objects.filter(
         email__iexact=email,
         status=Invitation.Status.PENDING,

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { CompanyIdentity } from "@/components/company-identity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Bell, Check, CheckCheck, Mail, RefreshCw, Settings2, X } from "lucide-react";
-import { apiGet, apiPatch, authFetch, normalizeList } from "@/lib/api";
+import { apiGet, apiPatch, apiPost, authFetch, normalizeList } from "@/lib/api";
 
 type Notification={id:number;title:string;message:string;kind:string;read:boolean;link:string;created_at:string};
 type IntelligenceAlert={id:number;title:string;summary:string;alert_type:string;read:boolean;internal_link:string;created_at:string};
@@ -50,7 +50,7 @@ export default function NotificationsPage(){
  async function markAlert(id:number,read=true){await apiPatch(`/alerts/${id}/`,{read});await load()}
  async function markAll(){await Promise.all([
    ...rows.filter(r=>!r.read).map(r=>apiPatch(`/collaboration/notifications/${r.id}/`,{read:true})),
-   ...alerts.filter(r=>!r.read).map(r=>apiPatch(`/alerts/${r.id}/`,{read:true})),
+   apiPost("/alerts/mark-all-read/",{}),
  ]);await load()}
  async function respond(id:number,action:"accept"|"decline"){setBusy(`${action}-${id}`);try{await authFetch(`/auth/invitations/${id}/respond/`,{method:"POST",body:JSON.stringify({action})});setMessage(action==="accept"?"Company invitation accepted.":"Company invitation declined.");await load()}catch(e){setMessage(e instanceof Error?e.message:"Invitation response failed")}finally{setBusy("")}}
  async function togglePreference(key:keyof Preference){if(!preference)return;const next={...preference,[key]:!preference[key]};setPreference(next);try{await apiPatch("/notifications/preferences/",{[key]:next[key]});setMessage("Notification preference saved.")}catch(e){setPreference(preference);setMessage(e instanceof Error?e.message:"Preference could not be saved")}}

@@ -171,19 +171,24 @@ def evaluate_saved_search_alerts(self, organization_id: int | None = None):
             if not source_id:
                 continue
             opportunity = Opportunity.objects.filter(source_id=source_id).first()
-            alert, was_created = IntelligenceAlert.objects.get_or_create(
+            alert = IntelligenceAlert.objects.filter(
+                organization=saved.organization,
+                source_id=source_id,
+                alert_type=IntelligenceAlert.AlertType.NEW_OPPORTUNITY,
+            ).order_by("-created_at").first()
+            was_created = alert is None
+            if was_created:
+                alert = IntelligenceAlert.objects.create(
                 organization=saved.organization,
                 saved_search=saved,
                 source_id=source_id,
                 alert_type=IntelligenceAlert.AlertType.NEW_OPPORTUNITY,
-                defaults={
-                    "opportunity": opportunity,
-                    "title": str(record.get("title") or "New matching opportunity")[:500],
-                    "summary": str(record.get("fullParentPathName") or record.get("agencyName") or record.get("solicitationNumber") or record.get("number") or ""),
-                    "source_url": str(record.get("source_url") or ""),
-                    "matched_filters": saved.filters,
-                    "event_key": f"saved:{saved.id}:new:{source_id}"[:255],
-                },
+                opportunity=opportunity,
+                title=str(record.get("title") or "New matching opportunity")[:500],
+                summary=str(record.get("fullParentPathName") or record.get("agencyName") or record.get("solicitationNumber") or record.get("number") or ""),
+                source_url=str(record.get("source_url") or ""),
+                matched_filters=saved.filters,
+                event_key=f"opportunity:new:{source_id}"[:255],
             )
             if was_created:
                 _fanout_intelligence_alert(alert, category="opportunity", critical=False)
@@ -475,4 +480,3 @@ def send_daily_intelligence_digests():
 @shared_task
 def send_weekly_intelligence_digests():
     return _send_digest(period="weekly")
-
