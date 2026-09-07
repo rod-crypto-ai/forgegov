@@ -11,7 +11,7 @@ import { CaptureAssessment } from "@/components/capture-assessment";
 import { CaptureCopilot } from "@/components/capture-copilot";
 import { WinStrategy } from "@/components/win-strategy";
 import { ProposalWorkspace } from "@/components/proposal-workspace";
-import { ProposalExecution } from "@/components/proposal-execution";
+import { ProposalReviewCenter } from "@/components/proposal-review-center";
 import { SubmissionControl } from "@/components/submission-control";
 import { PricingWorkspace } from "@/components/pricing-workspace";
 import { useAuth } from "@/components/auth-provider";
@@ -79,7 +79,7 @@ export default function FederalOpportunityDetailPage(){
  {activeTab==="win_strategy"&&<WinStrategy noticeId={noticeId}/>}
  {workspaceMessage&&<p className="inline-message">{workspaceMessage}</p>}
  {activeTab==="proposal"&&session?.capabilities?.proposal_read&&<ProposalWorkspace noticeId={noticeId}/>} 
- {activeTab==="reviews"&&session?.capabilities?.proposal_read&&<ProposalExecution noticeId={noticeId}/>} 
+ {activeTab==="reviews"&&session?.capabilities?.proposal_read&&<ProposalReviewCenter noticeId={noticeId}/>}
  {activeTab==="submission"&&session?.capabilities?.proposal_read&&<SubmissionControl noticeId={noticeId}/>} 
  {activeTab==="capture"&&<section className="consolidated-capture-tab"><CaptureAssessment noticeId={noticeId}/>{workspace?<section className="workspace-capture-shell compact-capture-notes"><div className="capture-command-bar"><div><span className="workspace-step">CAPTURE</span><div><span className="eyebrow">WORKING STRATEGY</span><h2>Capture notes & risk register</h2><p>Keep assumptions, partner needs, differentiators, and pursuit risks attached to the opportunity.</p></div></div><label className="decision-control"><span>Team posture</span><select value={workspace.decision} onChange={e=>setWorkspace({...workspace,decision:e.target.value})}><option value="undecided">Undecided</option><option value="bid">Bid</option><option value="no_bid">No-bid</option><option value="hold">Hold</option></select></label></div><div className="capture-card-grid"><label className="capture-editor primary-editor"><span><b>Capture summary</b><small>Customer need, win strategy, differentiators, and pursuit posture</small></span><textarea value={workspace.capture_summary} onChange={e=>setWorkspace({...workspace,capture_summary:e.target.value})}/></label><label className="capture-editor"><span><b>Working notes</b><small>Questions, assumptions, partner needs, and pricing thoughts</small></span><textarea value={workspace.notes} onChange={e=>setWorkspace({...workspace,notes:e.target.value})}/></label><label className="capture-editor risk-editor"><span><b>Risk register</b><small>One technical, schedule, compliance, or pricing risk per line</small></span><textarea value={workspace.risks.join("\n")} onChange={e=>setWorkspace({...workspace,risks:e.target.value.split("\n").map(v=>v.trim()).filter(Boolean)})}/></label></div><div className="workspace-save-bar"><span>Last saved {new Date(workspace.updated_at).toLocaleString()}</span><button className="primary-button" disabled={saving} onClick={()=>void saveWorkspace()}><Save size={16}/>{saving?"Saving…":"Save capture workspace"}</button></div></section>:null}</section>}
  {activeTab==="decision"&&<CaptureAssessment noticeId={noticeId}/>}

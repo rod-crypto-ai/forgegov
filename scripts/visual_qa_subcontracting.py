@@ -379,7 +379,7 @@ def run_browser(browser_type: BrowserType, browser_name: str, report: dict) -> N
 
 def main() -> int:
     report = {
-        "release": "3.2.1.3",
+        "release": "3.2.2",
         "base_url": BASE_URL,
         "matrix": [name for name, _, _ in SCENARIOS],
         "cases": {},

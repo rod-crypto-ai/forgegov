@@ -153,6 +153,7 @@ from .capture_copilot import COPILOT_MODES, build_capture_copilot_brief, run_cap
 from .proposal_workspace import build_proposal_workspace
 from .proposal_execution import proposal_execution_payload, ensure_proposal_execution, update_plan, update_requirement, update_review, update_finding
 from .proposal_automation import production_payload, update_section, draft_section, package_validation, ensure_proposal_production
+from .proposal_review import create_review_run, review_center_payload, compare_revisions, add_finding_comment
 from .submission_control import build_submission_control, create_submission_snapshot, update_closeout, export_submission_control
 from .pricing_engine import ensure_pricing_plan, pricing_payload, mutate_pricing_plan, ensure_pricing_profile
 from .price_to_win import build_price_to_win, record_price_to_win
@@ -2450,7 +2451,15 @@ def proposal_review_detail(request, source_id: str, review_id: int):
     ).select_related("plan").first()
     if not review:
         return Response({"detail": "Proposal review not found."}, status=404)
+    membership = active_membership(request.user)
+    can_approve = bool(membership and membership.role in {Membership.Role.OWNER, Membership.Role.ADMIN, Membership.Role.PROPOSAL})
+    if request.data.get("status") in {ProposalReview.Status.PASSED, ProposalReview.Status.BLOCKED} and not can_approve:
+        return Response({"detail": "Proposal approval authority is required to decide a review gate."}, status=403)
+    if request.data.get("status") == ProposalReview.Status.PASSED and review.findings.filter(status=ProposalFinding.Status.OPEN).exists():
+        return Response({"detail": "Resolve or formally accept every open finding before passing this review gate."}, status=409)
     update_review(review, request.data, organization)
+    if request.data.get("status") in {ProposalReview.Status.PASSED, ProposalReview.Status.BLOCKED}:
+        review.gate_decision_by = request.user; review.gate_decision_at = timezone.now(); review.save(update_fields=["gate_decision_by", "gate_decision_at", "updated_at"])
     return Response(proposal_execution_payload(organization=organization, opportunity=review.plan.opportunity, user=request.user))
 
 
@@ -2465,7 +2474,19 @@ def proposal_finding_detail(request, source_id: str, finding_id: int):
     ).select_related("plan").first()
     if not finding:
         return Response({"detail": "Proposal finding not found."}, status=404)
+    membership = active_membership(request.user)
+    can_approve = bool(membership and membership.role in {Membership.Role.OWNER, Membership.Role.ADMIN, Membership.Role.PROPOSAL})
+    if request.data.get("status") == ProposalFinding.Status.ACCEPTED and not can_approve:
+        return Response({"detail": "Proposal approval authority is required to accept proposal risk."}, status=403)
+    if request.data.get("status") in {ProposalFinding.Status.RESOLVED, ProposalFinding.Status.ACCEPTED} and not str(request.data.get("resolution_response") or finding.resolution_response).strip():
+        return Response({"detail": "A resolution response or accepted-risk justification is required."}, status=400)
     update_finding(finding, request.data, organization)
+    if request.data.get("status") in {ProposalFinding.Status.RESOLVED, ProposalFinding.Status.ACCEPTED}:
+        finding.resolution_response = str(request.data.get("resolution_response") or finding.resolution_response)
+        finding.resolved_by = request.user; finding.resolved_at = timezone.now(); finding.save(update_fields=["resolution_response", "resolved_by", "resolved_at", "updated_at"])
+        add_finding_comment(finding=finding, user=request.user, body=finding.resolution_response, resolution_event=True)
+    elif request.data.get("status") == ProposalFinding.Status.OPEN:
+        finding.resolved_by = None; finding.resolved_at = None; finding.save(update_fields=["resolved_by", "resolved_at", "updated_at"])
     return Response(proposal_execution_payload(organization=organization, opportunity=finding.plan.opportunity, user=request.user))
 
 
@@ -2659,6 +2680,65 @@ def proposal_package_validation(request, source_id: str):
     capabilities = membership_capabilities(active_membership(request.user))
     plan = ensure_proposal_production(organization=organization, opportunity=opportunity, user=request.user)
     return Response(package_validation(plan=plan, can_financial=bool(capabilities.get("financial_read"))))
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsProposalMember])
+@throttle_classes([OpenAIChatThrottle])
+def proposal_review_center(request, source_id: str):
+    organization = _request_organization(request)
+    opportunity = _opportunity_for_source(source_id)
+    if not opportunity:
+        return Response({"detail": "Opportunity not found."}, status=404)
+    membership = active_membership(request.user)
+    capabilities = membership_capabilities(membership)
+    can_approve = bool(membership and membership.role in {Membership.Role.OWNER, Membership.Role.ADMIN, Membership.Role.PROPOSAL})
+    plan = ensure_proposal_production(organization=organization, opportunity=opportunity, user=request.user)
+    if request.method == "POST":
+        try:
+            run, created = create_review_run(organization=organization, opportunity=opportunity, user=request.user, review_type=str(request.data.get("review_type") or "compliance"))
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+        if created:
+            from .tasks import execute_proposal_review
+            execute_proposal_review.delay(run.id)
+        payload = review_center_payload(plan=plan, can_financial=bool(capabilities.get("financial_read")), can_approve=can_approve)
+        payload["review_run_id"] = run.id; payload["created"] = created
+        return Response(payload, status=202 if created else 200)
+    return Response(review_center_payload(plan=plan, can_financial=bool(capabilities.get("financial_read")), can_approve=can_approve))
+
+
+@api_view(["GET"])
+@permission_classes([IsProposalMember])
+def proposal_revision_compare(request, source_id: str, section_id: int):
+    organization = _request_organization(request)
+    capabilities = membership_capabilities(active_membership(request.user))
+    section = ProposalSection.objects.filter(pk=section_id, volume__plan__organization=organization, volume__plan__opportunity__source_id=source_id).first()
+    if not section:
+        return Response({"detail": "Proposal section not found."}, status=404)
+    if section.section_type == ProposalSection.SectionType.PRICING and not capabilities.get("financial_read"):
+        return Response({"detail": "Financial authorization is required to compare pricing revisions."}, status=403)
+    older = section.revisions.filter(pk=request.query_params.get("older")).first()
+    newer = section.revisions.filter(pk=request.query_params.get("newer")).first()
+    if not older or not newer:
+        return Response({"detail": "Two valid section revisions are required."}, status=400)
+    return Response(compare_revisions(section=section, older=older, newer=newer))
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsProposalMember])
+def proposal_finding_comments(request, source_id: str, finding_id: int):
+    organization = _request_organization(request)
+    finding = ProposalFinding.objects.filter(pk=finding_id, plan__organization=organization, plan__opportunity__source_id=source_id).first()
+    if not finding:
+        return Response({"detail": "Proposal finding not found."}, status=404)
+    if request.method == "POST":
+        try:
+            add_finding_comment(finding=finding, user=request.user, body=request.data.get("body"))
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+    rows = [{"id": row.id, "body": row.body, "author": row.author.get_full_name() or row.author.username if row.author else "", "resolution_event": row.resolution_event, "created_at": row.created_at.isoformat()} for row in finding.comments.select_related("author").all()]
+    return Response({"results": rows})
 
 
 @api_view(["GET", "POST"])

@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED = "3.2.1.3"
-FRONTEND_EXPECTED = "3.2.1-3"
+EXPECTED = "3.2.2"
+FRONTEND_EXPECTED = "3.2.2"
 errors: list[str] = []
 
 
@@ -15,12 +15,12 @@ def require(condition: bool, message: str):
         errors.append(message)
 
 
-require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.2.1.3")
+require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.2.2")
 require(not (ROOT / "INSTALL.command").exists(), "obsolete root INSTALL.command must be removed")
 require(not (ROOT / "VERIFY.command").exists(), "obsolete root VERIFY.command must be removed")
 package = json.loads((ROOT / "frontend/package.json").read_text())
-require(package.get("version") == FRONTEND_EXPECTED, "frontend package version is not 3.2.1-3")
-require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.2.1.3")
+require(package.get("version") == FRONTEND_EXPECTED, "frontend package version is not 3.2.2")
+require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.2.2")
 
 # Historical migrations must never depend on a moving target.
 for migration in ROOT.glob("backend/*/migrations/*.py"):

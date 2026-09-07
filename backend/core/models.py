@@ -718,6 +718,8 @@ class ProposalReview(TimeStampedModel):
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="owned_proposal_reviews")
     completed_at = models.DateTimeField(null=True, blank=True)
     summary = models.TextField(blank=True)
+    gate_decision_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="decided_proposal_reviews")
+    gate_decision_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["target_at", "id"]
@@ -740,6 +742,7 @@ class ProposalFinding(TimeStampedModel):
 
     plan = models.ForeignKey(ProposalPlan, on_delete=models.CASCADE, related_name="findings")
     review = models.ForeignKey(ProposalReview, null=True, blank=True, on_delete=models.CASCADE, related_name="findings")
+    review_run = models.ForeignKey("ProposalReviewRun", null=True, blank=True, on_delete=models.SET_NULL, related_name="findings")
     requirement = models.ForeignKey(ProposalRequirement, null=True, blank=True, on_delete=models.SET_NULL, related_name="findings")
     severity = models.CharField(max_length=20, choices=Severity.choices, default=Severity.MEDIUM)
     title = models.CharField(max_length=500)
@@ -747,6 +750,12 @@ class ProposalFinding(TimeStampedModel):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="owned_proposal_findings")
     due_at = models.DateTimeField(null=True, blank=True)
+    section = models.ForeignKey("ProposalSection", null=True, blank=True, on_delete=models.SET_NULL, related_name="review_findings")
+    recommendation = models.TextField(blank=True)
+    resolution_response = models.TextField(blank=True)
+    confidence = models.PositiveSmallIntegerField(default=0)
+    resolved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="resolved_proposal_findings")
+    resolved_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_proposal_findings")
 
     class Meta:
@@ -931,6 +940,69 @@ class ProposalLibraryEntry(TimeStampedModel):
     class Meta:
         ordering = ["category", "title"]
         indexes = [models.Index(fields=["organization", "status", "category"], name="proplib_org_stat_idx")]
+
+
+class ProposalReviewRun(TimeStampedModel):
+    class ReviewType(models.TextChoices):
+        COMPLIANCE = "compliance", "Compliance Review"
+        PINK = "pink", "Pink Team"
+        RED = "red", "Red Team"
+        GOLD = "gold", "Gold Team"
+        EVALUATOR = "evaluator", "Simulated Evaluator"
+        FINAL = "final", "Final Readiness Review"
+
+    class Status(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        RUNNING = "running", "Running"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    plan = models.ForeignKey(ProposalPlan, on_delete=models.CASCADE, related_name="review_runs")
+    review = models.ForeignKey(ProposalReview, null=True, blank=True, on_delete=models.SET_NULL, related_name="runs")
+    review_type = models.CharField(max_length=24, choices=ReviewType.choices)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.QUEUED)
+    input_fingerprint = models.CharField(max_length=64)
+    solicitation_snapshot = models.JSONField(default=dict, blank=True)
+    proposal_snapshot = models.JSONField(default=dict, blank=True)
+    scorecard = models.JSONField(default=list, blank=True)
+    summary = models.TextField(blank=True)
+    provider = models.CharField(max_length=80, blank=True)
+    model = models.CharField(max_length=120, blank=True)
+    error = models.TextField(blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    initiated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="initiated_proposal_review_runs")
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["plan", "status", "review_type"], name="proprev_plan_stat_idx")]
+        constraints = [models.UniqueConstraint(fields=("plan", "review_type", "input_fingerprint"), condition=models.Q(status__in=["queued", "running"]), name="uniq_active_prop_review")]
+
+
+class ProposalFindingEvidence(TimeStampedModel):
+    finding = models.ForeignKey(ProposalFinding, on_delete=models.CASCADE, related_name="evidence_items")
+    review_run = models.ForeignKey(ProposalReviewRun, null=True, blank=True, on_delete=models.SET_NULL, related_name="evidence_items")
+    requirement = models.ForeignKey(ProposalRequirement, null=True, blank=True, on_delete=models.SET_NULL, related_name="finding_evidence")
+    section = models.ForeignKey(ProposalSection, null=True, blank=True, on_delete=models.SET_NULL, related_name="finding_evidence")
+    revision = models.ForeignKey(ProposalSectionRevision, null=True, blank=True, on_delete=models.SET_NULL, related_name="finding_evidence")
+    document_chunk = models.ForeignKey("OpportunityDocumentChunk", null=True, blank=True, on_delete=models.SET_NULL, related_name="proposal_finding_evidence")
+    source_label = models.CharField(max_length=500, blank=True)
+    locator = models.CharField(max_length=500, blank=True)
+    quotation = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["id"]
+        indexes = [models.Index(fields=["finding", "review_run"], name="propfe_find_run_idx")]
+
+
+class ProposalFindingComment(TimeStampedModel):
+    finding = models.ForeignKey(ProposalFinding, on_delete=models.CASCADE, related_name="comments")
+    body = models.TextField()
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="proposal_finding_comments")
+    resolution_event = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["created_at", "id"]
 
 
 class PricingProfile(TimeStampedModel):

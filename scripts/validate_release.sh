@@ -2,23 +2,23 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-EXPECTED_VERSION="3.2.1.3"
+EXPECTED_VERSION="3.2.2"
 
 echo "[1/25] Source + release identity"
 python3 -m compileall -q backend
 python3 - <<'PY2'
 import json, pathlib
 root=pathlib.Path('.')
-assert (root/'VERSION').read_text().strip() == '3.2.1.3'
+assert (root/'VERSION').read_text().strip() == '3.2.2'
 package=json.loads((root/'frontend/package.json').read_text())
-assert package['version'] == '3.2.1-3'
+assert package['version'] == '3.2.2'
 assert package['dependencies']['next'] == '16.3.1'
-assert 'VERSION = "3.2.1.3"' in (root/'backend/core/version.py').read_text()
+assert 'VERSION = "3.2.2"' in (root/'backend/core/version.py').read_text()
 lock=json.loads((root/'frontend/package-lock.json').read_text())
-assert lock['packages']['']['version'] == '3.2.1-3', 'frontend package-lock root version is not 3.2.1-3'
+assert lock['packages']['']['version'] == '3.2.2', 'frontend package-lock root version is not 3.2.2'
 assert lock['packages']['']['dependencies']['next'] == '16.3.1', 'secure Next.js lockfile baseline is missing'
 assert lock['packages']['node_modules/next']['version'] == '16.3.1', 'installed Next.js lock entry is not the validated secure baseline'
-print('Release identity: 3.2.1.3 (frontend npm 3.2.1-3)')
+print('Release identity: 3.2.2')
 PY2
 
 echo "[2/25] Release source + production architecture audit"
@@ -70,6 +70,9 @@ docker compose exec backend python manage.py test core.test_v321_proposal_live_w
 echo "[17/25] v3.2.1.2 Microsoft connection verification + integration regression tests"
 docker compose exec backend python manage.py test core.test_v3211_integrations_ux --verbosity 2
 
+echo "[17a/25] v3.2.2 proposal intelligence + review automation tests"
+docker compose exec backend python manage.py test core.test_v322_proposal_review_automation --verbosity 2
+
 echo "[18/25] Live Web runtime connectivity"
 docker compose exec backend python manage.py shell -c 'from core.live_web import search; r=search("federal acquisition forecast", limit=1, timeout=15, allow_cached=False); print(r); assert r.get("status") == "live" and r.get("reachable") is True, r'
 
@@ -86,11 +89,12 @@ fi
 ./scripts/run_visual_qa_local.sh
 
 echo "[21/25] Production-style Django security check"
+DEPLOY_CHECK_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
 docker compose run --rm \
   -e RUN_MIGRATIONS=false \
   -e COLLECTSTATIC=false \
   -e DJANGO_DEBUG=false \
-  -e DJANGO_SECRET_KEY='ForgeGov-V32113-Temporary-Deploy-Check-864c5f20cb0a42fa918bf9fd' \
+  -e DJANGO_SECRET_KEY="$DEPLOY_CHECK_SECRET" \
   -e DJANGO_ALLOWED_HOSTS='forge-gov.com' \
   -e FRONTEND_URL='https://forge-gov.com' \
   -e CORS_ALLOWED_ORIGINS='https://forge-gov.com' \
@@ -117,7 +121,7 @@ for service in backend worker beat; do
 done
 
 echo "[24/25] Backup + isolated restore verification"
-BACKUP_PATH="backups/v32113-release-verification.dump"
+BACKUP_PATH="backups/v322-release-verification.dump"
 rm -f "$BACKUP_PATH" "$BACKUP_PATH.sha256"
 ./scripts/backup_database.sh "$BACKUP_PATH"
 ./scripts/verify_backup_restore.sh "$BACKUP_PATH"
@@ -127,4 +131,4 @@ echo "[25/25] Health + readiness + container status"
 EXPECTED_VERSION="$EXPECTED_VERSION" ./scripts/release_smoke.sh
 docker compose ps
 
-echo "ForgeGov v3.2.1.3 validation completed successfully."
+echo "ForgeGov v3.2.2 validation completed successfully."

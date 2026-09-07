@@ -350,6 +350,18 @@ def update_section(*, section: ProposalSection, organization, user, payload: dic
         section.owner_id = owner_id or None
     section.save()
     if "content" in payload and section.content != original_content:
+        ProposalFinding.objects.filter(section=section).exclude(status=ProposalFinding.Status.OPEN).update(
+            status=ProposalFinding.Status.OPEN,
+            resolution_response="",
+            resolved_by=None,
+            resolved_at=None,
+        )
+        ProposalReview.objects.filter(plan=section.volume.plan, status=ProposalReview.Status.PASSED).update(
+            status=ProposalReview.Status.IN_PROGRESS,
+            completed_at=None,
+            gate_decision_by=None,
+            gate_decision_at=None,
+        )
         requirement_rows, chunks = _section_sources(section, organization, section.volume.plan.opportunity)
         save_section_revision(
             section=section,

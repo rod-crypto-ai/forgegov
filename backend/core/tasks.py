@@ -15,6 +15,7 @@ from .models import (
     Opportunity,
     Organization,
     PipelineItem,
+    ProposalReviewRun,
     SavedSearch,
     SourceRecordVersion,
     Task,
@@ -480,3 +481,14 @@ def send_daily_intelligence_digests():
 @shared_task
 def send_weekly_intelligence_digests():
     return _send_digest(period="weekly")
+
+
+@shared_task
+def execute_proposal_review(review_run_id: int):
+    from .proposal_review import execute_review_run
+
+    run = ProposalReviewRun.objects.select_related("plan__organization", "plan__opportunity", "initiated_by").filter(pk=review_run_id).first()
+    if not run:
+        return {"status": "missing", "review_run_id": review_run_id}
+    execute_review_run(run)
+    return {"status": run.status, "review_run_id": run.id}
