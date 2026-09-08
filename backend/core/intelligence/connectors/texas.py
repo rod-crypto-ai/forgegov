@@ -29,7 +29,7 @@ class TexasSmartbuyReferenceConnector(ProcurementConnector):
         rate_limit="Not applicable until an approved feed is configured",
     )
 
-    def health(self) -> dict[str, Any]:
+    def health(self, probe: bool = False) -> dict[str, Any]:
         return {
             **self.descriptor.to_dict(),
             "configured": False,

@@ -44,9 +44,9 @@ export default function DashboardHome() {
     {error && <div className="alert-strip"><ShieldCheck size={18}/><div><b>ForgeGov is running, but the API did not respond.</b><span>{error}</span></div></div>}
 
     <section className="data-status-strip">
-      <div><i className={integrations.sam_gov?.configured ? "ok" : "warn"}/><span><b>SAM.gov</b><small>{integrations.sam_gov?.configured ? "Live search ready" : "API key required"}</small></span></div>
+      <div><i className={integrations.sam_gov?.configured ? "ok" : "warn"}/><span><b>SAM.gov</b><small>{integrations.sam_gov?.configured ? "Configured · verify live status in Connector Manager" : "API key required"}</small></span></div>
       <div><i className={integrations.usaspending?.reachable ? "ok" : "warn"}/><span><b>USAspending</b><small>{integrations.usaspending?.reachable ? "Live award data" : "Connection unavailable"}</small></span></div>
-      <div><i className="ok"/><span><b>Grants.gov</b><small>Public grant search active</small></span></div>
+      <div><i className="warn"/><span><b>Grants.gov</b><small>Public source · live status not verified here</small></span></div>
       <div><i className={integrations.ai?.web_search_status === "live" || integrations.ai?.web_search_reachable ? "ok" : "warn"}/><span><b>Live web</b><small>{integrations.ai?.web_search_status === "live" || integrations.ai?.web_search_reachable ? "Live Web Connected" : integrations.ai?.web_search_status === "degraded" ? "Degraded — cached intelligence available" : integrations.ai?.web_search_status === "unavailable" ? "Live Web Unavailable" : integrations.ai?.web_search_configured ? "Private service configured" : "Setup required"}</small></span></div>
       <div><Database size={17}/><span><b>{integrations.usaspending?.stored_awards ?? summary.awards?.total ?? 0} awards indexed</b><small>Stored in ForgeGov</small></span></div>
       <Link href="/intelligence/connectors">Manage data sources <ChevronRight size={15}/></Link>

@@ -222,8 +222,8 @@ def _build_sam_params(
         "ccode": psc,
         "state": state,
         "typeOfSetAside": set_aside,
-        "rdlfrom": response_from,
-        "rdlto": response_to,
+        "rdlfrom": _sam_date_param(response_from, today) if response_from else "",
+        "rdlto": _sam_date_param(response_to, today) if response_to else "",
         "status": opportunity_status,
     }
     params.update({key: value for key, value in optional.items() if value})
@@ -293,14 +293,26 @@ def search_sam_opportunities(*, persist: bool = False, sync_run=None, **filters:
                 )
 
     normalized_opportunities = []
+    seen_notice_ids: set[str] = set()
+    duplicate_records_removed = 0
+    retrieved_at = timezone.now().isoformat()
     for record in opportunities:
         if not isinstance(record, dict):
             continue
         notice_id = _safe_text(record.get("noticeId") or record.get("noticeid"), max_length=255)
+        if notice_id and notice_id in seen_notice_ids:
+            duplicate_records_removed += 1
+            continue
+        if notice_id:
+            seen_notice_ids.add(notice_id)
         normalized_opportunities.append({
             **record,
+            "title": _clean_public_text(record.get("title"), max_length=500) or "Untitled SAM.gov opportunity",
             "source_id": notice_id,
             "source_url": f"https://sam.gov/opp/{notice_id}/view" if notice_id else "",
+            "source_name": "SAM.gov Opportunities",
+            "source_status": "live",
+            "retrieved_at": retrieved_at,
         })
 
     return {
@@ -308,6 +320,7 @@ def search_sam_opportunities(*, persist: bool = False, sync_run=None, **filters:
         "limit": max(1, _safe_int(payload.get("limit"), params["limit"])),
         "offset": max(0, _safe_int(payload.get("offset"), params["offset"])),
         "opportunities": normalized_opportunities,
+        "duplicate_records_removed": duplicate_records_removed,
         "persisted": {
             "enabled": persist,
             "created": created,
@@ -527,6 +540,9 @@ def search_usaspending_awards(
                 )
 
     return {
+        "page": payload["page"],
+        "limit": payload["limit"],
+        "has_next": bool((data.get("page_metadata") or {}).get("hasNext", (data.get("page_metadata") or {}).get("has_next", False))),
         "page_metadata": data.get("page_metadata", {}),
         "spending_level": data.get("spending_level", "awards"),
         "results": results,
@@ -699,17 +715,28 @@ def search_grants_opportunities(
                 )
 
     normalized = []
+    seen_source_ids: set[str] = set()
+    duplicate_records_removed = 0
+    retrieved_at = timezone.now().isoformat()
     for record in opportunities:
         if isinstance(record, dict):
             opportunity_id = record.get("id")
+            source_id = _grant_source_id(opportunity_id)
+            if source_id in seen_source_ids:
+                duplicate_records_removed += 1
+                continue
+            seen_source_ids.add(source_id)
             normalized.append({
                 **record,
                 "title": _clean_public_text(record.get("title") or record.get("opportunityTitle"), max_length=500),
                 "opportunityTitle": _clean_public_text(record.get("opportunityTitle") or record.get("title"), max_length=500),
                 "synopsisDesc": _clean_public_text(record.get("synopsisDesc") or record.get("description"), max_length=200000),
                 "description": _clean_public_text(record.get("description") or record.get("synopsisDesc"), max_length=200000),
-                "source_id": _grant_source_id(opportunity_id),
+                "source_id": source_id,
                 "source_url": f"https://www.grants.gov/search-results-detail/{opportunity_id}",
+                "source_name": "Grants.gov Opportunities",
+                "source_status": "live",
+                "retrieved_at": retrieved_at,
             })
 
     return {
@@ -717,6 +744,7 @@ def search_grants_opportunities(
         "limit": int((data.get("searchParams") or {}).get("rows") or payload.get("rows") or 25),
         "offset": int(data.get("startRecord") or (data.get("searchParams") or {}).get("startRecordNum") or 0),
         "opportunities": normalized,
+        "duplicate_records_removed": duplicate_records_removed,
         "facets": {
             "statuses": data.get("oppStatusOptions") or [],
             "eligibilities": data.get("eligibilities") or [],
@@ -1078,6 +1106,9 @@ def search_usaspending_contract_vehicles(
                     reason="vehicle_persistence_error", error=exc,
                 )
     return {
+        "page": payload["page"],
+        "limit": payload["limit"],
+        "has_next": bool((data.get("page_metadata") or {}).get("hasNext", (data.get("page_metadata") or {}).get("has_next", False))),
         "page_metadata": data.get("page_metadata", {}),
         "results": results,
         "persisted": {"enabled": persist, "created": created, "updated": updated, "unchanged": unchanged, "quarantined": quarantined, "errors": errors},
@@ -1195,6 +1226,8 @@ def search_federal_forecast_sources(*, query: str = "") -> dict[str, Any]:
         "results": sources,
         "directory_url": directory_url,
         "reachable": reachable,
+        "status": "live" if reachable else "fallback",
+        "warning": "" if reachable else "The live Acquisition.gov directory could not be refreshed. Showing the official directory fallback only.",
     }
 
 
@@ -1220,7 +1253,14 @@ def search_state_local_sources(*, query: str = "", state: str = "") -> dict[str,
         results = [r for r in results if term in r["jurisdiction"].lower() or term in r["coverage"].lower()]
     if state_code:
         results = [r for r in results if r["state"] == state_code]
-    return {"total_records": len(results), "results": results, "source": "Official procurement portals"}
+    return {
+        "total_records": len(results),
+        "results": results,
+        "source": "Official procurement portal directory",
+        "status": "reference_only",
+        "reachable": None,
+        "warning": "Directory links are official-source references, not a live aggregated opportunity feed.",
+    }
 
 
 def search_sam_subawards(

@@ -39,13 +39,17 @@ def seed_connector_registry() -> list[ConnectorSource]:
 def connector_registry_payload(probe: bool = False) -> dict[str, Any]:
     seed_connector_registry()
     results: list[dict[str, Any]] = []
-    for row in ConnectorSource.objects.all():
+    for row in ConnectorSource.objects.filter(key__in=connector_registry.keys()).order_by("scope", "name"):
         connector = get_connector(row.key)
-        health = connector.health() if probe and connector else None
+        health = connector.health(probe=True) if probe and connector else None
         if health:
             row.last_status = health.get("status", "unknown")
             row.last_checked_at = timezone.now()
-            row.last_error = "" if health.get("status") == "healthy" else health.get("detail", "")
+            row.last_error = (
+                health.get("detail", "")
+                if health.get("status") in {"degraded", "unavailable", "configuration_required", "failed"}
+                else ""
+            )
             row.save(update_fields=["last_status", "last_checked_at", "last_error", "updated_at"])
         results.append({
             "key": row.key,
@@ -71,8 +75,12 @@ def connector_registry_payload(probe: bool = False) -> dict[str, Any]:
             "record_count": row.record_count,
         })
     healthy = sum(1 for r in results if r["status"] == "healthy")
+    verified = sum(1 for r in results if r["status"] in {"healthy", "degraded", "unavailable"})
+    reference_only = sum(1 for r in results if r["status"] == "reference_only")
+    not_verified = sum(1 for r in results if r["status"] == "not_verified")
+    assessed = len(results) - not_verified
     attention = sum(1 for r in results if r["status"] in {"degraded", "unavailable", "configuration_required", "failed"})
-    return {"connectors": results, "summary": {"total": len(results), "enabled": sum(1 for r in results if r["enabled"]), "healthy": healthy, "attention": attention}}
+    return {"connectors": results, "summary": {"total": len(results), "enabled": sum(1 for r in results if r["enabled"]), "healthy": healthy, "verified": verified, "assessed": assessed, "reference_only": reference_only, "not_verified": not_verified, "attention": attention}}
 
 
 def sync_usaspending_awards(*, start_date: str | None = None, end_date: str | None = None, pages: int = 1, limit: int = 100, keyword: str = "", agency: str = "", naics: str = "") -> AwardSyncRun:

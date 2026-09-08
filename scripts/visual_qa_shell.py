@@ -101,7 +101,7 @@ def run_case(browser, name: str, width: int, height: int) -> list[str]:
     return sorted(set(issues))
 
 def main() -> int:
-    report = {"release": "3.2.2", "base_url": BASE_URL, "cases": {}}
+    report = {"release": "3.2.3", "base_url": BASE_URL, "cases": {}}
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:

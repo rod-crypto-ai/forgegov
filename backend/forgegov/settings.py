@@ -104,6 +104,8 @@ AUTHENTICATION_BACKENDS = [
 # leak between isolated test cases.
 AXES_ENABLED = os.getenv("AXES_ENABLED", "false" if "test" in sys.argv else "true").lower() == "true"
 AXES_HANDLER = "axes.handlers.cache.AxesCacheHandler"
+if "test" in sys.argv:
+    AXES_HANDLER = "axes.handlers.database.AxesDatabaseHandler"
 AXES_CACHE = "default"
 AXES_FAILURE_LIMIT = int(os.getenv("AXES_FAILURE_LIMIT", "5"))
 AXES_COOLOFF_TIME = timedelta(minutes=int(os.getenv("AXES_COOLOFF_MINUTES", "15")))
@@ -135,6 +137,7 @@ REST_FRAMEWORK = {
         "auth_register": os.getenv("AUTH_REGISTER_RATE", "5/hour"),
         "openai_chat": os.getenv("OPENAI_CHAT_RATE", "60/hour"),
         "live_web": os.getenv("LIVE_WEB_SEARCH_RATE", "120/hour"),
+        "connector_probe": os.getenv("CONNECTOR_PROBE_RATE", "30/hour"),
     },
 }
 
@@ -160,6 +163,8 @@ CACHES = {
         "KEY_PREFIX": "forgegov",
     }
 }
+if "test" in sys.argv:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True

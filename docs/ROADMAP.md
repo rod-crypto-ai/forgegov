@@ -1,5 +1,19 @@
 # Product Roadmap
 
+## Active versioned sequence
+
+1. v3.2.2 — Proposal Intelligence & Review Automation (completed)
+2. v3.2.3 — Opportunity Intelligence & Discovery 2.0 (active)
+3. v3.2.4 — Market & Competitor Intelligence 2.0
+4. v3.2.5 — Capture Operations & Pipeline 2.0
+5. v3.2.6 — ForgeAI Intelligence Platform
+
+Connector reliability, source provenance, discovery filters, pagination, saved searches,
+permitted attachment access, change detection, duplicate prevention, and source freshness
+belong to v3.2.3. Competitor dossiers, incumbent analysis, agency buying patterns, contract
+vehicle analysis, market maps, vendor comparisons, and teaming recommendations remain
+assigned to v3.2.4.
+
 ## Milestone 1 — Foundation (included here)
 
 - Repository, Docker, CI, Django, Next.js, PostgreSQL, Redis, Celery.

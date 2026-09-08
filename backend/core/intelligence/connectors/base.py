@@ -41,7 +41,7 @@ class ProcurementConnector(ABC):
     descriptor: ConnectorDescriptor
 
     @abstractmethod
-    def health(self) -> dict[str, Any]:
+    def health(self, probe: bool = False) -> dict[str, Any]:
         raise NotImplementedError
 
     def iter_awards(self, **filters: Any) -> Iterable[dict[str, Any]]:

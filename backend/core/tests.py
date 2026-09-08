@@ -1182,16 +1182,17 @@ class IntelligenceFoundationTests(AuthenticatedApiTestCase):
 
 
 class AwardIngestionAndConnectorSdkTests(AuthenticatedApiTestCase):
-    def test_connector_registry_includes_federal_and_state_reference(self):
+    def test_connector_registry_includes_federal_and_state_directory(self):
         response = self.client.get("/api/intelligence/connector-registry/")
         self.assertEqual(response.status_code, 200)
         keys = {row["key"] for row in response.json()["connectors"]}
         self.assertIn("usaspending-awards", keys)
-        self.assertIn("texas-smartbuy-reference", keys)
-        texas = next(row for row in response.json()["connectors"] if row["key"] == "texas-smartbuy-reference")
-        self.assertEqual(texas["scope"], "state")
-        self.assertEqual(texas["jurisdiction_code"], "TX")
-        self.assertIn("license_name", texas)
+        self.assertIn("state-local-directory", keys)
+        self.assertNotIn("texas-smartbuy-reference", keys)
+        state_local = next(row for row in response.json()["connectors"] if row["key"] == "state-local-directory")
+        self.assertEqual(state_local["scope"], "state")
+        self.assertEqual(state_local["jurisdiction_code"], "US")
+        self.assertIn("license_name", state_local)
 
     def test_award_summary_uses_official_stored_awards(self):
         Award.objects.create(

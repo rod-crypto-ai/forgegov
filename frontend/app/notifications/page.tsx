@@ -46,7 +46,7 @@ export default function NotificationsPage(){
    apiGet<Preference>("/notifications/preferences/"),
    apiGet<{results:Delivery[]}>("/notifications/deliveries/"),
    apiGet<ApiList<Notification>>("/collaboration/notifications/?read=false&exclude_intelligence=true&page_size=1"),
-   apiGet<ApiList<IntelligenceAlert>>("/alerts/?read=false&dismissed=false&page_size=1"),
+   apiGet<ApiList<IntelligenceAlert>>("/alerts/?read=false&dismissed=false&active=true&page_size=1"),
  ]);setRows(normalizeList(notificationData));setAlerts(normalizeList(alertData));setInvites(normalizeList(inviteData));setPreference(prefData);setDeliveries(deliveryData.results??[]);setUnread(Number(unreadNotifications.count??0)+Number(unreadAlerts.count??0));setMessage("")}catch(e){setMessage(e instanceof Error?e.message:"Notifications could not be loaded")}},[]);
  useEffect(()=>{const timer=window.setTimeout(()=>void load(),0);return()=>window.clearTimeout(timer)},[load]);
  async function markNotification(id:number,read=true){await apiPatch(`/collaboration/notifications/${id}/`,{read});await load()}

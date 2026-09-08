@@ -23,12 +23,14 @@ type Connector = {
   capabilities?: string[];
   rate_limit?: string;
   last_sync_at?: string | null;
+  last_checked_at?: string | null;
+  last_status?: string;
   record_count?: number;
 };
 
 type Payload = {
   connectors: Connector[];
-  summary: { total: number; healthy: number; attention?: number; enabled?: number };
+  summary: { total: number; healthy: number; verified?: number; assessed?: number; reference_only?: number; not_verified?: number; attention?: number; enabled?: number };
 };
 
 const empty: Payload = { connectors: [], summary: { total: 0, healthy: 0, attention: 0 } };
@@ -55,7 +57,7 @@ export default function ConnectorManagerPage() {
     return () => window.clearTimeout(timer);
   }, []);
 
-  const healthyPercent = useMemo(() => data.summary.total ? Math.round((data.summary.healthy / data.summary.total) * 100) : 0, [data]);
+  const assessedPercent = useMemo(() => data.summary.total ? Math.round(((data.summary.assessed ?? 0) / data.summary.total) * 100) : 0, [data]);
 
   return <div className="page-stack connector-manager-page">
     <section className="page-hero connector-hero">
@@ -71,9 +73,9 @@ export default function ConnectorManagerPage() {
 
     <section className="connector-summary-grid">
       <article><ServerCog/><span><small>Total connectors</small><strong>{data.summary.total}</strong></span></article>
-      <article><CheckCircle2/><span><small>Live verified</small><strong>{data.summary.healthy}</strong></span></article>
+      <article><CheckCircle2/><span><small>Verified healthy</small><strong>{data.summary.healthy}</strong></span></article>
       <article><TriangleAlert/><span><small>Needs attention</small><strong>{data.summary.attention}</strong></span></article>
-      <article><Activity/><span><small>Live verification</small><strong>{healthyPercent}%</strong></span></article>
+      <article><Activity/><span><small>Sources assessed</small><strong>{assessedPercent}%</strong></span></article>
     </section>
 
     <section className="connector-grid">
@@ -82,11 +84,12 @@ export default function ConnectorManagerPage() {
         <dl>
           <div><dt>Scope</dt><dd>{row.scope}{row.jurisdiction_name ? ` · ${row.jurisdiction_name}` : ""}</dd></div>
           <div><dt>Configuration</dt><dd>{row.configured === null ? "Not probed" : row.configured ? "Configured" : "Required"}</dd></div>
-          <div><dt>Reachability</dt><dd>{row.reachable === null ? "Not probed" : row.reachable ? "Reachable" : "Unavailable"}</dd></div>
+          <div><dt>Reachability</dt><dd>{row.status === "reference_only" ? "Directory only" : row.reachable === null ? "Not probed" : row.reachable ? "Reachable" : "Unavailable"}</dd></div>
           <div><dt>Authentication</dt><dd><KeyRound size={14}/>{row.authentication}</dd></div>
           <div><dt>License</dt><dd>{row.license_name || "Review required"}</dd></div>
           <div><dt>Coverage</dt><dd>{row.capabilities?.join(", ") || "Metadata only"}</dd></div>
           <div><dt>Stored records</dt><dd>{(row.record_count || 0).toLocaleString()}</dd></div>
+          <div><dt>Last probe</dt><dd>{row.last_checked_at ? new Date(row.last_checked_at).toLocaleString() : "Not yet verified"}</dd></div>
         </dl>
         <a href={row.official_url} target="_blank" rel="noreferrer">Open official source <ExternalLink size={14}/></a>
       </article>)}

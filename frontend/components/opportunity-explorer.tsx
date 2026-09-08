@@ -16,7 +16,8 @@ type LiveOpportunity = {
   agencyName?: string; agencyCode?: string; postedDate?: string; openDate?: string;
   responseDeadLine?: string; closeDate?: string; uiLink?: string; source_url?: string;
   type?: string; oppStatus?: string; naicsCode?: string; classificationCode?: string;
-  typeOfSetAsideDescription?: string; alnist?: string[];
+  typeOfSetAsideDescription?: string; alnist?: string[]; modifiedDate?: string; active?: string;
+  source_name?: string; source_status?: string; retrieved_at?: string;
 };
 
 type SearchResult = {
@@ -26,7 +27,7 @@ type SearchResult = {
 
 type Filters = {
   q: string; agency: string; naics: string; psc: string; state: string; solnum: string; set_aside: string;
-  posted_from: string; posted_to: string; opportunity_number: string; aln: string;
+  posted_from: string; posted_to: string; response_from: string; response_to: string; status: string; opportunity_number: string; aln: string;
   funding_categories: string; eligibilities: string; funding_instruments: string;
   statuses: string; sort_by: string;
 };
@@ -64,7 +65,7 @@ const SAM_SET_ASIDE_OPTIONS = [
 function defaultFilters(query = ""): Filters {
   return {
     q: query, agency: "", naics: "", psc: "", state: "", solnum: "", set_aside: "",
-    posted_from: "", posted_to: "", opportunity_number: "", aln: "", funding_categories: "",
+    posted_from: "", posted_to: "", response_from: "", response_to: "", status: "", opportunity_number: "", aln: "", funding_categories: "",
     eligibilities: "", funding_instruments: "", statuses: "forecasted|posted", sort_by: "",
   };
 }
@@ -128,12 +129,15 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
     setShowingRecent(recentView);
     setLoading(true);
     setMessage(recentView ? "Refreshing the latest live opportunities…" : "Searching live opportunity data…");
-    const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset), persist: "true" });
+    const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset), persist: "false" });
     const allowed: Array<keyof Filters> = isGrants
       ? ["q", "agency", "opportunity_number", "aln", "funding_categories", "eligibilities", "funding_instruments", "statuses", "sort_by"]
-      : ["q", "agency", "naics", "psc", "state", "solnum", "set_aside", "posted_from", "posted_to"];
+      : ["q", "agency", "naics", "psc", "state", "solnum", "set_aside", "posted_from", "posted_to", "response_from", "response_to", "status"];
     allowed.forEach((key) => { const value = selectedFilters[key]; if (value) params.set(key, value); });
     const endpoint = isGrants ? "/live/grants/opportunities/" : "/live/sam/opportunities/";
+    const slowTimer = window.setTimeout(() => {
+      setMessage(`${isGrants ? "Grants.gov" : "SAM.gov"} is responding slowly. ForgeGov is still waiting for the official source…`);
+    }, 8000);
     try {
       const data = await apiGet<SearchResult>(`${endpoint}?${params.toString()}`);
       setResult(data);
@@ -147,6 +151,7 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
       setResult(null);
       setMessage(error instanceof Error ? error.message : "Search failed");
     } finally {
+      window.clearTimeout(slowTimer);
       setLoading(false);
     }
   }, [filters, isGrants, live, pageSize]);
@@ -255,6 +260,9 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
           <label><span>Set-aside</span><select value={filters.set_aside} onChange={(event) => update("set_aside", event.target.value)}>{SAM_SET_ASIDE_OPTIONS.map(([code, label]) => <option key={code || "all"} value={code}>{label}</option>)}</select></label>
           <label><span>Posted from</span><input type="date" value={filters.posted_from} onChange={(event) => update("posted_from", event.target.value)} /></label>
           <label><span>Posted to</span><input type="date" value={filters.posted_to} onChange={(event) => update("posted_to", event.target.value)} /></label>
+          <label><span>Response due from</span><input type="date" value={filters.response_from} onChange={(event) => update("response_from", event.target.value)} /></label>
+          <label><span>Response due to</span><input type="date" value={filters.response_to} onChange={(event) => update("response_to", event.target.value)} /></label>
+          <label><span>Opportunity status</span><select value={filters.status} onChange={(event) => update("status", event.target.value)}><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="archived">Archived</option><option value="cancelled">Cancelled</option></select></label>
         </>}
         <label><span>Results per page</span><select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))}><option>25</option><option>50</option><option>100</option></select></label>
         <button className="secondary-button" type="button" onClick={saveSearch}><Save size={16} /> Save search</button>
@@ -274,7 +282,7 @@ export function OpportunityExplorer({ mode }: { mode: OpportunityMode }) {
               <div className="result-source-row"><span className={`source-chip ${isGrants ? "grant-source-chip" : "contract-source-chip"}`}>{isGrants ? "LIVE GRANTS.GOV" : "LIVE SAM.GOV"}</span><span>{row.type ?? row.oppStatus ?? (isGrants ? "Federal grant" : "Contract opportunity")}</span><span>{row.solicitationNumber ?? row.number ?? "No number"}</span></div>
               {href ? <Link className="opportunity-title-link" href={href}><h3>{row.title ?? "Untitled opportunity"}</h3></Link> : <h3>{row.title ?? "Untitled opportunity"}</h3>}
               <Link className="opportunity-agency-link" href={`/intelligence/agency/${encodeURIComponent(agency)}`}>{agency} <ExternalLink size={13}/></Link>
-              <div className="result-facts"><span>Posted: {row.postedDate ?? row.openDate ?? "—"}</span><span>Deadline: {row.responseDeadLine ?? row.closeDate ?? "—"}</span><span>{isGrants ? `ALN: ${row.alnist?.join(", ") || "—"}` : `NAICS: ${row.naicsCode ?? "—"}`}</span></div>
+              <div className="result-facts"><span>Posted: {row.postedDate ?? row.openDate ?? "—"}</span><span>Deadline: {row.responseDeadLine ?? row.closeDate ?? "—"}</span><span>{isGrants ? `ALN: ${row.alnist?.join(", ") || "—"}` : `NAICS: ${row.naicsCode ?? "—"}`}</span>{row.modifiedDate?<span>Source updated: {row.modifiedDate}</span>:null}</div>
             </div>
             <div className="opportunity-result-actions">
               {href && <Link className="secondary-button" href={href}><FileSearch size={16} /> {isGrants ? "Grant workspace" : "Details & files"}</Link>}

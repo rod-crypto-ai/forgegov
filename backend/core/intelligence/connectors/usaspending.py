@@ -25,13 +25,22 @@ class UsaSpendingAwardConnector(ProcurementConnector):
         rate_limit="Public API; ForgeGov uses bounded pages and incremental windows",
     )
 
-    def health(self) -> dict[str, Any]:
+    def health(self, probe: bool = False) -> dict[str, Any]:
+        if not probe:
+            return {
+                **self.descriptor.to_dict(),
+                "configured": True,
+                "reachable": None,
+                "status": "not_verified",
+                "detail": "Public API configured; run a probe to verify current reachability.",
+                "checked_at": None,
+            }
         result = usaspending_status(probe=True)
         return {
             **self.descriptor.to_dict(),
             "configured": True,
             "reachable": result.get("reachable"),
-            "status": "healthy" if result.get("reachable") else "degraded",
+            "status": "healthy" if result.get("reachable") else "unavailable",
             "detail": result.get("detail") or "Official federal award and spending API.",
             "checked_at": timezone.now().isoformat(),
         }

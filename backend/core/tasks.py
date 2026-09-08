@@ -144,6 +144,7 @@ def evaluate_saved_search_alerts(self, organization_id: int | None = None):
                 funding_categories=filters.get("funding_categories") or "",
                 eligibilities=filters.get("eligibilities") or "",
                 funding_instruments=filters.get("funding_instruments") or "",
+                sort_by=filters.get("sort_by") or "",
                 limit=limit,
                 persist=True,
             )
@@ -155,10 +156,14 @@ def evaluate_saved_search_alerts(self, organization_id: int | None = None):
                 naics=filters.get("naics") or "",
                 psc=filters.get("psc") or "",
                 state=filters.get("state") or "",
+                solicitation_number=filters.get("solnum") or "",
                 set_aside=filters.get("set_aside") or "",
                 procurement_type=filters.get("ptype") or "",
                 posted_from=filters.get("posted_from"),
                 posted_to=filters.get("posted_to"),
+                response_from=filters.get("response_from") or "",
+                response_to=filters.get("response_to") or "",
+                opportunity_status=filters.get("status") or "",
                 limit=limit,
                 persist=True,
             )

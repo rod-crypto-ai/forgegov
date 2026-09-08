@@ -142,7 +142,7 @@ from .serializers import (
     ProjectRoomInvitationSerializer,
     OrganizationJoinRequestSerializer,
 )
-from .throttles import LiveWebSearchThrottle, OpenAIChatThrottle, SamLiveSearchThrottle
+from .throttles import ConnectorProbeThrottle, LiveWebSearchThrottle, OpenAIChatThrottle, SamLiveSearchThrottle
 from .document_intelligence import DocumentIngestionError, capture_readiness_summary, chunk_sections, download_document, extract_document, extract_structured_intelligence, sha256
 from .capture_intelligence import build_capture_assessment
 from .win_strategy import build_win_strategy
@@ -163,10 +163,26 @@ from .intelligence.services import connector_health, opportunity_intelligence
 from .reliability import readiness_payload
 from .version import VERSION as FORGEGOV_VERSION
 from .intelligence.services.award_ingestion import award_intelligence_summary, connector_registry_payload, sync_usaspending_awards
+from .intelligence.connectors import connector_registry
 
 
 def _truthy(value: str | None) -> bool:
     return str(value or "").lower() in {"1", "true", "yes", "on"}
+
+
+def _current_intelligence_alerts(queryset, *, now=None):
+    """Limit counters to recent, actionable alerts without deleting alert history."""
+    current_time = now or timezone.now()
+    return queryset.filter(
+        Q(
+            alert_type=IntelligenceAlert.AlertType.NEW_OPPORTUNITY,
+            created_at__gte=current_time - timedelta(days=7),
+        )
+        | Q(
+            ~Q(alert_type=IntelligenceAlert.AlertType.NEW_OPPORTUNITY),
+            created_at__gte=current_time - timedelta(days=30),
+        )
+    )
 
 
 def _partner_access_expiry(value, *, default_days: int = 90):
@@ -251,6 +267,7 @@ def award_ingestion(request):
 
 
 @api_view(["GET"])
+@throttle_classes([ConnectorProbeThrottle])
 def connector_registry_view(request):
     probe = _truthy(request.query_params.get("probe"))
     return Response(connector_registry_payload(probe=probe))
@@ -334,6 +351,7 @@ def integration_status(request):
 
 
 @api_view(["GET"])
+@throttle_classes([ConnectorProbeThrottle])
 def intelligence_connectors(request):
     probe = _truthy(request.query_params.get("probe"))
     return Response(connector_health(probe=probe))
@@ -407,7 +425,7 @@ def dashboard_summary(request):
             "overdue": task_base.filter(completed=False, due_at__lt=now).count(),
         },
         "alerts": {
-            "unread": IntelligenceAlert.objects.filter(organization=organization, read=False, dismissed=False).count(),
+            "unread": _current_intelligence_alerts(IntelligenceAlert.objects.filter(organization=organization, read=False, dismissed=False), now=now).count(),
             "total": IntelligenceAlert.objects.filter(organization=organization, dismissed=False).count(),
         },
         "contacts": Contact.objects.filter(organization=organization).count(),
@@ -586,7 +604,19 @@ def add_opportunity_to_pipeline(request):
     try:
         opportunity = Opportunity.objects.get(source_id=source_id)
     except Opportunity.DoesNotExist:
-        return Response({"detail": "Search with Store results enabled before adding this opportunity."}, status=status.HTTP_404_NOT_FOUND)
+        # Browsing a public feed must not write every result into ForgeGov. Persist
+        # the selected official-source record only when the user intentionally
+        # adds it to their pipeline.
+        try:
+            if source_id.startswith("grants.gov:"):
+                fetch_grants_opportunity(source_id, persist=True)
+            else:
+                search_sam_opportunities(notice_id=source_id, limit=1, persist=True)
+            opportunity = Opportunity.objects.get(source_id=source_id)
+        except Opportunity.DoesNotExist:
+            return Response({"detail": "The official source no longer returned this opportunity."}, status=status.HTTP_404_NOT_FOUND)
+        except IntegrationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
     organization = _request_organization(request)
     requested_stage = str(request.data.get("stage") or PipelineItem.Stage.REVIEWING)
     valid_stages = {value for value, _ in PipelineItem.Stage.choices}
@@ -717,7 +747,7 @@ def live_grants_search(request):
             sort_by=request.query_params.get("sort_by", ""),
             limit=int(request.query_params.get("limit", 25)),
             offset=int(request.query_params.get("offset", 0)),
-            persist=_truthy(request.query_params.get("persist", "true")),
+            persist=_truthy(request.query_params.get("persist")),
         )
         return Response(data)
     except (IntegrationError, ValueError) as exc:
@@ -790,7 +820,7 @@ class OpportunityViewSet(viewsets.ReadOnlyModelViewSet):
 class PipelineItemViewSet(OrganizationScopedViewSetMixin, viewsets.ModelViewSet):
     serializer_class = PipelineItemSerializer
     def get_queryset(self):
-        return self.scope_queryset(PipelineItem.objects.select_related("opportunity", "organization", "owner"))
+        return self.scope_queryset(PipelineItem.objects.select_related("opportunity", "organization", "owner")).order_by("-updated_at", "-id")
 
 
 class PursuitViewSet(OrganizationScopedViewSetMixin, viewsets.ModelViewSet):
@@ -1085,6 +1115,7 @@ def global_search(request):
     if len(query) < 2:
         return Response({"query": query, "results": [], "groups": {}})
     limit = min(max(int(request.query_params.get("limit", 10)), 1), 30)
+    quick = _truthy(request.query_params.get("quick"))
     organization = _request_organization(request)
     results = []
 
@@ -1099,9 +1130,10 @@ def global_search(request):
             "metadata": metadata or {},
         })
 
-    for item in Opportunity.objects.filter(
-        Q(title__icontains=query) | Q(solicitation_number__icontains=query) | Q(agency__icontains=query) | Q(description__icontains=query)
-    ).order_by("-posted_date")[:limit]:
+    opportunity_lookup = Q(title__icontains=query) | Q(solicitation_number__icontains=query) | Q(agency__icontains=query)
+    if not quick:
+        opportunity_lookup |= Q(description__icontains=query)
+    for item in Opportunity.objects.filter(opportunity_lookup).order_by("-posted_date")[:limit]:
         if item.source == "grants.gov" or str(item.source_id).startswith("grants.gov:"):
             grant_id = str(item.source_id).replace("grants.gov:", "", 1)
             add("grant", item.source_id or item.id, item.title, item.solicitation_number or item.agency, f"/opportunities/federal-grants/{grant_id}" if grant_id else "/opportunities/federal-grants", group="Opportunities")
@@ -1122,7 +1154,10 @@ def global_search(request):
     for item in accessible_project_rooms(request).filter(Q(name__icontains=query) | Q(description__icontains=query)).distinct()[:limit]:
         add("project_room", item.id, item.name, item.get_status_display(), f"/project-rooms/{item.id}", group="Collaboration")
 
-    for item in OpportunityDocument.objects.filter(organization=organization).filter(Q(file_name__icontains=query) | Q(chunks__text__icontains=query)).distinct()[:limit]:
+    document_lookup = Q(file_name__icontains=query)
+    if not quick:
+        document_lookup |= Q(chunks__text__icontains=query)
+    for item in OpportunityDocument.objects.filter(organization=organization).filter(document_lookup).distinct()[:limit]:
         add("document", item.id, item.file_name, item.opportunity.title, f"/opportunities/federal-contracts/{item.opportunity.source_id}", group="Documents")
 
     for item in OrganizationProfile.objects.filter(is_public=True).filter(
@@ -1135,7 +1170,10 @@ def global_search(request):
         add("vendor", item.id, item.name, " · ".join(filter(None,[item.uei,item.cage_code,item.state])), f"/participants/vendors/profile?id={item.id}", group="Market Intelligence")
     for item in Agency.objects.filter(Q(name__icontains=query) | Q(agency_code__icontains=query)).order_by("name")[:limit]:
         add("agency", item.id, item.name, item.agency_code, f"/intelligence/agency/{item.name}", group="Market Intelligence")
-    for item in Award.objects.filter(Q(recipient_name__icontains=query) | Q(award_number__icontains=query) | Q(description__icontains=query) | Q(awarding_agency__icontains=query)).order_by("-start_date", "-updated_at")[:limit]:
+    award_lookup = Q(recipient_name__icontains=query) | Q(award_number__icontains=query) | Q(awarding_agency__icontains=query)
+    if not quick:
+        award_lookup |= Q(description__icontains=query)
+    for item in Award.objects.filter(award_lookup).order_by("-start_date", "-updated_at")[:limit]:
         add("award", item.id, item.description or item.award_number or "Federal award", f"{item.recipient_name} · {item.awarding_agency}".strip(" ·"), f"/intelligence/award/{item.award_number or item.source_id or item.id}", group="Awards")
 
     deduplicated = []
@@ -1192,7 +1230,7 @@ def command_center(request):
     ProjectRoomInvitation.objects.filter(status=ProjectRoomInvitation.Status.PENDING, expires_at__lte=now).update(status=ProjectRoomInvitation.Status.EXPIRED, responded_at=now)
     pending_connections = NetworkConnection.objects.filter(Q(requester=organization) | Q(recipient=organization), status=NetworkConnection.Status.PENDING).count()
     pending_room_invites = ProjectRoomInvitation.objects.filter(invited_organization=organization, status=ProjectRoomInvitation.Status.PENDING).filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now)).count()
-    unread_alerts = IntelligenceAlert.objects.filter(organization=organization, read=False, dismissed=False).count()
+    unread_alerts = _current_intelligence_alerts(IntelligenceAlert.objects.filter(organization=organization, read=False, dismissed=False), now=now).count()
     overdue = open_tasks.filter(due_at__lt=now).count() + ProjectRoomTask.objects.filter(Q(project_room__owner_organization=organization) | Q(project_room__partners__organization=organization, visibility=ProjectRoomTask.Visibility.SHARED)).distinct().exclude(status=ProjectRoomTask.Status.DONE).filter(due_date__lt=today).count()
 
     insights = []
@@ -1212,12 +1250,16 @@ def command_center(request):
 
     recent_awards = Award.objects.order_by("-source_updated_at", "-updated_at")
     recent_award_count = recent_awards.filter(source_updated_at__gte=now - timedelta(days=30)).count()
-    latest_sync = AwardSyncRun.objects.filter(connector_key="usaspending").order_by("-created_at").first()
-    connector_rows = ConnectorSource.objects.filter(enabled=True).order_by("scope", "name")
+    latest_sync = AwardSyncRun.objects.filter(connector_key="usaspending-awards").order_by("-created_at").first()
+    connector_rows = ConnectorSource.objects.filter(
+        enabled=True,
+        key__in=connector_registry.keys(),
+    ).order_by("scope", "name")
+    verified_statuses = ["healthy", "degraded", "unavailable"]
     connector_health = {
-        "healthy": 0,
-        "verified": 0,
-        "attention": connector_rows.exclude(last_status__in=["healthy", "reachable", "ok", "not_checked"]).count(),
+        "healthy": connector_rows.filter(last_status="healthy", last_checked_at__isnull=False).count(),
+        "verified": connector_rows.filter(last_status__in=verified_statuses, last_checked_at__isnull=False).count(),
+        "attention": connector_rows.filter(last_status__in=["degraded", "unavailable", "configuration_required", "failed"]).count(),
         "total": connector_rows.count(),
     }
     top_award_recipients = list(
@@ -1513,6 +1555,8 @@ class IntelligenceAlertViewSet(OrganizationScopedViewSetMixin, viewsets.ModelVie
             queryset = queryset.filter(read=_truthy(read))
         if dismissed is not None:
             queryset = queryset.filter(dismissed=_truthy(dismissed))
+        if _truthy(self.request.query_params.get("active")):
+            queryset = _current_intelligence_alerts(queryset)
         return queryset
 
     @action(detail=False, methods=["post"], url_path="mark-all-read")
