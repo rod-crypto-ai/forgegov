@@ -1018,6 +1018,12 @@ def invitations(request):
     membership = active_membership(request.user)
     organization = membership.organization
     if request.method == "GET":
+        now = timezone.now()
+        Invitation.objects.filter(
+            organization=organization,
+            status=Invitation.Status.PENDING,
+            expires_at__lte=now,
+        ).update(status=Invitation.Status.EXPIRED, responded_at=now)
         rows = Invitation.objects.filter(organization=organization)
         return Response(InvitationSerializer(rows, many=True).data)
 

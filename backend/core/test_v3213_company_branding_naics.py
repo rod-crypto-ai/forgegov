@@ -5,6 +5,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from .models import CompanyLogo, Membership, Organization
+from .naics_reference import _display_title
 
 
 class CompanyBrandingNaicsV3213Tests(TestCase):
@@ -25,6 +26,9 @@ class CompanyBrandingNaicsV3213Tests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["version"], "2022")
         self.assertTrue(any(row["code"] == "541330" for row in response.json()["results"]))
+
+    def test_naics_title_footnote_marker_is_not_displayed(self):
+        self.assertEqual(_display_title("Professional, Scientific, and Technical ServicesT"), "Professional, Scientific, and Technical Services")
 
     def test_company_owner_can_store_and_read_png_logo(self):
         png = b"\x89PNG\r\n\x1a\n" + b"forgegov-logo-test"

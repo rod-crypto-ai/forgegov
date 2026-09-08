@@ -44,14 +44,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const reload = useCallback(async () => {
     try {
-      const [data, workspaceData] = await Promise.all([
-        authFetch<Session>("/auth/me/"),
-        authFetch<{workspaces:WorkspaceMembership[]}>("/auth/workspaces/"),
-      ]);
+      // The session endpoint is authoritative. A transient workspace-list failure
+      // must not sign an otherwise authenticated user out of ForgeGov.
+      const data = await authFetch<Session>("/auth/me/");
       setSession(data);
-      setWorkspaces(workspaceData.workspaces??[]);
+      try {
+        const workspaceData = await authFetch<{workspaces:WorkspaceMembership[]}>("/auth/workspaces/");
+        setWorkspaces(workspaceData.workspaces??[]);
+      } catch {
+        setWorkspaces([{organization:data.organization,role:data.role}]);
+      }
     } catch {
       setSession(null);
+      setWorkspaces([]);
     } finally {
       setLoading(false);
     }

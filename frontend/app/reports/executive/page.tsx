@@ -17,7 +17,7 @@ type Portfolio = {
     active_opportunity_count:number;priced_opportunity_count:number;
   };
   opportunities:Array<{
-    pipeline_id:number;source_id:string;title:string;agency:string;stage:string;probability_of_win:number;
+    pipeline_id:number;pursuit_id?:number;source_id:string;title:string;agency:string;stage:string;probability_of_win:number;
     value:Money;weighted_value:Money;modeled_cost:Money|null;projected_profit:Money|null;margin_percent:Money|null;
     pricing_revision:number|null;pricing_status:string;working_capital_required:Money|null;working_capital_gap:Money|null;
     working_capital_risk:string;
@@ -71,8 +71,8 @@ export default function ExecutivePortfolioPage(){
     {message&&<div className="system-banner">{message}</div>}
 
     <section className="portfolio-kpis">
-      <article><BadgeDollarSign/><div><span>Active Pipeline</span><strong>{money(s.pipeline_value)}</strong><small>{s.active_opportunity_count} active pursuits</small></div></article>
-      <article><TrendingUp/><div><span>Weighted Pipeline</span><strong>{money(s.weighted_pipeline_value)}</strong><small>Probability-adjusted value</small></div></article>
+      <article><BadgeDollarSign/><div><span>Active Pursuit Value</span><strong>{money(s.pipeline_value)}</strong><small>{s.active_opportunity_count} active pursuits</small></div></article>
+      <article><TrendingUp/><div><span>Weighted Pursuit Value</span><strong>{money(s.weighted_pipeline_value)}</strong><small>Probability-adjusted value</small></div></article>
       <article><CircleDollarSign/><div><span>Projected Profit</span><strong>{money(s.projected_profit)}</strong><small>{pct(s.portfolio_margin_percent)} modeled margin</small></div></article>
       <article><BriefcaseBusiness/><div><span>Backlog</span><strong>{money(s.backlog_value)}</strong><small>Awarded closeout value</small></div></article>
       <article className={Number(s.working_capital_gap)>0?"risk":""}><WalletCards/><div><span>Working Capital Gap</span><strong>{money(s.working_capital_gap)}</strong><small>{money(s.recommended_working_capital)} modeled requirement</small></div></article>
@@ -112,7 +112,7 @@ export default function ExecutivePortfolioPage(){
 
     <section className="data-panel">
       <div className="panel-title-row"><div><span className="eyebrow">ACTIVE PORTFOLIO</span><h2>Revenue, margin & liquidity by pursuit</h2></div></div>
-      <div className="portfolio-table-wrap"><table className="portfolio-table"><thead><tr><th>Opportunity</th><th>Stage</th><th>Gross Value</th><th>Weighted</th><th>Profit</th><th>Margin</th><th>Working Capital</th><th>Liquidity Risk</th></tr></thead><tbody>{data.opportunities.map(row=><tr key={row.pipeline_id}><td><Link href={`/opportunities/federal-contracts/${encodeURIComponent(row.source_id)}`}>{row.title}</Link><small>{row.agency}</small></td><td>{row.stage.replaceAll("_"," ")}</td><td>{money(row.value)}</td><td>{money(row.weighted_value)}</td><td>{row.projected_profit==null?"Not priced":money(row.projected_profit)}</td><td>{row.margin_percent==null?"—":pct(row.margin_percent)}</td><td>{row.working_capital_required==null?"Not modeled":money(row.working_capital_required)}</td><td><span className={`portfolio-risk-pill ${row.working_capital_risk}`}>{row.working_capital_risk.replaceAll("_"," ")}</span></td></tr>)}</tbody></table>{data.opportunities.length===0&&<div className="table-state compact-state"><BriefcaseBusiness/><strong>No active pursuits</strong><p>Add qualified opportunities to the pipeline to build the portfolio forecast.</p></div>}</div>
+      <div className="portfolio-table-wrap"><table className="portfolio-table"><thead><tr><th>Opportunity</th><th>Stage</th><th>Gross Value</th><th>Weighted</th><th>Profit</th><th>Margin</th><th>Working Capital</th><th>Liquidity Risk</th></tr></thead><tbody>{data.opportunities.map(row=><tr key={row.pursuit_id??row.pipeline_id}><td>{row.source_id?<Link href={`/opportunities/federal-contracts/${encodeURIComponent(row.source_id)}`}>{row.title}</Link>:<strong>{row.title}</strong>}<small>{row.agency}</small></td><td>{row.stage.replaceAll("_"," ")}</td><td>{money(row.value)}</td><td>{money(row.weighted_value)}</td><td>{row.projected_profit==null?"Not priced":money(row.projected_profit)}</td><td>{row.margin_percent==null?"—":pct(row.margin_percent)}</td><td>{row.working_capital_required==null?"Not modeled":money(row.working_capital_required)}</td><td><span className={`portfolio-risk-pill ${row.working_capital_risk}`}>{row.working_capital_risk.replaceAll("_"," ")}</span></td></tr>)}</tbody></table>{data.opportunities.length===0&&<div className="table-state compact-state"><BriefcaseBusiness/><strong>No active pursuits</strong><p>Add a pursuit and its financial assumptions to build the portfolio forecast.</p></div>}</div>
     </section>
 
     {data.history.length>0&&<section className="data-panel">

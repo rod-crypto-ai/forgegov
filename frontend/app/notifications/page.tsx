@@ -4,7 +4,7 @@ import Link from "next/link";
 import { CompanyIdentity } from "@/components/company-identity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Bell, Check, CheckCheck, Mail, RefreshCw, Settings2, X } from "lucide-react";
-import { apiGet, apiPatch, apiPost, authFetch, normalizeList } from "@/lib/api";
+import { ApiList, apiGet, apiPatch, apiPost, authFetch, normalizeList } from "@/lib/api";
 
 type Notification={id:number;title:string;message:string;kind:string;read:boolean;link:string;created_at:string};
 type IntelligenceAlert={id:number;title:string;summary:string;alert_type:string;read:boolean;internal_link:string;created_at:string};
@@ -38,23 +38,25 @@ export default function NotificationsPage(){
  const [message,setMessage]=useState("");
  const [busy,setBusy]=useState("");
  const [filter,setFilter]=useState("all");
- const load=useCallback(async()=>{try{const [notificationData,alertData,inviteData,prefData,deliveryData]=await Promise.all([
-   apiGet<Notification[]>("/collaboration/notifications/?page_size=250"),
-   apiGet<IntelligenceAlert[]>("/alerts/?dismissed=false&page_size=250"),
+ const [unread,setUnread]=useState(0);
+ const load=useCallback(async()=>{try{const [notificationData,alertData,inviteData,prefData,deliveryData,unreadNotifications,unreadAlerts]=await Promise.all([
+   apiGet<ApiList<Notification>>("/collaboration/notifications/?exclude_intelligence=true&page_size=50"),
+   apiGet<ApiList<IntelligenceAlert>>("/alerts/?dismissed=false&page_size=50"),
    authFetch<EmployeeInvite[]>("/auth/invitations/pending/"),
    apiGet<Preference>("/notifications/preferences/"),
    apiGet<{results:Delivery[]}>("/notifications/deliveries/"),
- ]);setRows(normalizeList(notificationData));setAlerts(normalizeList(alertData));setInvites(normalizeList(inviteData));setPreference(prefData);setDeliveries(deliveryData.results??[]);setMessage("")}catch(e){setMessage(e instanceof Error?e.message:"Notifications could not be loaded")}},[]);
+   apiGet<ApiList<Notification>>("/collaboration/notifications/?read=false&exclude_intelligence=true&page_size=1"),
+   apiGet<ApiList<IntelligenceAlert>>("/alerts/?read=false&dismissed=false&page_size=1"),
+ ]);setRows(normalizeList(notificationData));setAlerts(normalizeList(alertData));setInvites(normalizeList(inviteData));setPreference(prefData);setDeliveries(deliveryData.results??[]);setUnread(Number(unreadNotifications.count??0)+Number(unreadAlerts.count??0));setMessage("")}catch(e){setMessage(e instanceof Error?e.message:"Notifications could not be loaded")}},[]);
  useEffect(()=>{const timer=window.setTimeout(()=>void load(),0);return()=>window.clearTimeout(timer)},[load]);
  async function markNotification(id:number,read=true){await apiPatch(`/collaboration/notifications/${id}/`,{read});await load()}
  async function markAlert(id:number,read=true){await apiPatch(`/alerts/${id}/`,{read});await load()}
  async function markAll(){await Promise.all([
-   ...rows.filter(r=>!r.read).map(r=>apiPatch(`/collaboration/notifications/${r.id}/`,{read:true})),
+   apiPost("/collaboration/notifications/mark-all-read/",{}),
    apiPost("/alerts/mark-all-read/",{}),
  ]);await load()}
  async function respond(id:number,action:"accept"|"decline"){setBusy(`${action}-${id}`);try{await authFetch(`/auth/invitations/${id}/respond/`,{method:"POST",body:JSON.stringify({action})});setMessage(action==="accept"?"Company invitation accepted.":"Company invitation declined.");await load()}catch(e){setMessage(e instanceof Error?e.message:"Invitation response failed")}finally{setBusy("")}}
  async function togglePreference(key:keyof Preference){if(!preference)return;const next={...preference,[key]:!preference[key]};setPreference(next);try{await apiPatch("/notifications/preferences/",{[key]:next[key]});setMessage("Notification preference saved.")}catch(e){setPreference(preference);setMessage(e instanceof Error?e.message:"Preference could not be saved")}}
- const unread=useMemo(()=>rows.filter(row=>!row.read).length+alerts.filter(row=>!row.read).length,[rows,alerts]);
  const visibleRows=useMemo(()=>rows.filter(row=>filter==="all"||row.kind.includes(filter)),[rows,filter]);
  const visibleAlerts=useMemo(()=>alerts.filter(row=>filter==="all"||row.alert_type.includes(filter)),[alerts,filter]);
  return <div className="page-stack notifications-page"><header className="module-header"><div><span className="eyebrow">NOTIFICATION CENTER</span><h1>Intelligence, deadlines, invitations, and team activity</h1><p>ForgeGov combines opportunity intelligence with capture and collaboration events so your team can act from one inbox.</p></div><div className="row-actions"><button className="secondary-button" onClick={()=>void load()}><RefreshCw size={16}/> Refresh</button><button className="primary-button" disabled={!unread} onClick={()=>void markAll()}><CheckCheck size={16}/> Mark all read</button></div></header>{message&&<div className="system-banner warning">{message}</div>}

@@ -28,7 +28,7 @@ from .ai import live_web_status
 from .version import VERSION as FORGEGOV_VERSION
 from .capture_intelligence import build_capture_assessment
 from .win_strategy import build_win_strategy
-from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, SavedSearch, Task, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, ProjectRoomActivity, OrganizationProfile, NetworkConnection, ProjectRoomInvitation, OrganizationJoinRequest, AwardSyncRun, ConnectorSource, AccountActionToken, OrganizationSecurityPolicy, UserSecurityProfile, ProjectRoomMember, AIConversation, AIMessage, OpportunityDocument, ProposalPlan, PricingPlan, PortfolioSnapshot, AuditLog
+from .models import Award, IntelligenceAlert, Invitation, Membership, Opportunity, Organization, PipelineItem, Pursuit, SavedSearch, Task, Vendor, ProjectRoom, ProjectRoomPartner, ProjectRoomTask, ProjectRoomNote, ProjectRoomFile, ProjectRoomActivity, OrganizationProfile, NetworkConnection, ProjectRoomInvitation, OrganizationJoinRequest, AwardSyncRun, ConnectorSource, AccountActionToken, OrganizationSecurityPolicy, UserSecurityProfile, ProjectRoomMember, AIConversation, AIMessage, OpportunityDocument, ProposalPlan, PricingPlan, PortfolioSnapshot, AuditLog
 
 User = get_user_model()
 
@@ -1975,10 +1975,11 @@ class PortfolioIntelligenceTests(AuthenticatedApiTestCase):
             title="Portfolio economics test",
             agency="Department of the Navy",
         )
-        PipelineItem.objects.create(
+        Pursuit.objects.create(
             organization=self.organization,
             opportunity=opportunity,
-            stage=PipelineItem.Stage.PROPOSAL,
+            title=opportunity.title,
+            stage=Pursuit.Stage.PROPOSAL,
             estimated_value=1000000,
             probability_of_win=60,
         )
@@ -2019,24 +2020,27 @@ class PortfolioIntelligenceTests(AuthenticatedApiTestCase):
         active = Opportunity.objects.create(source_id="m4-active", title="Active", agency="Army")
         lost = Opportunity.objects.create(source_id="m4-lost", title="Lost", agency="Army")
         no_bid = Opportunity.objects.create(source_id="m4-nobid", title="No Bid", agency="Army")
-        PipelineItem.objects.create(
+        Pursuit.objects.create(
             organization=self.organization,
             opportunity=active,
-            stage=PipelineItem.Stage.CAPTURE,
+            title=active.title,
+            stage=Pursuit.Stage.CAPTURE,
             estimated_value=500000,
             probability_of_win=50,
         )
-        PipelineItem.objects.create(
+        Pursuit.objects.create(
             organization=self.organization,
             opportunity=lost,
-            stage=PipelineItem.Stage.LOST,
+            title=lost.title,
+            stage=Pursuit.Stage.LOST,
             estimated_value=900000,
             probability_of_win=0,
         )
-        PipelineItem.objects.create(
+        Pursuit.objects.create(
             organization=self.organization,
             opportunity=no_bid,
-            stage=PipelineItem.Stage.NO_BID,
+            title=no_bid.title,
+            stage=Pursuit.Stage.NO_BID,
             estimated_value=700000,
             probability_of_win=0,
         )
@@ -2051,10 +2055,11 @@ class PortfolioIntelligenceTests(AuthenticatedApiTestCase):
         from .models import PortfolioSnapshot
 
         opportunity = Opportunity.objects.create(source_id="m4-snapshot", title="Snapshot", agency="Air Force")
-        PipelineItem.objects.create(
+        Pursuit.objects.create(
             organization=self.organization,
             opportunity=opportunity,
-            stage=PipelineItem.Stage.QUALIFIED,
+            title=opportunity.title,
+            stage=Pursuit.Stage.QUALIFY,
             estimated_value=250000,
             probability_of_win=25,
         )
@@ -2073,10 +2078,11 @@ class PortfolioIntelligenceTests(AuthenticatedApiTestCase):
                 title=f"Concentration {index}",
                 agency="Department of the Army" if index == 1 else "Department of Energy",
             )
-            PipelineItem.objects.create(
+            Pursuit.objects.create(
                 organization=self.organization,
                 opportunity=opportunity,
-                stage=PipelineItem.Stage.CAPTURE,
+                title=opportunity.title,
+                stage=Pursuit.Stage.CAPTURE,
                 estimated_value=value,
                 probability_of_win=50,
             )

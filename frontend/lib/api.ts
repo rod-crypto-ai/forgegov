@@ -103,7 +103,7 @@ export async function apiDelete(path: string): Promise<void> {
 }
 
 export async function authFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const allowRefresh = path === "/auth/me/" || !path.startsWith("/auth/");
+  const allowRefresh = path === "/auth/me/" || path === "/auth/workspaces/" || !path.startsWith("/auth/");
   return requestJson<T>(path, options, allowRefresh);
 }
 

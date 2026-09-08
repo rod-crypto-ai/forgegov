@@ -1405,6 +1405,23 @@ html[data-theme="dark"] .session-icon{background:#15273f}
 .workspace-menu-company .company-identity-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .forge-sidebar.collapsed .workspace-logo-avatar .company-logo-mark{width:32px;height:32px;flex-basis:32px}
 
+/* v3.2.2 live-audit stabilization */
+.forge-sidebar{align-self:start}
+.forge-brand>span:last-child{white-space:nowrap}
+.landing-brand>span:last-child{display:block;white-space:nowrap;line-height:1.05}
+.landing-brand small{display:block;margin-top:2px}
+.auth-card{color:#eef6ff}
+.auth-card h1,.auth-brand b{color:#f8fbff}
+.auth-card>svg{color:#7fb3ef}
+.auth-password-row a,.auth-switch a{color:#91c4ff}
+.workspace-logo-avatar .company-logo-mark img{object-fit:cover;background:transparent}
+.command-activity .activity-dot{display:block;flex:0 0 9px}
+.command-activity>div>a>span:not(.activity-dot){display:flex;flex:1;min-width:0;flex-direction:column;gap:3px}
+.naics-reference-controls label{display:grid;gap:6px}
+.naics-reference-controls label>span{font-size:12px;font-weight:800;color:var(--muted)}
+.naics-reference-controls select{min-height:44px;border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:9px 12px;color:var(--text)}
+.dashboard-loading-state{min-height:260px;display:flex;align-items:center;justify-content:center;gap:12px;border:1px solid var(--border);border-radius:18px;background:var(--surface);color:var(--muted)}
+
 /* v3.2.2 proposal intelligence and review automation */
 .proposal-review-center{display:grid;gap:16px;min-width:0}.proposal-review-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.proposal-review-hero h2{margin:4px 0}.proposal-review-hero p{margin:0;color:var(--muted)}
 .proposal-review-launch{display:grid;grid-template-columns:minmax(0,1fr) 230px auto;align-items:center;gap:14px}.proposal-review-launch>div{display:flex;align-items:center;gap:12px}.proposal-review-launch p{margin:3px 0;color:var(--muted)}

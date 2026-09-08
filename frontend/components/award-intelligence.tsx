@@ -33,7 +33,7 @@ export function AwardIntelligence() {
   const [data, setData] = useState<Result | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [persist, setPersist] = useState(true);
+  const [persist, setPersist] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [selected, setSelected] = useState<UsaAward | null>(null);
@@ -99,7 +99,7 @@ export function AwardIntelligence() {
           <label><span>Results per page</span><select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}><option>25</option><option>50</option><option>100</option></select></label>
         </div>
         <div className="console-actions">
-          <label className="persist-check"><input type="checkbox" checked={persist} onChange={(e) => setPersist(e.target.checked)} /> Store results in ForgeGov</label>
+          <label className="persist-check"><input type="checkbox" checked={persist} onChange={(e) => setPersist(e.target.checked)} /> Save these results to ForgeGov analytics</label>
           <button className="secondary-button" onClick={exportCsv} disabled={!data?.results?.length}><Download size={16}/> Export CSV</button>
           <button className="primary-button" onClick={() => search(1)} disabled={loading}><RefreshCw size={16} className={loading ? "spin" : ""}/>{loading ? "Searching..." : "Search awards"}</button>
         </div>

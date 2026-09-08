@@ -568,7 +568,7 @@ def upsert_grants_opportunity(record: dict[str, Any]) -> tuple[Opportunity, bool
     opportunity_id = record.get("id") or record.get("opportunityId")
     source_id = _grant_source_id(opportunity_id)
     number = _safe_text(record.get("number") or record.get("opportunityNumber"), max_length=120)
-    title = _safe_text(record.get("title") or record.get("opportunityTitle"), max_length=500) or "Untitled Grants.gov opportunity"
+    title = _clean_public_text(record.get("title") or record.get("opportunityTitle"), max_length=500) or "Untitled Grants.gov opportunity"
     agency = _safe_text(record.get("agencyName") or record.get("owningAgencyCode"), max_length=255)
     agency_code = _safe_text(record.get("agencyCode") or record.get("owningAgencyCode"), max_length=80)
     status_value = _safe_text(record.get("oppStatus"), max_length=80)
@@ -595,7 +595,7 @@ def upsert_grants_opportunity(record: dict[str, Any]) -> tuple[Opportunity, bool
         "source": "grants.gov",
         "solicitation_number": number,
         "title": title,
-        "description": _safe_text(record.get("synopsisDesc") or record.get("description")),
+        "description": _clean_public_text(record.get("synopsisDesc") or record.get("description")),
         "agency": agency or agency_code,
         "subagency": agency_code,
         "office": "",
@@ -704,6 +704,10 @@ def search_grants_opportunities(
             opportunity_id = record.get("id")
             normalized.append({
                 **record,
+                "title": _clean_public_text(record.get("title") or record.get("opportunityTitle"), max_length=500),
+                "opportunityTitle": _clean_public_text(record.get("opportunityTitle") or record.get("title"), max_length=500),
+                "synopsisDesc": _clean_public_text(record.get("synopsisDesc") or record.get("description"), max_length=200000),
+                "description": _clean_public_text(record.get("description") or record.get("synopsisDesc"), max_length=200000),
                 "source_id": _grant_source_id(opportunity_id),
                 "source_url": f"https://www.grants.gov/search-results-detail/{opportunity_id}",
             })
@@ -1042,6 +1046,16 @@ def search_usaspending_contract_vehicles(
     results = data.get("results") if isinstance(data, dict) else []
     if not isinstance(results, list):
         results = []
+    keyword_terms = [term.casefold() for term in keyword.split() if len(term) >= 2]
+    if keyword_terms:
+        searchable_fields = ("Award ID", "Recipient Name", "Description", "Awarding Agency", "Funding Agency", "Award Type")
+        results = [
+            record for record in results
+            if isinstance(record, dict) and all(
+                term in " ".join(_safe_text(record.get(field)) for field in searchable_fields).casefold()
+                for term in keyword_terms
+            )
+        ]
     created = updated = unchanged = quarantined = 0
     errors: list[str] = []
     if persist:

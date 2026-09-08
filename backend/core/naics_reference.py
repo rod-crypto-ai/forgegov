@@ -11,6 +11,14 @@ from rest_framework.response import Response
 DATA_FILE = Path(__file__).resolve().parent / "data" / "naics_2022.json"
 
 
+def _display_title(value) -> str:
+    title = str(value or "").strip()
+    # Census source exports use a trailing T as a title footnote marker.
+    if len(title) > 1 and title.endswith("T") and (title[-2].islower() or title[-2] == ")"):
+        return title[:-1]
+    return title
+
+
 @lru_cache(maxsize=1)
 def _dataset() -> dict:
     return json.loads(DATA_FILE.read_text())
@@ -46,7 +54,7 @@ def naics_reference(request):
             or query in str(row.get("title") or "").lower()
         ]
 
-    rows = rows[:limit]
+    rows = [{**row, "title": _display_title(row.get("title"))} for row in rows[:limit]]
     return Response({
         "version": payload.get("version"),
         "source": payload.get("source"),

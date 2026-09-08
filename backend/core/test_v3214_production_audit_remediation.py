@@ -4,8 +4,9 @@ from unittest.mock import Mock, patch
 from django.utils import timezone
 from django.test import override_settings
 
-from .integrations import _clean_attachment_name, search_sam_contract_awards, search_sba_subnet_opportunities
-from .models import Agency, Invitation, Membership, NetworkConnection, Opportunity, Organization, OrganizationProfile, PipelineItem, ProjectRoom, ProjectRoomInvitation
+from .integrations import _clean_attachment_name, search_grants_opportunities, search_sam_contract_awards, search_sba_subnet_opportunities, search_usaspending_contract_vehicles
+from .intelligence.services.award_ingestion import connector_registry_payload
+from .models import Agency, CollaborationNotification, Invitation, Membership, NetworkConnection, Opportunity, Organization, OrganizationProfile, PipelineItem, ProjectRoom, ProjectRoomInvitation, Pursuit
 from .tests import AuthenticatedApiTestCase
 
 
@@ -41,15 +42,69 @@ class ProductionAuditRemediationTests(AuthenticatedApiTestCase):
         directory = self.client.get("/api/network/directory/").json()
         self.assertEqual(directory["results"], [])
 
-    def test_dashboard_shared_metrics_use_active_pipeline_definition(self):
+    def test_dashboard_separates_pipeline_and_pursuit_definitions(self):
         active = Opportunity.objects.create(source_id="active-pipeline", title="Active pipeline")
         closed = Opportunity.objects.create(source_id="closed-pipeline", title="Closed pipeline")
         PipelineItem.objects.create(organization=self.organization, opportunity=active, stage="capture", estimated_value=1000, probability_of_win=50)
         PipelineItem.objects.create(organization=self.organization, opportunity=closed, stage="lost", estimated_value=9000, probability_of_win=100)
+        Pursuit.objects.create(organization=self.organization, opportunity=active, title="Active pursuit", stage=Pursuit.Stage.PROPOSAL, estimated_value=2000, probability_of_win=75)
+        Pursuit.objects.create(organization=self.organization, opportunity=closed, title="Closed pursuit", stage=Pursuit.Stage.LOST, estimated_value=9000, probability_of_win=100)
         payload = self.client.get("/api/dashboard/summary/").json()
         self.assertEqual(payload["pipeline"]["total"], 1)
         self.assertEqual(payload["pursuits"]["total"], 1)
         self.assertEqual(float(payload["pipeline"]["weighted_value"]), 500)
+        self.assertEqual(float(payload["pursuits"]["weighted_value"]), 1500)
+
+    def test_admin_invitation_list_expires_old_pending_rows(self):
+        invitation = Invitation.objects.create(
+            organization=self.organization, email="expired@example.com", role=Membership.Role.VIEWER,
+            token="expired-admin-list", expires_at=timezone.now() - timedelta(minutes=1),
+        )
+        response = self.client.get("/api/team/invitations/")
+        self.assertEqual(response.status_code, 200)
+        invitation.refresh_from_db()
+        self.assertEqual(invitation.status, Invitation.Status.EXPIRED)
+
+    def test_collaboration_notification_filters_unread_and_intelligence_copies(self):
+        CollaborationNotification.objects.create(organization=self.organization, user=self.user, title="Alert copy", kind="intelligence_new_opportunity", read=False)
+        CollaborationNotification.objects.create(organization=self.organization, user=self.user, title="Project update", kind="project_room", read=False)
+        CollaborationNotification.objects.create(organization=self.organization, user=self.user, title="Read update", kind="project_room", read=True)
+        payload = self.client.get("/api/collaboration/notifications/?read=false&exclude_intelligence=true").json()
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["results"][0]["title"], "Project update")
+
+    def test_global_search_deduplicates_duplicate_opportunity_records(self):
+        Opportunity.objects.create(source_id="duplicate-a", title="Shared search result", solicitation_number="SOL-1")
+        Opportunity.objects.create(source_id="duplicate-b", title="Shared search result", solicitation_number="SOL-1")
+        payload = self.client.get("/api/intelligence/search/?q=Shared%20search").json()
+        matches = [row for row in payload["results"] if row["type"] == "opportunity"]
+        self.assertEqual(len(matches), 1)
+
+    def test_unprobed_connector_registry_does_not_claim_current_health(self):
+        payload = connector_registry_payload(probe=False)
+        self.assertTrue(payload["connectors"])
+        self.assertTrue(all(row["status"] == "not_verified" for row in payload["connectors"]))
+        self.assertEqual(payload["summary"]["healthy"], 0)
+
+    @patch("core.integrations.resilient_request")
+    def test_grants_search_decodes_html_entities(self, request):
+        response = Mock(ok=True, status_code=200)
+        response.json.return_value = {"errorcode": 0, "data": {"hitCount": 1, "oppHits": [{"id": 123, "title": "Alpha &ndash; Beta", "synopsisDesc": "One &amp; two"}]}}
+        request.return_value = response
+        row = search_grants_opportunities()["opportunities"][0]
+        self.assertEqual(row["title"], "Alpha – Beta")
+        self.assertEqual(row["description"], "One & two")
+
+    @patch("core.integrations.resilient_request")
+    def test_vehicle_keyword_excludes_visibly_irrelevant_rows(self, request):
+        response = Mock(ok=True, status_code=200)
+        response.json.return_value = {"results": [
+            {"Award ID": "A", "Description": "Logistics support vehicle", "Recipient Name": "Alpha"},
+            {"Award ID": "B", "Description": "Medical laboratory services", "Recipient Name": "Beta"},
+        ], "page_metadata": {"hasNext": False}}
+        request.return_value = response
+        rows = search_usaspending_contract_vehicles(keyword="logistics")["results"]
+        self.assertEqual([row["Award ID"] for row in rows], ["A"])
 
     def test_connector_manager_lists_every_advertised_source(self):
         keys = {row["key"] for row in self.client.get("/api/intelligence/connector-registry/").json()["connectors"]}
@@ -58,6 +113,7 @@ class ProductionAuditRemediationTests(AuthenticatedApiTestCase):
     def test_attachment_filename_uses_official_query_metadata(self):
         self.assertEqual(_clean_attachment_name("", "https://sam.gov/download?filename=Solicitation%20PWS.pdf"), "Solicitation PWS.pdf")
 
+    @override_settings(CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}})
     @patch("core.integrations.resilient_request")
     def test_subnet_second_application_page_requests_and_returns_new_source_pages(self, request):
         def response_for(_source, _method, url, **kwargs):

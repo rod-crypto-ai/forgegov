@@ -373,6 +373,13 @@ def dashboard_summary(request):
         output_field=DecimalField(max_digits=20, decimal_places=2),
     )
     weighted_value = active_pipeline.exclude(estimated_value__isnull=True).aggregate(total=Sum(weighted_expression))["total"] or 0
+    pursuit_base = Pursuit.objects.filter(organization=organization)
+    active_pursuits = pursuit_base.exclude(stage__in=[Pursuit.Stage.AWARDED, Pursuit.Stage.LOST, Pursuit.Stage.NO_BID])
+    pursuit_counts = {
+        row["stage"]: row["count"]
+        for row in active_pursuits.values("stage").annotate(count=Count("id"))
+    }
+    pursuit_weighted_value = active_pursuits.exclude(estimated_value__isnull=True).aggregate(total=Sum(weighted_expression))["total"] or 0
     award_totals = Award.objects.aggregate(total=Sum("obligated_amount"))
     now = timezone.now()
     return Response({
@@ -390,8 +397,9 @@ def dashboard_summary(request):
             "weighted_value": weighted_value,
         },
         "pursuits": {
-            "total": active_pipeline.count(),
-            "by_stage": pipeline_counts,
+            "total": active_pursuits.count(),
+            "by_stage": pursuit_counts,
+            "weighted_value": pursuit_weighted_value,
         },
         "tasks": {
             "open": task_base.filter(completed=False).count(),
@@ -1130,11 +1138,23 @@ def global_search(request):
     for item in Award.objects.filter(Q(recipient_name__icontains=query) | Q(award_number__icontains=query) | Q(description__icontains=query) | Q(awarding_agency__icontains=query)).order_by("-start_date", "-updated_at")[:limit]:
         add("award", item.id, item.description or item.award_number or "Federal award", f"{item.recipient_name} · {item.awarding_agency}".strip(" ·"), f"/intelligence/award/{item.award_number or item.source_id or item.id}", group="Awards")
 
-    groups = {}
+    deduplicated = []
+    seen = set()
     for row in results:
+        if row["type"] in {"opportunity", "grant"}:
+            key = (row["type"], str(row["title"]).strip().casefold(), str(row["subtitle"]).strip().casefold())
+        else:
+            key = (row["type"], row["href"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(row)
+    deduplicated = deduplicated[:limit * 8]
+    groups = {}
+    for row in deduplicated:
         groups.setdefault(row["group"], 0)
         groups[row["group"]] += 1
-    return Response({"query": query, "results": results[:limit * 8], "groups": groups})
+    return Response({"query": query, "results": deduplicated, "groups": groups})
 
 
 @api_view(["GET"])
@@ -1166,6 +1186,7 @@ def command_center(request):
     activity = sorted(activity, key=lambda row: row["created_at"], reverse=True)[:12]
 
     pipeline = PipelineItem.objects.filter(organization=organization).exclude(stage__in=[PipelineItem.Stage.LOST, PipelineItem.Stage.NO_BID, PipelineItem.Stage.ARCHIVED])
+    pursuits = Pursuit.objects.filter(organization=organization).exclude(stage__in=[Pursuit.Stage.AWARDED, Pursuit.Stage.LOST, Pursuit.Stage.NO_BID])
     open_tasks = Task.objects.filter(organization=organization, completed=False)
     active_rooms = rooms.filter(status__in=[ProjectRoom.Status.PLANNING, ProjectRoom.Status.ACTIVE])
     ProjectRoomInvitation.objects.filter(status=ProjectRoomInvitation.Status.PENDING, expires_at__lte=now).update(status=ProjectRoomInvitation.Status.EXPIRED, responded_at=now)
@@ -1185,7 +1206,7 @@ def command_center(request):
         insights.append({"severity":"success","title":"Workspace is under control","detail":"No overdue work or pending collaboration decisions were detected.","href":"/"})
 
     weighted_pipeline = Decimal("0")
-    for item in pipeline.exclude(stage__in=[PipelineItem.Stage.LOST, PipelineItem.Stage.NO_BID, PipelineItem.Stage.ARCHIVED]):
+    for item in pursuits:
         if item.estimated_value:
             weighted_pipeline += item.estimated_value * Decimal(item.probability_of_win or 0) / Decimal("100")
 
@@ -1194,7 +1215,8 @@ def command_center(request):
     latest_sync = AwardSyncRun.objects.filter(connector_key="usaspending").order_by("-created_at").first()
     connector_rows = ConnectorSource.objects.filter(enabled=True).order_by("scope", "name")
     connector_health = {
-        "healthy": connector_rows.filter(last_status__in=["healthy", "reachable", "ok"]).count(),
+        "healthy": 0,
+        "verified": 0,
         "attention": connector_rows.exclude(last_status__in=["healthy", "reachable", "ok", "not_checked"]).count(),
         "total": connector_rows.count(),
     }
@@ -3109,9 +3131,20 @@ class CollaborationNotificationViewSet(viewsets.ModelViewSet):
     http_method_names=["get","patch","head","options"]
     def get_queryset(self):
         organization = _request_organization(self.request)
-        return CollaborationNotification.objects.filter(
+        queryset = CollaborationNotification.objects.filter(
             Q(user=self.request.user) | Q(organization=organization, user__isnull=True)
         ).select_related("organization", "project_room")
+        read = self.request.query_params.get("read")
+        if read is not None:
+            queryset = queryset.filter(read=_truthy(read))
+        if _truthy(self.request.query_params.get("exclude_intelligence")):
+            queryset = queryset.exclude(kind__startswith="intelligence_")
+        return queryset
+
+    @action(detail=False, methods=["post"], url_path="mark-all-read")
+    def mark_all_read(self, request):
+        updated = self.get_queryset().filter(read=False).update(read=True, updated_at=timezone.now())
+        return Response({"updated": updated})
 
 
 def _network_connection_between(left, right):

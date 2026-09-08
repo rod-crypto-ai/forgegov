@@ -4,7 +4,7 @@ from collections import defaultdict
 from decimal import Decimal
 from typing import Any
 
-from .models import PipelineItem, PortfolioSnapshot, PricingPlan, ProposalCloseout
+from .models import PortfolioSnapshot, PricingPlan, ProposalCloseout, Pursuit
 from .pricing_engine import calculate_plan, dec, money
 from .prime_sub_cashflow import prime_sub_payload
 
@@ -19,7 +19,8 @@ def _stage_weight(stage: str, probability: int) -> Decimal:
 
 def build_portfolio_intelligence(*, organization) -> dict[str, Any]:
     pipeline = list(
-        PipelineItem.objects.filter(organization=organization)
+        Pursuit.objects.filter(organization=organization)
+        .exclude(stage__in=[Pursuit.Stage.AWARDED, Pursuit.Stage.LOST, Pursuit.Stage.NO_BID])
         .select_related("opportunity")
         .order_by("-updated_at")
     )
@@ -46,10 +47,7 @@ def build_portfolio_intelligence(*, organization) -> dict[str, Any]:
     risk_counts = defaultdict(int)
 
     for row in pipeline:
-        if row.stage in {PipelineItem.Stage.LOST, PipelineItem.Stage.NO_BID, PipelineItem.Stage.ARCHIVED}:
-            continue
-
-        plan = pricing_plans.get(row.opportunity_id)
+        plan = pricing_plans.get(row.opportunity_id) if row.opportunity_id else None
         calc = calculate_plan(plan) if plan else None
         prime_sub = prime_sub_payload(plan) if plan else None
 
@@ -82,7 +80,7 @@ def build_portfolio_intelligence(*, organization) -> dict[str, Any]:
                 if int(clin.get("option_year") or 0) > 0:
                     option_year_value += dec(clin.get("target_price"))
 
-        agency = (row.opportunity.agency or "Agency unavailable").strip()
+        agency = ((row.opportunity.agency if row.opportunity else "") or "Agency unavailable").strip()
         agency_rollup[agency]["pipeline"] += value
         agency_rollup[agency]["weighted"] += weighted_value
         agency_rollup[agency]["count"] += 1
@@ -93,8 +91,9 @@ def build_portfolio_intelligence(*, organization) -> dict[str, Any]:
 
         active_rows.append({
             "pipeline_id": row.id,
-            "source_id": row.opportunity.source_id,
-            "title": row.opportunity.title,
+            "pursuit_id": row.id,
+            "source_id": row.opportunity.source_id if row.opportunity else "",
+            "title": row.title,
             "agency": agency,
             "stage": row.stage,
             "probability_of_win": probability,
@@ -177,11 +176,17 @@ def build_portfolio_intelligence(*, organization) -> dict[str, Any]:
             "title": "Incomplete financial evidence",
             "detail": f"{len(active_rows) - priced_count} of {len(active_rows)} active pursuit(s) do not have a pricing model; portfolio financial conclusions are incomplete.",
         })
-    if not risks:
+    if not active_rows:
+        risks.append({
+            "severity": "info",
+            "title": "Insufficient portfolio evidence",
+            "detail": "Add active pursuits and pricing evidence before drawing portfolio-level financial conclusions.",
+        })
+    elif not risks:
         risks.append({
             "severity": "success",
-            "title": "No portfolio-level financial red flags",
-            "detail": "Current modeled concentration, margin, and liquidity indicators are within ForgeGov guardrails.",
+            "title": "No modeled portfolio-level financial red flags",
+            "detail": "The current priced pursuits do not trigger ForgeGov concentration, margin, or liquidity guardrails.",
         })
 
     history = PortfolioSnapshot.objects.filter(organization=organization)[:12]
