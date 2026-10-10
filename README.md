@@ -1,4 +1,4 @@
-# ForgeGov v3.2.1
+# ForgeGov v3.2.3
 
 ForgeGov is a government-contracting intelligence and capture-management platform built with Django, Django REST Framework, PostgreSQL, Redis, Celery, Next.js, TypeScript, and Docker.
 
@@ -85,10 +85,10 @@ OpenAI remains available as an optional hosted provider by setting `AI_PROVIDER=
 ./scripts/validate_release.sh
 ```
 
-The 23-stage validator checks Django, migrations, all historical and v3.2.1 backend tests, an uncached backend-to-SearXNG runtime probe, TypeScript, ESLint, the production Next.js build, dependency/security gates, backup/restore, and running containers. Do not tag or deploy the release unless it ends with:
+The 25-stage validator checks Django, migrations, all historical and v3.2.3 backend tests, an uncached backend-to-SearXNG runtime probe, TypeScript, ESLint, the production Next.js build, dependency/security gates, backup/restore, and running containers. Do not tag or deploy the release unless it ends with:
 
 ```text
-ForgeGov v3.2.1 validation completed successfully.
+ForgeGov v3.2.3 validation completed successfully.
 ```
 
 ## Production notes

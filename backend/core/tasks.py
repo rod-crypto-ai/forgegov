@@ -79,40 +79,43 @@ def sync_recent_sam_opportunities(self, days: int = 1, limit: int = 1000):
 
 
 @shared_task(bind=True, autoretry_for=(IntegrationError,), retry_backoff=True, retry_kwargs={"max_retries": 3})
-def sync_usaspending_awards(self, days: int = 365, limit: int = 100):
-    from .integrations import search_usaspending_awards
+def sync_usaspending_awards(self, days: int = 7, pages: int = 10, limit: int = 100):
+    """Incrementally refresh USAspending awards through the canonical ingestion service."""
+    from .intelligence.services.award_ingestion import sync_usaspending_awards as ingest_usaspending_awards
+    from .models import AwardSyncRun
+
     today = date.today()
-    run = DataSyncRun.objects.create(
-        source="usaspending.gov",
-        request_metadata={"days": days, "limit": limit},
+    source_health = usaspending_status(probe=True)
+    source_last_updated = source_health.get("last_updated")
+    previous = AwardSyncRun.objects.filter(
+        connector_key="usaspending-awards",
+        status=AwardSyncRun.Status.SUCCEEDED,
+    ).order_by("-completed_at").first()
+    if source_last_updated and previous and previous.cursor.get("source_last_updated") == source_last_updated:
+        return {"skipped": True, "reason": "source_not_updated", "source_last_updated": source_last_updated}
+
+    run = ingest_usaspending_awards(
+        start_date=(today - timedelta(days=max(1, days))).isoformat(),
+        end_date=today.isoformat(),
+        pages=max(1, pages),
+        limit=limit,
     )
-    try:
-        result = search_usaspending_awards(
-            start_date=(today - timedelta(days=max(1, days))).isoformat(),
-            end_date=today.isoformat(),
-            limit=limit,
-            persist=True,
-            sync_run=run,
-        )
-        persisted = result["persisted"]
-        run.request_metadata = {**(run.request_metadata or {}), "integrity": {
-            "unchanged": persisted.get("unchanged", 0),
-            "quarantined": persisted.get("quarantined", 0),
-        }}
-        run.status = DataSyncRun.Status.PARTIAL if persisted.get("quarantined") else DataSyncRun.Status.SUCCESS
-        run.records_received = len(result["results"])
-        run.records_created = persisted["created"]
-        run.records_updated = persisted["updated"]
-        run.error_message = " | ".join(persisted.get("errors") or [])[:2000]
-        run.finished_at = timezone.now()
-        run.save(update_fields=["status", "records_received", "records_created", "records_updated", "error_message", "finished_at", "request_metadata", "updated_at"])
-        return {"run_id": run.pk, "records_received": run.records_received, "records_created": run.records_created, "records_updated": run.records_updated}
-    except Exception as exc:
-        run.status = DataSyncRun.Status.FAILED
-        run.error_message = str(exc)[:2000]
-        run.finished_at = timezone.now()
-        run.save(update_fields=["status", "error_message", "finished_at", "updated_at"])
-        raise
+    run.cursor = {
+        "source_last_updated": source_last_updated,
+        "window_end": today.isoformat(),
+        "overlap_days": max(1, days),
+    }
+    run.save(update_fields=["cursor", "updated_at"])
+    if run.status == AwardSyncRun.Status.FAILED:
+        raise IntegrationError("USAspending award synchronization failed. " + " | ".join(run.errors[:3]))
+    return {
+        "run_id": run.pk,
+        "status": run.status,
+        "records_seen": run.records_seen,
+        "records_created": run.records_created,
+        "records_updated": run.records_updated,
+        "source_last_updated": source_last_updated,
+    }
 
 
 @shared_task(bind=True, autoretry_for=(IntegrationError,), retry_backoff=True, retry_kwargs={"max_retries": 2})

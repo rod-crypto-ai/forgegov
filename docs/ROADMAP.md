@@ -3,8 +3,8 @@
 ## Active versioned sequence
 
 1. v3.2.2 — Proposal Intelligence & Review Automation (completed)
-2. v3.2.3 — Opportunity Intelligence & Discovery 2.0 (active)
-3. v3.2.4 — Market & Competitor Intelligence 2.0
+2. v3.2.3 — Opportunity Intelligence & Discovery 2.0 (completed)
+3. v3.2.4 — Market & Competitor Intelligence 2.0 (next)
 4. v3.2.5 — Capture Operations & Pipeline 2.0
 5. v3.2.6 — ForgeAI Intelligence Platform
 

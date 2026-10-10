@@ -344,6 +344,13 @@ def usaspending_status(*, probe: bool = False) -> dict[str, Any]:
     try:
         response = resilient_request("usaspending.gov", "GET", url, timeout=15)
         result.update({"reachable": response.ok, "status_code": response.status_code})
+        if response.ok:
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = {}
+            if isinstance(payload, dict):
+                result["last_updated"] = payload.get("last_updated")
     except requests.RequestException:
         result.update({"reachable": False, "error": "USAspending could not be reached."})
     return result
@@ -371,11 +378,24 @@ def _usa_value(record: dict[str, Any], *keys: str, default: Any = "") -> Any:
     return default
 
 
+def usaspending_source_id(record: dict[str, Any]) -> str:
+    """Return USAspending's stable internal award identifier.
+
+    The live API currently returns ``generated_internal_id``. Older fixtures and
+    stored payloads may contain ``generated_unique_award_id`` instead, so retain
+    that as a compatibility fallback before falling back to the human award ID.
+    """
+    return _safe_text(
+        _usa_value(record, "generated_internal_id", "generated_unique_award_id", "Award ID", "award_id"),
+        max_length=255,
+    )
+
+
 def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None = None):
     from django.db import models
     from .models import Agency, Award, Vendor
 
-    source_id = _safe_text(_usa_value(record, "generated_unique_award_id", "Award ID", "award_id"), max_length=255)
+    source_id = usaspending_source_id(record)
     if not source_id:
         raise IntegrationError("USAspending returned an award without an award ID.")
 
@@ -390,6 +410,19 @@ def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None =
     naics = _safe_text(_usa_value(record, "NAICS Code", "naics_code"), max_length=12)
     psc = _safe_text(_usa_value(record, "PSC Code", "product_or_service_code"), max_length=12)
     pop = _safe_text(_usa_value(record, "Place of Performance", "place_of_performance"), max_length=500)
+
+    # Re-key records stored while USAspending omitted its generated identifier.
+    # This preserves the existing row and its relationships instead of creating
+    # a duplicate when the stable internal identifier becomes available.
+    if source_id != award_number and not Award.objects.filter(source_id=source_id).exists():
+        legacy = Award.objects.filter(
+            source="usaspending.gov",
+            source_id=award_number,
+            award_number=award_number,
+        ).first()
+        if legacy:
+            legacy.source_id = source_id
+            legacy.save(update_fields=["source_id", "updated_at"])
 
     incoming_modified = _grant_date(
         _usa_value(record, "last_modified_date", "Last Modified Date", "last_modified", "source_updated_at")
@@ -496,7 +529,7 @@ def search_usaspending_awards(
         "fields": [
             "Award ID", "Recipient Name", "Recipient UEI", "Award Amount", "Potential Award Amount", "Total Outlays", "Description",
             "Start Date", "End Date", "Awarding Agency", "Funding Agency", "Awarding Sub Agency", "Funding Sub Agency",
-            "Contract Award Type", "NAICS Code", "PSC Code", "Place of Performance", "generated_unique_award_id",
+            "Contract Award Type", "NAICS Code", "PSC Code", "Place of Performance", "generated_internal_id",
         ],
         "page": max(1, page),
         "limit": max(1, min(limit, 100)),
@@ -535,7 +568,7 @@ def search_usaspending_awards(
                 quarantined += 1
                 quarantine_record(
                     source="usaspending.gov", record_type="award.usaspending", payload=record,
-                    source_id=_safe_text(_usa_value(record, "generated_unique_award_id", "Award ID", "award_id"), max_length=255),
+                    source_id=usaspending_source_id(record),
                     reason="persistence_error", error=exc, data_sync_run=sync_run,
                 )
 
@@ -1053,7 +1086,7 @@ def search_usaspending_contract_vehicles(
         "fields": [
             "Award ID", "Recipient Name", "Award Amount", "Potential Award Amount", "Description",
             "Start Date", "End Date", "Awarding Agency", "Funding Agency", "Award Type",
-            "generated_unique_award_id",
+            "generated_internal_id",
         ],
         "page": max(1, page),
         "limit": max(1, min(limit, 100)),
@@ -1102,7 +1135,7 @@ def search_usaspending_contract_vehicles(
                 quarantined += 1
                 quarantine_record(
                     source="usaspending.gov", record_type="award.usaspending.vehicle", payload=record,
-                    source_id=_safe_text(_usa_value(record, "generated_unique_award_id", "Award ID", "award_id"), max_length=255),
+                    source_id=usaspending_source_id(record),
                     reason="vehicle_persistence_error", error=exc,
                 )
     return {

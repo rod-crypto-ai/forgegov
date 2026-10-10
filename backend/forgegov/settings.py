@@ -176,8 +176,18 @@ CELERY_BEAT_SCHEDULE = {}
 if os.getenv("SAM_SYNC_ENABLED", "false").lower() == "true":
     CELERY_BEAT_SCHEDULE["sync-recent-sam-opportunities"] = {
         "task": "core.tasks.sync_recent_sam_opportunities",
-        "schedule": 24 * 60 * 60,
-        "kwargs": {"days": 1, "limit": int(os.getenv("SAM_DAILY_SYNC_LIMIT", "1000"))},
+        "schedule": int(os.getenv("SAM_SYNC_INTERVAL_HOURS", "6")) * 60 * 60,
+        "kwargs": {"days": int(os.getenv("SAM_SYNC_OVERLAP_DAYS", "2")), "limit": int(os.getenv("SAM_DAILY_SYNC_LIMIT", "1000"))},
+    }
+if os.getenv("USASPENDING_SYNC_ENABLED", "false").lower() == "true":
+    CELERY_BEAT_SCHEDULE["sync-usaspending-awards"] = {
+        "task": "core.tasks.sync_usaspending_awards",
+        "schedule": int(os.getenv("USASPENDING_SYNC_INTERVAL_HOURS", "6")) * 60 * 60,
+        "kwargs": {
+            "days": int(os.getenv("USASPENDING_SYNC_OVERLAP_DAYS", "7")),
+            "pages": int(os.getenv("USASPENDING_SYNC_PAGES", "10")),
+            "limit": int(os.getenv("USASPENDING_SYNC_PAGE_SIZE", "100")),
+        },
     }
 if os.getenv("ALERTS_ENABLED", "true").lower() == "true":
     CELERY_BEAT_SCHEDULE["evaluate-saved-search-alerts"] = {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, Building2, Database, Download, Eye, RefreshCw, Search, ShieldCheck, Users, X } from "lucide-react";
+import { ArrowUpRight, Building2, Database, Download, Eye, RefreshCw, Search, Users, X } from "lucide-react";
 import Link from "next/link";
 import { API_BASE_URL, apiGet } from "@/lib/api";
 
@@ -14,6 +14,7 @@ type UsaAward = {
   "End Date"?: string;
   "Awarding Agency"?: string;
   "Funding Agency"?: string;
+  generated_internal_id?: string;
   generated_unique_award_id?: string;
 };
 
@@ -33,7 +34,6 @@ export function AwardIntelligence() {
   const [data, setData] = useState<Result | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [persist, setPersist] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [selected, setSelected] = useState<UsaAward | null>(null);
@@ -41,7 +41,7 @@ export function AwardIntelligence() {
   const search = useCallback(async (requestedPage: number) => {
     setLoading(true);
     setError("");
-    const params = new URLSearchParams({ limit: String(pageSize), page: String(requestedPage), persist: String(persist) });
+    const params = new URLSearchParams({ limit: String(pageSize), page: String(requestedPage) });
     if (query) params.set("q", query);
     if (agency) params.set("agency", agency);
     if (recipient) params.set("recipient", recipient);
@@ -54,7 +54,7 @@ export function AwardIntelligence() {
     } finally {
       setLoading(false);
     }
-  }, [agency, naics, pageSize, persist, query, recipient]);
+  }, [agency, naics, pageSize, query, recipient]);
 
   const initialSearch = useRef(search);
   useEffect(() => {
@@ -85,7 +85,7 @@ export function AwardIntelligence() {
         <div>
           <span className="eyebrow">LIVE FEDERAL AWARD INTELLIGENCE</span>
           <h1>USAspending Awards</h1>
-          <p>Search live federal contract awards, persist results to ForgeGov, and build agency and vendor intelligence from the same records.</p>
+          <p>Search live federal contract awards and review agency and vendor intelligence from official records.</p>
         </div>
         <div className="live-pill"><span /> Live public API</div>
       </section>
@@ -99,14 +99,12 @@ export function AwardIntelligence() {
           <label><span>Results per page</span><select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}><option>25</option><option>50</option><option>100</option></select></label>
         </div>
         <div className="console-actions">
-          <label className="persist-check"><input type="checkbox" checked={persist} onChange={(e) => setPersist(e.target.checked)} /> Save these results to ForgeGov analytics</label>
           <button className="secondary-button" onClick={exportCsv} disabled={!data?.results?.length}><Download size={16}/> Export CSV</button>
           <button className="primary-button" onClick={() => search(1)} disabled={loading}><RefreshCw size={16} className={loading ? "spin" : ""}/>{loading ? "Searching..." : "Search awards"}</button>
         </div>
       </section>
 
       {error && <div className="system-banner warning"><strong>USAspending error:</strong> {error}</div>}
-      {data?.persisted?.enabled && <div className="system-banner success"><ShieldCheck size={17}/><strong>Database updated:</strong> {data.persisted.created} created, {data.persisted.updated} refreshed.</div>}
 
       <section className="intel-kpis">
         <div><Database/><span>Results</span><strong>{data?.results?.length ?? 0}</strong></div>
@@ -120,7 +118,7 @@ export function AwardIntelligence() {
         {!loading && !data?.results?.length ? <div className="table-state"><Database size={30}/><strong>No awards returned</strong><p>Change the filters and search again.</p></div> :
           <div className="award-table-wrap"><table className="award-table"><thead><tr><th>Award / Description</th><th>Recipient</th><th>Agency</th><th>Period</th><th className="amount">Obligated</th></tr></thead><tbody>
             {(data?.results ?? []).map((award, index) => {
-              const uid = award.generated_unique_award_id;
+              const uid = award.generated_internal_id ?? award.generated_unique_award_id;
               return <tr key={`${uid ?? award["Award ID"]}-${index}`} onClick={() => setSelected(award)} tabIndex={0}>
                 <td><strong>{award["Award ID"] || "Award"}</strong><span>{award["Description"] || "No description provided"}</span></td>
                 <td>{award["Recipient Name"] ? <Link className="entity-link" href={`/participants/vendors/profile?name=${encodeURIComponent(award["Recipient Name"] as string)}`}><strong>{award["Recipient Name"]}</strong><ArrowUpRight size={13}/></Link> : <strong>Unknown recipient</strong>}</td>
@@ -133,7 +131,7 @@ export function AwardIntelligence() {
       </section>
       {data && <div className="pagination-bar"><button className="secondary-button" disabled={loading || page <= 1} onClick={() => search(page - 1)}>Previous</button><span>Page <strong>{page}</strong>{data.page_metadata?.total ? ` · ${Number(data.page_metadata.total).toLocaleString()} total awards` : ""}</span><button className="secondary-button" disabled={loading || !data.page_metadata?.hasNext} onClick={() => search(page + 1)}>Next</button></div>}
       <p className="source-note">Live endpoint: <code>{API_BASE_URL}/live/usaspending/awards/</code></p>
-      {selected && <div className="document-viewer-backdrop"><div className="document-viewer"><header><div><Database/><strong>{selected["Award ID"] || "Federal award"}</strong></div><button className="icon-button" onClick={()=>setSelected(null)}><X size={19}/></button></header><div className="document-viewer-empty"><div><Database size={44}/><h2>{selected["Description"] || "Federal contract award"}</h2><div className="intelligence-drawer-grid"><div><span>Recipient</span><strong>{selected["Recipient Name"] || "Unknown"}</strong></div><div><span>Awarding agency</span><strong>{selected["Awarding Agency"] || "Unknown"}</strong></div><div><span>Obligated</span><strong>{money.format(Number(selected["Award Amount"] ?? 0))}</strong></div><div><span>Period</span><strong>{selected["Start Date"] || "—"} to {selected["End Date"] || "—"}</strong></div></div><div className="vehicle-card-actions">{selected["Recipient Name"]&&<Link className="primary-button" href={`/participants/vendors/profile?name=${encodeURIComponent(selected["Recipient Name"])}`}>Company profile</Link>}<Link className="secondary-button" href={`/intelligence/award/${encodeURIComponent(selected["Award ID"]||selected.generated_unique_award_id||"award")}`}>Award workspace</Link>{selected.generated_unique_award_id&&<a className="secondary-button" href={`https://www.usaspending.gov/award/${selected.generated_unique_award_id}/`} target="_blank" rel="noreferrer">Official award <ArrowUpRight size={14}/></a>}</div></div></div></div></div>}
+      {selected && <div className="document-viewer-backdrop"><div className="document-viewer"><header><div><Database/><strong>{selected["Award ID"] || "Federal award"}</strong></div><button className="icon-button" onClick={()=>setSelected(null)}><X size={19}/></button></header><div className="document-viewer-empty"><div><Database size={44}/><h2>{selected["Description"] || "Federal contract award"}</h2><div className="intelligence-drawer-grid"><div><span>Recipient</span><strong>{selected["Recipient Name"] || "Unknown"}</strong></div><div><span>Awarding agency</span><strong>{selected["Awarding Agency"] || "Unknown"}</strong></div><div><span>Obligated</span><strong>{money.format(Number(selected["Award Amount"] ?? 0))}</strong></div><div><span>Period</span><strong>{selected["Start Date"] || "—"} to {selected["End Date"] || "—"}</strong></div></div><div className="vehicle-card-actions">{selected["Recipient Name"]&&<Link className="primary-button" href={`/participants/vendors/profile?name=${encodeURIComponent(selected["Recipient Name"])}`}>Company profile</Link>}{(selected.generated_internal_id||selected.generated_unique_award_id)&&<a className="secondary-button" href={`https://www.usaspending.gov/award/${selected.generated_internal_id||selected.generated_unique_award_id}/`} target="_blank" rel="noreferrer">Official award <ArrowUpRight size={14}/></a>}</div></div></div></div></div>}
     </div>
   );
 }

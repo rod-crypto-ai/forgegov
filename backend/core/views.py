@@ -480,6 +480,11 @@ def ai_chat(request):
 @api_view(["GET"])
 @throttle_classes([SamLiveSearchThrottle])
 def live_sam_search(request):
+    if _truthy(request.query_params.get("persist")):
+        return Response(
+            {"detail": "Live search is read-only. Save selected opportunities through the capture workflow."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     try:
         data = search_sam_opportunities(
             keyword=request.query_params.get("q", ""),
@@ -498,7 +503,7 @@ def live_sam_search(request):
             response_from=request.query_params.get("response_from", ""),
             response_to=request.query_params.get("response_to", ""),
             opportunity_status=request.query_params.get("status", ""),
-            persist=_truthy(request.query_params.get("persist")),
+            persist=False,
         )
         return Response(data)
     except IntegrationError as exc:
@@ -536,9 +541,14 @@ def sam_opportunity_documents(request, notice_id):
         return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
 
 
-@api_view(["GET", "POST"])
+@api_view(["GET"])
 def live_usaspending_awards(request):
-    params = request.query_params if request.method == "GET" else request.data
+    params = request.query_params
+    if _truthy(params.get("persist")):
+        return Response(
+            {"detail": "Live search is read-only. Award ingestion requires an owner or administrator workflow."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     try:
         data = search_usaspending_awards(
             keyword=params.get("q", ""),
@@ -549,7 +559,7 @@ def live_usaspending_awards(request):
             end_date=params.get("end_date") or None,
             page=int(params.get("page", 1)),
             limit=int(params.get("limit", 25)),
-            persist=_truthy(params.get("persist")),
+            persist=False,
         )
         return Response(data)
     except (IntegrationError, TypeError, ValueError) as exc:
@@ -1046,9 +1056,14 @@ def sam_opportunity_detail(request, notice_id: str):
         return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
 
 
-@api_view(["GET", "POST"])
+@api_view(["GET"])
 def live_usaspending_contract_vehicles(request):
-    params = request.query_params if request.method == "GET" else request.data
+    params = request.query_params
+    if _truthy(params.get("persist")):
+        return Response(
+            {"detail": "Live search is read-only. Award ingestion requires an owner or administrator workflow."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     try:
         return Response(search_usaspending_contract_vehicles(
             keyword=params.get("q", ""),
@@ -1059,7 +1074,7 @@ def live_usaspending_contract_vehicles(request):
             end_date=params.get("end_date") or None,
             page=int(params.get("page", 1)),
             limit=int(params.get("limit", 25)),
-            persist=_truthy(params.get("persist")),
+            persist=False,
         ))
     except (IntegrationError, TypeError, ValueError) as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)

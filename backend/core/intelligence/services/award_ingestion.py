@@ -6,7 +6,7 @@ from typing import Any
 from django.db import transaction
 from django.utils import timezone
 
-from ...integrations import IntegrationError, upsert_usaspending_award
+from ...integrations import IntegrationError, upsert_usaspending_award, usaspending_source_id
 from ...integration_resilience import quarantine_record
 from ...models import Award, AwardSyncRun, ConnectorSource
 from ..connectors import connector_registry, get_connector
@@ -101,14 +101,14 @@ def sync_usaspending_awards(*, start_date: str | None = None, end_date: str | No
             seen += 1
             try:
                 with transaction.atomic():
-                    _, was_created = upsert_usaspending_award(record)
+                    award, was_created = upsert_usaspending_award(record)
                 created += int(was_created)
-                updated += int(not was_created)
+                updated += int((not was_created) and bool(getattr(award, "_forgegov_source_version_created", True)))
             except Exception as exc:
                 errors.append(str(exc))
                 quarantine_record(
                     source="usaspending.gov", record_type="award.usaspending", payload=record,
-                    source_id=str(record.get("generated_unique_award_id") or record.get("Award ID") or ""),
+                    source_id=usaspending_source_id(record),
                     reason="award_sync_error", error=exc, award_sync_run=run,
                 )
         run.status = AwardSyncRun.Status.PARTIAL if errors else AwardSyncRun.Status.SUCCEEDED

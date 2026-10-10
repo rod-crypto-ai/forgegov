@@ -278,6 +278,13 @@ class SamContractAwardsIntegrationTests(TestCase):
 
 
 class UsaSpendingIntegrationTests(AuthenticatedApiTestCase):
+    @patch("core.views.search_sam_opportunities")
+    def test_live_sam_search_rejects_get_persistence(self, search):
+        response = self.client.get("/api/live/sam/opportunities/?persist=true")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("read-only", response.json()["detail"])
+        search.assert_not_called()
+
     @patch("core.integrations.requests.post")
     def test_live_usaspending_search_persists_awards(self, mock_post):
         from .integrations import search_usaspending_awards
@@ -290,7 +297,7 @@ class UsaSpendingIntegrationTests(AuthenticatedApiTestCase):
             "page_metadata": {"page": 1, "hasNext": False},
             "results": [{
                 "Award ID": "W56HZV-26-C-0001",
-                "generated_unique_award_id": "CONT_AWD_W56HZV26C0001_9700",
+                "generated_internal_id": "CONT_AWD_W56HZV26C0001_9700",
                 "Recipient Name": "HOWARD DYNAMICS LLC",
                 "Award Amount": 1250000,
                 "Description": "Vehicle maintenance support",
@@ -310,6 +317,7 @@ class UsaSpendingIntegrationTests(AuthenticatedApiTestCase):
         self.assertTrue(Agency.objects.filter(name="Department of Defense").exists())
         payload = mock_post.call_args.kwargs["json"]
         self.assertEqual(payload["filters"]["keywords"], ["maintenance"])
+        self.assertIn("generated_internal_id", payload["fields"])
 
     @patch("core.integrations.requests.post")
     def test_api_endpoint_returns_live_results(self, mock_post):
@@ -321,6 +329,82 @@ class UsaSpendingIntegrationTests(AuthenticatedApiTestCase):
         api_response = self.client.get("/api/live/usaspending/awards/?q=logistics")
         self.assertEqual(api_response.status_code, 200)
         self.assertEqual(api_response.json()["results"], [])
+
+    def test_stable_id_rekeys_legacy_award_without_creating_duplicate(self):
+        from .integrations import upsert_usaspending_award
+
+        legacy = Award.objects.create(
+            source="usaspending.gov",
+            source_id="W56HZV-26-C-0001",
+            award_number="W56HZV-26-C-0001",
+            recipient_name="HOWARD DYNAMICS LLC",
+        )
+
+        award, created = upsert_usaspending_award({
+            "Award ID": "W56HZV-26-C-0001",
+            "generated_internal_id": "CONT_AWD_W56HZV26C0001_9700",
+            "Recipient Name": "HOWARD DYNAMICS LLC",
+        })
+
+        self.assertFalse(created)
+        self.assertEqual(award.pk, legacy.pk)
+        self.assertEqual(Award.objects.count(), 1)
+        self.assertEqual(award.source_id, "CONT_AWD_W56HZV26C0001_9700")
+
+    @patch("core.views.search_usaspending_awards")
+    def test_live_award_search_rejects_get_persistence(self, search):
+        response = self.client.get("/api/live/usaspending/awards/?persist=true")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("read-only", response.json()["detail"])
+        search.assert_not_called()
+
+    @patch("core.views.search_usaspending_awards")
+    def test_live_award_search_does_not_accept_post(self, search):
+        response = self.client.post("/api/live/usaspending/awards/", {"persist": True}, format="json")
+        self.assertEqual(response.status_code, 405)
+        search.assert_not_called()
+
+
+class UsaSpendingScheduledSyncTests(TestCase):
+    @patch("core.tasks.usaspending_status")
+    def test_sync_skips_when_source_has_not_changed(self, status_probe):
+        from .tasks import sync_usaspending_awards
+
+        status_probe.return_value = {"reachable": True, "last_updated": "10/10/2026"}
+        AwardSyncRun.objects.create(
+            connector_key="usaspending-awards",
+            status=AwardSyncRun.Status.SUCCEEDED,
+            completed_at=timezone.now(),
+            cursor={"source_last_updated": "10/10/2026"},
+        )
+
+        result = sync_usaspending_awards.run(days=7, pages=2, limit=25)
+
+        self.assertTrue(result["skipped"])
+        self.assertEqual(AwardSyncRun.objects.count(), 1)
+
+    @patch("core.intelligence.services.award_ingestion.sync_usaspending_awards")
+    @patch("core.tasks.usaspending_status")
+    def test_sync_uses_canonical_ingestion_and_saves_cursor(self, status_probe, ingest):
+        from .tasks import sync_usaspending_awards
+
+        status_probe.return_value = {"reachable": True, "last_updated": "10/10/2026"}
+        run = AwardSyncRun.objects.create(
+            connector_key="usaspending-awards",
+            status=AwardSyncRun.Status.SUCCEEDED,
+            completed_at=timezone.now(),
+            records_seen=4,
+            records_created=3,
+            records_updated=1,
+        )
+        ingest.return_value = run
+
+        result = sync_usaspending_awards.run(days=7, pages=2, limit=25)
+
+        run.refresh_from_db()
+        self.assertEqual(run.cursor["source_last_updated"], "10/10/2026")
+        self.assertEqual(result["records_seen"], 4)
+        self.assertEqual(ingest.call_args.kwargs["pages"], 2)
 
 
 class OpenAIIntegrationTests(AuthenticatedApiTestCase):
@@ -415,7 +499,7 @@ class ExpansionIntegrationTests(AuthenticatedApiTestCase):
             "page_metadata": {"page": 1, "hasNext": False},
             "results": [{
                 "Award ID": "GS00Q14OADU428",
-                "generated_unique_award_id": "CONT_IDV_GS00Q14OADU428_4732",
+                "generated_internal_id": "CONT_IDV_GS00Q14OADU428_4732",
                 "Recipient Name": "EXAMPLE PRIME LLC",
                 "Award Amount": 1000000,
                 "Potential Award Amount": 25000000,
@@ -434,6 +518,12 @@ class ExpansionIntegrationTests(AuthenticatedApiTestCase):
         self.assertEqual(award.award_type, Award.AwardType.VEHICLE)
         codes = mock_post.call_args.kwargs["json"]["filters"]["award_type_codes"]
         self.assertIn("IDV_A", codes)
+
+    @patch("core.views.search_usaspending_contract_vehicles")
+    def test_live_vehicle_search_rejects_get_persistence(self, search):
+        response = self.client.get("/api/live/usaspending/vehicles/?persist=true")
+        self.assertEqual(response.status_code, 400)
+        search.assert_not_called()
 
     @patch("core.integrations.requests.get")
     def test_forecast_directory_parses_official_agency_links(self, mock_get):

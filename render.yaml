@@ -237,6 +237,22 @@ services:
       type: web
       name: forgegov-api
       envVarKey: SAM_GOV_API_KEY
+  - key: SAM_SYNC_ENABLED
+    value: 'true'
+  - key: SAM_SYNC_INTERVAL_HOURS
+    value: '6'
+  - key: SAM_SYNC_OVERLAP_DAYS
+    value: '2'
+  - key: USASPENDING_SYNC_ENABLED
+    value: 'true'
+  - key: USASPENDING_SYNC_INTERVAL_HOURS
+    value: '6'
+  - key: USASPENDING_SYNC_OVERLAP_DAYS
+    value: '7'
+  - key: USASPENDING_SYNC_PAGES
+    value: '10'
+  - key: USASPENDING_SYNC_PAGE_SIZE
+    value: '100'
   - key: ALERTS_ENABLED
     value: 'true'
   - key: NOTIFICATION_DIGESTS_ENABLED

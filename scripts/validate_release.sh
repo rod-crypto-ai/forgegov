@@ -12,12 +12,12 @@ root=pathlib.Path('.')
 assert (root/'VERSION').read_text().strip() == '3.2.3'
 package=json.loads((root/'frontend/package.json').read_text())
 assert package['version'] == '3.2.3'
-assert package['dependencies']['next'] == '16.3.1'
+assert package['dependencies']['next'] == '16.4.0'
 assert 'VERSION = "3.2.3"' in (root/'backend/core/version.py').read_text()
 lock=json.loads((root/'frontend/package-lock.json').read_text())
 assert lock['packages']['']['version'] == '3.2.3', 'frontend package-lock root version is not 3.2.3'
-assert lock['packages']['']['dependencies']['next'] == '16.3.1', 'secure Next.js lockfile baseline is missing'
-assert lock['packages']['node_modules/next']['version'] == '16.3.1', 'installed Next.js lock entry is not the validated secure baseline'
+assert lock['packages']['']['dependencies']['next'] == '16.4.0', 'secure Next.js lockfile baseline is missing'
+assert lock['packages']['node_modules/next']['version'] == '16.4.0', 'installed Next.js lock entry is not the validated secure baseline'
 print('Release identity: 3.2.3')
 PY2
 
