@@ -59,6 +59,7 @@ def run_case(browser_type, scenario: tuple[str, int, int]) -> list[str]:
     try:
         page.goto(BASE_URL + "/capture/operations", wait_until="domcontentloaded", timeout=45000)
         page.wait_for_selector(".capture-ops-page", timeout=15000)
+        page.get_by_text("Enterprise Mission Support", exact=True).first.wait_for(timeout=15000)
         for label in ["Active pursuits", "Weekly capture review", "Enterprise Mission Support", "Agency exposure"]:
             if page.get_by_text(label, exact=False).count() == 0:
                 issues.append(f"missing visible content: {label}")
@@ -80,7 +81,7 @@ def main() -> int:
                 key = f"{browser_name}:{scenario[0]}"
                 issues = run_case(browser_type, scenario)
                 report["cases"][key] = issues
-                print(f"[{'PASS' if not issues else 'FAIL'}] {key}")
+                print(f"[{'PASS' if not issues else 'FAIL'}] {key}{f': {issues}' if issues else ''}")
     failures = {key: value for key, value in report["cases"].items() if value}
     report["passed"] = not failures
     (OUT / "v325-capture-operations-responsive-report.json").write_text(json.dumps(report, indent=2))
