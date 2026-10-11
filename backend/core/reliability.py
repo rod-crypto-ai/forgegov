@@ -10,7 +10,7 @@ from django.core.cache import cache
 from django.db import connection
 from django.utils import timezone
 
-from .models import DataSyncRun
+from .models import AwardSyncRun, DataSyncRun
 from .version import VERSION
 
 
@@ -81,6 +81,39 @@ def sync_freshness() -> dict[str, Any]:
     sources = tuple(getattr(settings, "RELIABILITY_SYNC_SOURCES", ("sam.gov", "usaspending.gov")))
 
     for source in sources:
+        if source == "usaspending.gov":
+            latest_award = AwardSyncRun.objects.filter(connector_key="usaspending-awards").order_by("-created_at").first()
+            if not latest_award:
+                rows[source] = {
+                    "status": "unknown",
+                    "latest_run": None,
+                    "age_hours": None,
+                    "detail": "No sync run recorded yet.",
+                }
+                continue
+
+            reference_time = latest_award.completed_at or latest_award.started_at or latest_award.created_at
+            age_hours = max(0.0, (now - reference_time).total_seconds() / 3600)
+            status_map = {
+                AwardSyncRun.Status.FAILED: "failed",
+                AwardSyncRun.Status.PARTIAL: "partial",
+                AwardSyncRun.Status.RUNNING: "running",
+                AwardSyncRun.Status.PENDING: "pending",
+            }
+            state = status_map.get(latest_award.status, "stale" if age_hours > threshold_hours else "fresh")
+            rows[source] = {
+                "status": state,
+                "latest_run": latest_award.id,
+                "run_status": latest_award.status,
+                "started_at": latest_award.started_at,
+                "finished_at": latest_award.completed_at,
+                "age_hours": round(age_hours, 1),
+                "records_received": latest_award.records_seen,
+                "records_created": latest_award.records_created,
+                "records_updated": latest_award.records_updated,
+            }
+            continue
+
         latest = DataSyncRun.objects.filter(source=source).order_by("-started_at").first()
         if not latest:
             rows[source] = {

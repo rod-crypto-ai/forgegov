@@ -99,6 +99,7 @@ export const navigationGroups: NavGroup[] = [
     label: "Opportunities",
     icon: FileText,
     items: [
+      { href: "/opportunities/recent-federal-activity", label: "Recent Federal Activity", icon: Database, description: "Review synchronized SAM.gov opportunities and USAspending award activity with freshness evidence." },
       { href: "/opportunities/federal-forecasts", label: "Federal Forecasts", icon: CalendarSearch, description: "Search the official Acquisition.gov directory of recurring agency procurement forecasts." },
       { href: "/opportunities/federal-contracts", label: "Federal Contract Opportunities", icon: FileText },
       { href: "/opportunities/federal-vehicles", label: "Federal Contract Vehicles", icon: Network, description: "Search live USAspending IDV records and contract vehicle holders." },

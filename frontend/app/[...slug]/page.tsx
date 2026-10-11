@@ -10,6 +10,7 @@ import { AwardIntelligence } from "@/components/award-intelligence";
 import { getFeatureByPath } from "@/lib/navigation";
 import { PipelineWorkspace, PursuitsWorkspace, TasksWorkspace, SavedSearchesWorkspace } from "@/components/capture-workspaces";
 import { AlertsWorkspace, ContractVehicleWorkspace, ForecastWorkspace, MarketAnalyticsWorkspace, ProfileWorkspace, StateLocalWorkspace, SubcontractWorkspace, TeamingWorkspace } from "@/components/expansion-workspaces";
+import { RecentFederalActivity } from "@/components/recent-federal-activity";
 
 export default function DynamicFeaturePage() {
   const pathname = usePathname();
@@ -20,6 +21,7 @@ export default function DynamicFeaturePage() {
   if (pathname === "/reports/funding") return <ReportPage type="funding" />;
   if (pathname === "/reports/new-entrants") return <ReportPage type="new-entrants" />;
   if (pathname === "/awards/federal-contracts") return <AwardIntelligence />;
+  if (pathname === "/opportunities/recent-federal-activity") return <RecentFederalActivity />;
   if (pathname === "/capture/teaming") return <TeamingWorkspace />;
   if (pathname === "/capture/pipelines") return <PipelineWorkspace />;
   if (pathname === "/capture/pursuits") return <PursuitsWorkspace />;

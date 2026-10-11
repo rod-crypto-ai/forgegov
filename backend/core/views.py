@@ -1,6 +1,7 @@
 from datetime import timedelta
 from decimal import Decimal
 from django.conf import settings
+from django.core.paginator import Paginator
 from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -308,7 +309,7 @@ def award_intelligence_view(request):
 def integration_status(request):
     probe = _truthy(request.query_params.get("probe"))
     latest_sync = DataSyncRun.objects.filter(source="sam.gov").first()
-    latest_usa_sync = DataSyncRun.objects.filter(source="usaspending.gov").first()
+    latest_usa_sync = AwardSyncRun.objects.filter(connector_key="usaspending-awards").order_by("-created_at").first()
     web_status = live_web_status(probe=probe)
     return Response({
         "sam_gov": {
@@ -316,7 +317,19 @@ def integration_status(request):
             "base_url": settings.SAM_GOV_BASE_URL,
             "latest_sync": DataSyncRunSerializer(latest_sync).data if latest_sync else None,
         },
-        "usaspending": {**usaspending_status(probe=probe), "latest_sync": DataSyncRunSerializer(latest_usa_sync).data if latest_usa_sync else None, "stored_awards": Award.objects.filter(source="usaspending.gov").count()},
+        "usaspending": {
+            **usaspending_status(probe=probe),
+            "latest_sync": {
+                "id": latest_usa_sync.id,
+                "status": latest_usa_sync.status,
+                "started_at": latest_usa_sync.started_at,
+                "finished_at": latest_usa_sync.completed_at,
+                "records_received": latest_usa_sync.records_seen,
+                "records_created": latest_usa_sync.records_created,
+                "records_updated": latest_usa_sync.records_updated,
+            } if latest_usa_sync else None,
+            "stored_awards": Award.objects.filter(source="usaspending.gov").count(),
+        },
         "openai": {
             "configured": bool(settings.OPENAI_API_KEY),
             "model": settings.OPENAI_MODEL,
@@ -347,6 +360,125 @@ def integration_status(request):
             "sam_subawards_configured": bool(settings.SAM_GOV_API_KEY),
             "stored_contract_vehicles": Award.objects.filter(award_type=Award.AwardType.VEHICLE).count(),
         },
+    })
+
+
+def _sync_evidence(source):
+    now = timezone.now()
+    stale_after = int(getattr(settings, "RELIABILITY_SYNC_STALE_HOURS", 30))
+    if source == "sam.gov":
+        run = DataSyncRun.objects.filter(source="sam.gov").order_by("-started_at").first()
+        if not run:
+            return {"status": "not_run", "last_completed_at": None, "records_seen": 0}
+        completed = run.finished_at or run.started_at
+        status_value = run.status
+        if status_value == DataSyncRun.Status.SUCCESS and (now - completed).total_seconds() > stale_after * 3600:
+            status_value = "stale"
+        return {
+            "status": status_value,
+            "last_completed_at": run.finished_at,
+            "records_seen": run.records_received,
+            "records_created": run.records_created,
+            "records_updated": run.records_updated,
+        }
+    run = AwardSyncRun.objects.filter(connector_key="usaspending-awards").order_by("-created_at").first()
+    if not run:
+        return {"status": "not_run", "last_completed_at": None, "records_seen": 0}
+    completed = run.completed_at or run.started_at or run.created_at
+    status_value = run.status
+    if status_value == AwardSyncRun.Status.SUCCEEDED and (now - completed).total_seconds() > stale_after * 3600:
+        status_value = "stale"
+    return {
+        "status": status_value,
+        "last_completed_at": run.completed_at,
+        "records_seen": run.records_seen,
+        "records_created": run.records_created,
+        "records_updated": run.records_updated,
+    }
+
+
+@api_view(["GET"])
+def recent_federal_activity(request):
+    """Paginated, stored federal opportunity and award activity with explicit sync evidence."""
+    kind = str(request.query_params.get("kind") or "opportunities").strip().lower()
+    if kind not in {"opportunities", "awards"}:
+        return Response({"detail": "kind must be opportunities or awards."}, status=400)
+    try:
+        page_number = max(1, int(request.query_params.get("page") or 1))
+        page_size = max(1, min(int(request.query_params.get("page_size") or 20), 100))
+    except (TypeError, ValueError):
+        return Response({"detail": "page and page_size must be integers."}, status=400)
+
+    query = str(request.query_params.get("q") or "").strip()
+    agency = str(request.query_params.get("agency") or "").strip()
+    naics = str(request.query_params.get("naics") or "").strip()
+    psc = str(request.query_params.get("psc") or "").strip()
+    if kind == "opportunities":
+        queryset = Opportunity.objects.filter(source="sam.gov").order_by("-posted_date", "-updated_at")
+        if query:
+            queryset = queryset.filter(Q(title__icontains=query) | Q(description__icontains=query) | Q(solicitation_number__icontains=query))
+        if agency:
+            queryset = queryset.filter(Q(agency__icontains=agency) | Q(subagency__icontains=agency) | Q(office__icontains=agency))
+        if naics:
+            queryset = queryset.filter(naics_code__icontains=naics)
+        if psc:
+            queryset = queryset.filter(psc_code__icontains=psc)
+        paginator = Paginator(queryset, page_size)
+        page = paginator.get_page(page_number)
+        results = [{
+            "id": row.id,
+            "source_id": row.source_id,
+            "title": row.title,
+            "description": row.description,
+            "agency": row.agency,
+            "office": row.office,
+            "solicitation_number": row.solicitation_number,
+            "naics_code": row.naics_code,
+            "psc_code": row.psc_code,
+            "notice_type": row.notice_type_raw or row.notice_type,
+            "posted_date": row.posted_date,
+            "response_deadline": row.response_deadline,
+            "source_url": row.source_url,
+        } for row in page.object_list]
+        source = "sam.gov"
+    else:
+        queryset = Award.objects.filter(source="usaspending.gov").order_by("-source_updated_at", "-start_date", "-updated_at")
+        if query:
+            queryset = queryset.filter(Q(description__icontains=query) | Q(award_number__icontains=query) | Q(recipient_name__icontains=query))
+        if agency:
+            queryset = queryset.filter(Q(awarding_agency__icontains=agency) | Q(funding_agency__icontains=agency))
+        if naics:
+            queryset = queryset.filter(naics_code__icontains=naics)
+        if psc:
+            queryset = queryset.filter(psc_code__icontains=psc)
+        paginator = Paginator(queryset, page_size)
+        page = paginator.get_page(page_number)
+        results = [{
+            "id": row.id,
+            "source_id": row.source_id,
+            "award_number": row.award_number,
+            "description": row.description,
+            "recipient_name": row.recipient_name,
+            "awarding_agency": row.awarding_agency,
+            "obligated_amount": row.obligated_amount,
+            "potential_amount": row.potential_amount,
+            "naics_code": row.naics_code,
+            "psc_code": row.psc_code,
+            "start_date": row.start_date,
+            "source_updated_at": row.source_updated_at,
+            "source_url": row.source_url,
+        } for row in page.object_list]
+        source = "usaspending.gov"
+    return Response({
+        "kind": kind,
+        "count": paginator.count,
+        "page": page.number,
+        "page_size": page_size,
+        "total_pages": paginator.num_pages,
+        "next_page": page.next_page_number() if page.has_next() else None,
+        "previous_page": page.previous_page_number() if page.has_previous() else None,
+        "results": results,
+        "sync": _sync_evidence(source),
     })
 
 
@@ -1283,6 +1415,20 @@ def command_center(request):
         .annotate(awards=Count("id"), obligated=Sum("obligated_amount"))
         .order_by("-obligated")[:5]
     )
+    federal_activity_preview = {
+        "opportunities": [{
+            "source_id": row.source_id,
+            "title": row.title,
+            "agency": row.agency,
+            "posted_date": row.posted_date,
+        } for row in Opportunity.objects.filter(source="sam.gov", active=True).order_by("-posted_date", "-updated_at")[:3]],
+        "awards": [{
+            "source_id": row.source_id,
+            "title": row.description or row.award_number or "Federal award",
+            "recipient_name": row.recipient_name,
+            "source_updated_at": row.source_updated_at,
+        } for row in Award.objects.filter(source="usaspending.gov").order_by("-source_updated_at", "-updated_at")[:3]],
+    }
 
     return Response({
         "metrics": {
@@ -1301,6 +1447,7 @@ def command_center(request):
             "latest_award_sync_status": latest_sync.status if latest_sync else "not_run",
             "connectors": connector_health,
             "top_award_recipients": top_award_recipients,
+            "federal_activity": federal_activity_preview,
         },
         "deadlines": deadlines,
         "activity": activity,

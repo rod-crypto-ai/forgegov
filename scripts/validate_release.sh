@@ -76,6 +76,9 @@ docker compose exec backend python manage.py test core.test_v322_proposal_review
 echo "[17b/25] v3.2.3 opportunity discovery + connector integrity tests"
 docker compose exec backend python manage.py test core.test_v323_opportunity_discovery --verbosity 2
 
+echo "[17c/25] v3.2.3 visible federal activity feed tests"
+docker compose exec backend python manage.py test core.test_v323_visible_federal_feed --verbosity 2
+
 echo "[18/25] Live Web runtime connectivity"
 docker compose exec backend python manage.py shell -c 'from core.live_web import search; r=search("federal acquisition forecast", limit=1, timeout=15, allow_cached=False); print(r); assert r.get("status") == "live" and r.get("reachable") is True, r'
 
