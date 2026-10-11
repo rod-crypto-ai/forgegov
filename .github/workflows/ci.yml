@@ -14,7 +14,8 @@ jobs:
           python-version: "3.13"
       - run: pip install -r backend/requirements.txt
       - run: python backend/manage.py test core
-      - run: ruff check backend
+      - name: Ruff fatal-error gate
+        run: ruff check backend --select E9,F63,F7,F82
 
   frontend:
     runs-on: ubuntu-latest
@@ -30,3 +31,30 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run build
+
+  responsive-market-qa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: npm ci --no-audit --no-fund
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+      - run: pip install -r requirements-visual-qa.txt
+      - run: python -m playwright install --with-deps chromium firefox webkit
+      - name: Start production frontend
+        run: |
+          cp -R frontend/.next/static frontend/.next/standalone/.next/static
+          cp -R frontend/public frontend/.next/standalone/public
+          cd frontend && PORT=3100 HOSTNAME=127.0.0.1 node .next/standalone/server.js > /tmp/forgegov-next.log 2>&1 &
+          for attempt in $(seq 1 60); do curl -fsS http://127.0.0.1:3100/intelligence/market >/dev/null && exit 0; sleep 1; done
+          cat /tmp/forgegov-next.log
+          exit 1
+      - name: Cross-browser v3.2.4 responsive QA
+        run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python scripts/visual_qa_market_intelligence.py

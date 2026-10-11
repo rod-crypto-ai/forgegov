@@ -3,7 +3,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-IMAGE="forgegov-visual-qa-frontend:3.2.3"
+IMAGE="forgegov-visual-qa-frontend:3.2.4"
 CONTAINER="forgegov-visual-qa-frontend"
 PORT="${FORGEGOV_QA_FRONTEND_PORT:-3100}"
 BASE_URL="http://127.0.0.1:${PORT}"
@@ -49,3 +49,7 @@ FORGEGOV_QA_BASE_URL="$BASE_URL" \
 echo "Running interactive shell/tablet UX QA..."
 FORGEGOV_QA_BASE_URL="$BASE_URL" \
   .venv-visual-qa/bin/python scripts/visual_qa_shell.py
+
+echo "Running v3.2.4 market-intelligence responsive QA..."
+FORGEGOV_QA_BASE_URL="$BASE_URL" \
+  .venv-visual-qa/bin/python scripts/visual_qa_market_intelligence.py
