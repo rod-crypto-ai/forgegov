@@ -171,6 +171,7 @@ from .microsoft_views import (
 )
 
 from .subcontract_views import subcontract_workspace_detail
+from .capture_operations import capture_operations_view
 
 router = DefaultRouter()
 router.register("organizations", OrganizationViewSet, basename="organization")
@@ -248,6 +249,7 @@ urlpatterns = [
     path("governance/role-matrix/", governance_role_matrix),
     path("dashboard/summary/", dashboard_summary),
     path("reports/portfolio-intelligence/", portfolio_intelligence_view),
+    path("capture/operations/", capture_operations_view),
     path("dashboard/command-center/", command_center),
     path("integrations/status/", integration_status),
     path("integrations/microsoft/status/", microsoft_status),

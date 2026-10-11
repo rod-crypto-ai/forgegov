@@ -341,6 +341,7 @@ class Pursuit(TimeStampedModel):
         AWARDED = "awarded", "Awarded"
         LOST = "lost", "Lost"
         NO_BID = "no_bid", "No-Bid"
+        ARCHIVED = "archived", "Archived"
 
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="pursuits")
     opportunity = models.ForeignKey(Opportunity, null=True, blank=True, on_delete=models.SET_NULL, related_name="pursuits")
@@ -361,6 +362,87 @@ class Pursuit(TimeStampedModel):
 
     def __str__(self):
         return self.title
+
+
+class CapturePlan(TimeStampedModel):
+    """Organization-owned capture plan attached to one canonical pursuit."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        ACTIVE = "active", "Active"
+        ON_HOLD = "on_hold", "On hold"
+        COMPLETE = "complete", "Complete"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="capture_plans")
+    pursuit = models.OneToOneField(Pursuit, on_delete=models.CASCADE, related_name="capture_plan")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    template_key = models.CharField(max_length=40, default="standard")
+    objective = models.TextField(blank=True)
+    customer_need = models.TextField(blank=True)
+    win_strategy = models.TextField(blank=True)
+    key_risks = models.JSONField(default=list, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_capture_plans")
+
+    class Meta:
+        ordering = ["-updated_at", "-id"]
+        indexes = [models.Index(fields=["organization", "status"], name="cap_plan_org_status_idx")]
+
+
+class CaptureMilestone(TimeStampedModel):
+    """Auditable capture milestone with optional dependency and accountable owner."""
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="capture_milestones")
+    plan = models.ForeignKey(CapturePlan, on_delete=models.CASCADE, related_name="milestones")
+    title = models.CharField(max_length=255)
+    category = models.CharField(max_length=40, default="capture")
+    position = models.PositiveSmallIntegerField(default=0)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="owned_capture_milestones")
+    due_at = models.DateTimeField(null=True, blank=True)
+    required = models.BooleanField(default=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    depends_on = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="dependents")
+
+    class Meta:
+        ordering = ["position", "due_at", "id"]
+        constraints = [models.UniqueConstraint(fields=("plan", "title"), name="unique_capture_milestone_title")]
+        indexes = [models.Index(fields=["organization", "completed_at", "due_at"], name="cap_ms_org_due_idx")]
+
+
+class PursuitChange(TimeStampedModel):
+    """Immutable stage/probability history for accountability and trend review."""
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="pursuit_changes")
+    pursuit = models.ForeignKey(Pursuit, on_delete=models.CASCADE, related_name="changes")
+    changed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="pursuit_changes")
+    previous_stage = models.CharField(max_length=30, blank=True)
+    new_stage = models.CharField(max_length=30, blank=True)
+    previous_probability = models.PositiveSmallIntegerField(default=0)
+    new_probability = models.PositiveSmallIntegerField(default=0)
+    reason = models.CharField(max_length=500, blank=True)
+    source = models.CharField(max_length=30, default="manual")
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["organization", "pursuit", "-created_at"], name="pursuit_change_time_idx")]
+
+
+class WeeklyCaptureReview(TimeStampedModel):
+    """Weekly governance checkpoint; decisions are stored as review evidence."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        COMPLETE = "complete", "Complete"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="weekly_capture_reviews")
+    week_start = models.DateField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    notes = models.TextField(blank=True)
+    decisions = models.JSONField(default=list, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="weekly_capture_reviews")
+
+    class Meta:
+        ordering = ["-week_start", "-id"]
+        constraints = [models.UniqueConstraint(fields=("organization", "week_start"), name="unique_weekly_capture_review")]
 
 
 class Agency(TimeStampedModel):
