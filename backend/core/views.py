@@ -60,6 +60,7 @@ from .models import (
     Participant,
     PipelineItem,
     Pursuit,
+    PursuitChange,
     SavedSearch,
     Task,
     TeamingRequest,
@@ -985,6 +986,24 @@ class PursuitViewSet(OrganizationScopedViewSetMixin, viewsets.ModelViewSet):
         if search:
             queryset = queryset.filter(Q(title__icontains=search) | Q(next_action__icontains=search) | Q(incumbent__icontains=search))
         return queryset
+
+    def perform_update(self, serializer):
+        previous = self.get_object()
+        previous_stage = previous.stage
+        previous_probability = previous.probability_of_win
+        pursuit = serializer.save()
+        if pursuit.stage != previous_stage or pursuit.probability_of_win != previous_probability:
+            PursuitChange.objects.create(
+                organization=pursuit.organization,
+                pursuit=pursuit,
+                changed_by=self.request.user,
+                previous_stage=previous_stage,
+                new_stage=pursuit.stage,
+                previous_probability=previous_probability,
+                new_probability=pursuit.probability_of_win,
+                reason=str(self.request.data.get("change_reason") or "")[:500],
+                source="pursuit_workspace",
+            )
 
 
 class TaskViewSet(OrganizationScopedViewSetMixin, viewsets.ModelViewSet):

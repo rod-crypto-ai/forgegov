@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED = "3.2.4"
-FRONTEND_EXPECTED = "3.2.4"
+EXPECTED = "3.2.5"
+FRONTEND_EXPECTED = "3.2.5"
 errors: list[str] = []
 
 
@@ -15,12 +15,12 @@ def require(condition: bool, message: str):
         errors.append(message)
 
 
-require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.2.4")
+require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.2.5")
 require(not (ROOT / "INSTALL.command").exists(), "obsolete root INSTALL.command must be removed")
 require(not (ROOT / "VERIFY.command").exists(), "obsolete root VERIFY.command must be removed")
 package = json.loads((ROOT / "frontend/package.json").read_text())
-require(package.get("version") == FRONTEND_EXPECTED, "frontend package version is not 3.2.4")
-require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.2.4")
+require(package.get("version") == FRONTEND_EXPECTED, "frontend package version is not 3.2.5")
+require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.2.5")
 
 # Historical migrations must never depend on a moving target.
 for migration in ROOT.glob("backend/*/migrations/*.py"):
@@ -288,6 +288,19 @@ for needle in ("@media(max-width:1280px)", "@media(max-width:1080px)", "@media(m
 regression_3211 = (ROOT / "backend/core/test_v3211_integrations_ux.py").read_text()
 for needle in ("test_microsoft_status_is_user_scoped_and_does_not_expose_tokens", "test_microsoft_real_callback_persists_verified_connection", "test_microsoft_verify_marks_existing_connection_verified", "test_viewer_cannot_send_external_microsoft_actions", "test_subcontract_capture_context_is_workspace_isolated"):
     require(needle in regression_3211, f"v3.2.1.1 regression coverage missing: {needle}")
+
+# v3.2.5 Capture Operations & Pipeline 2.0.
+capture_operations = (ROOT / "backend/core/capture_operations.py").read_text()
+capture_page = (ROOT / "frontend/app/capture/operations/page.tsx").read_text()
+regression_325 = (ROOT / "backend/core/test_v325_capture_operations.py").read_text()
+for needle in ("ALLOWED_TRANSITIONS", "MILESTONE_TEMPLATES", "_gate_findings", "WeeklyCaptureReview", "unlinked_pipeline_items"):
+    require(needle in capture_operations, f"v3.2.5 capture operations service missing: {needle}")
+for needle in ("Capture Operations & Pipeline 2.0", "Weekly capture review", "Governed transition", "Agency exposure"):
+    require(needle in capture_page, f"v3.2.5 capture operations UI missing: {needle}")
+for needle in ("test_operations_requires_authentication", "test_stage_gate_blocks_incomplete_bid_review", "test_tenant_workload_and_capture_records_are_isolated", "test_weekly_review_is_idempotent_per_workspace_and_week"):
+    require(needle in regression_325, f"v3.2.5 regression coverage missing: {needle}")
+require((ROOT / "backend/core/migrations/0039_v325_capture_operations.py").exists(), "v3.2.5 capture operations migration is missing")
+require((ROOT / "scripts/visual_qa_capture_operations.py").exists(), "v3.2.5 responsive capture QA is missing")
 
 if errors:
     print("Private beta launch source audit FAILED:")
