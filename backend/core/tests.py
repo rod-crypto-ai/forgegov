@@ -1267,7 +1267,7 @@ class IntelligenceFoundationTests(AuthenticatedApiTestCase):
         payload = response.json()
         self.assertEqual(payload['data']['incumbent']['name'], 'Example Incumbent')
         self.assertEqual(payload['data']['past_winners'][0]['classification'], 'official')
-        self.assertEqual(payload['data']['likely_competitors'][0]['classification'], 'ai_derived')
+        self.assertEqual(payload['data']['likely_competitors'][0]['classification'], 'forgegov_derived_historical_signal')
         self.assertTrue(any(row['source_kind']=='official' for row in payload['evidence']))
 
 

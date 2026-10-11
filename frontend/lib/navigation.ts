@@ -113,6 +113,7 @@ export const navigationGroups: NavGroup[] = [
     icon: BriefcaseBusiness,
     items: [
       { href: "/intelligence/awards", label: "Award Intelligence", icon: Database, description: "Ingest USAspending records and research incumbents, past winners, and agency award concentration." },
+      { href: "/intelligence/market", label: "Market Intelligence", icon: ChartNoAxesCombined, description: "Competitor dossiers, agency buying patterns, market maps, vehicle analysis, vendor comparisons, and teaming recommendations." },
       { href: "/awards/federal-contracts", label: "Federal Contract Awards", icon: BriefcaseBusiness, apiPath: "/live/sam/contract-awards/?record_type=contracts&limit=100", recordLabel: "award" },
       { href: "/awards/federal-idv", label: "Federal Contract IDV Awards", icon: Network, apiPath: "/live/sam/contract-awards/?record_type=idv&limit=100", recordLabel: "IDV award" },
       { href: "/awards/federal-vehicles", label: "Federal Contract Vehicles", icon: Network, apiPath: "/live/sam/contract-awards/?record_type=vehicles&limit=100", recordLabel: "contract vehicle" },

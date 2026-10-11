@@ -2,23 +2,23 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-EXPECTED_VERSION="3.2.3"
+EXPECTED_VERSION="3.2.4"
 
 echo "[1/25] Source + release identity"
 python3 -m compileall -q backend
 python3 - <<'PY2'
 import json, pathlib
 root=pathlib.Path('.')
-assert (root/'VERSION').read_text().strip() == '3.2.3'
+assert (root/'VERSION').read_text().strip() == '3.2.4'
 package=json.loads((root/'frontend/package.json').read_text())
-assert package['version'] == '3.2.3'
+assert package['version'] == '3.2.4'
 assert package['dependencies']['next'] == '16.4.0'
-assert 'VERSION = "3.2.3"' in (root/'backend/core/version.py').read_text()
+assert 'VERSION = "3.2.4"' in (root/'backend/core/version.py').read_text()
 lock=json.loads((root/'frontend/package-lock.json').read_text())
-assert lock['packages']['']['version'] == '3.2.3', 'frontend package-lock root version is not 3.2.3'
+assert lock['packages']['']['version'] == '3.2.4', 'frontend package-lock root version is not 3.2.4'
 assert lock['packages']['']['dependencies']['next'] == '16.4.0', 'secure Next.js lockfile baseline is missing'
 assert lock['packages']['node_modules/next']['version'] == '16.4.0', 'installed Next.js lock entry is not the validated secure baseline'
-print('Release identity: 3.2.3')
+print('Release identity: 3.2.4')
 PY2
 
 echo "[2/25] Release source + production architecture audit"
@@ -79,6 +79,9 @@ docker compose exec backend python manage.py test core.test_v323_opportunity_dis
 echo "[17c/25] v3.2.3 visible federal activity feed tests"
 docker compose exec backend python manage.py test core.test_v323_visible_federal_feed --verbosity 2
 
+echo "[17d/25] v3.2.4 market + competitor intelligence tests"
+docker compose exec backend python manage.py test core.test_v324_market_competitor_intelligence --verbosity 2
+
 echo "[18/25] Live Web runtime connectivity"
 docker compose exec backend python manage.py shell -c 'from core.live_web import search; r=search("federal acquisition forecast", limit=1, timeout=15, allow_cached=False); print(r); assert r.get("status") == "live" and r.get("reachable") is True, r'
 
@@ -137,4 +140,4 @@ echo "[25/25] Health + readiness + container status"
 EXPECTED_VERSION="$EXPECTED_VERSION" ./scripts/release_smoke.sh
 docker compose ps
 
-echo "ForgeGov v3.2.3 validation completed successfully."
+echo "ForgeGov v3.2.4 validation completed successfully."

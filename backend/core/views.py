@@ -150,6 +150,14 @@ from .win_strategy import build_win_strategy
 from .capture_command_center import build_capture_command_center
 from .pursuit_decision import build_pursuit_decision, record_pursuit_decision
 from .competitive_positioning import build_competitive_positioning, record_competitive_positioning
+from .market_intelligence import (
+    agency_buying_patterns,
+    compare_vendors,
+    market_map,
+    teaming_recommendations,
+    vehicle_analysis,
+    vendor_dossier,
+)
 from .capture_copilot import COPILOT_MODES, build_capture_copilot_brief, run_capture_copilot
 from .proposal_workspace import build_proposal_workspace
 from .proposal_execution import proposal_execution_payload, ensure_proposal_execution, update_plan, update_requirement, update_review, update_finding
@@ -492,7 +500,7 @@ def intelligence_connectors(request):
 @api_view(["GET"])
 def opportunity_intelligence_view(request, source_id):
     refresh = _truthy(request.query_params.get("refresh"))
-    return Response(opportunity_intelligence(source_id, refresh=refresh))
+    return Response(opportunity_intelligence(source_id, refresh=refresh, organization=_request_organization(request)))
 
 
 @api_view(["GET", "POST"])
@@ -1525,6 +1533,7 @@ def agency_intelligence(request):
 
 @api_view(["GET"])
 def vendor_intelligence(request):
+    organization = _request_organization(request)
     name = str(request.query_params.get("name") or request.query_params.get("q") or "").strip()
     base = Vendor.objects.all()
     if name:
@@ -1611,9 +1620,68 @@ def vendor_intelligence(request):
             "contract_vehicles": AwardSerializer(
                 awards.filter(award_type__icontains="idv").order_by("-potential_amount")[:8], many=True
             ).data,
-            "contacts": list(Contact.objects.filter(vendor_name__iexact=vendor.name).values("id","full_name","title","email","phone")[:10]),
+            "contacts": list(Contact.objects.filter(organization=organization, vendor_name__iexact=vendor.name).values("id","full_name","title","email","phone")[:10]),
         })
     return Response({"total_records": len(results), "results": results})
+
+
+@api_view(["GET"])
+def vendor_dossier_view(request):
+    organization = _request_organization(request)
+    vendor_id = request.query_params.get("id")
+    try:
+        parsed_id = int(vendor_id) if vendor_id else None
+    except (TypeError, ValueError):
+        return Response({"detail": "id must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(vendor_dossier(
+        organization=organization,
+        vendor_id=parsed_id,
+        name=str(request.query_params.get("name") or "")[:255],
+        uei=str(request.query_params.get("uei") or "")[:32],
+        cage=str(request.query_params.get("cage") or "")[:16],
+    ))
+
+
+@api_view(["GET"])
+def vendor_comparison_view(request):
+    organization = _request_organization(request)
+    identities = [item for item in str(request.query_params.get("vendors") or "").split("|") if item.strip()]
+    if not 2 <= len(identities) <= 4:
+        return Response({"detail": "Provide between two and four vendor names separated by |."}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(compare_vendors(organization=organization, identities=identities))
+
+
+@api_view(["GET"])
+def agency_buying_patterns_view(request):
+    name = str(request.query_params.get("name") or "").strip()[:255]
+    if not name:
+        return Response({"detail": "name is required."}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(agency_buying_patterns(name=name))
+
+
+@api_view(["GET"])
+def market_map_view(request):
+    category_type = str(request.query_params.get("type") or "naics").lower()
+    if category_type not in {"naics", "psc"}:
+        return Response({"detail": "type must be naics or psc."}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(market_map(category_type=category_type, code=str(request.query_params.get("code") or "")[:12]))
+
+
+@api_view(["GET"])
+def vehicle_analysis_view(request):
+    return Response(vehicle_analysis(query=str(request.query_params.get("q") or "")[:255]))
+
+
+@api_view(["GET"])
+def teaming_recommendations_view(request):
+    organization = _request_organization(request)
+    return Response(teaming_recommendations(
+        organization=organization,
+        naics=str(request.query_params.get("naics") or "")[:12],
+        psc=str(request.query_params.get("psc") or "")[:12],
+        state=str(request.query_params.get("state") or "")[:40],
+        required_vehicle=str(request.query_params.get("vehicle") or "")[:160],
+    ))
 
 
 @api_view(["GET"])

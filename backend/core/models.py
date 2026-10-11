@@ -442,7 +442,16 @@ class Award(TimeStampedModel):
 
     class Meta:
         ordering = ["-obligated_amount", "-updated_at"]
-        indexes = [models.Index(fields=["award_type", "awarding_agency"]), models.Index(fields=["recipient_name"])]
+        indexes = [
+            models.Index(fields=["award_type", "awarding_agency"]),
+            models.Index(fields=["recipient_name"]),
+            models.Index(fields=["recipient_uei", "recipient_name"], name="award_uei_name_idx"),
+            models.Index(fields=["awarding_agency", "-start_date"], name="award_agency_start_idx"),
+            models.Index(fields=["naics_code", "awarding_agency"], name="award_naics_agency_idx"),
+            models.Index(fields=["psc_code", "awarding_agency"], name="award_psc_agency_idx"),
+            models.Index(fields=["parent_award_number", "end_date"], name="award_parent_end_idx"),
+            models.Index(fields=["award_type", "end_date"], name="award_type_end_idx"),
+        ]
 
     def __str__(self):
         return self.award_number or self.source_id
@@ -583,6 +592,7 @@ class Contact(TimeStampedModel):
 
     class Meta:
         ordering = ["full_name"]
+        indexes = [models.Index(fields=["organization", "vendor_name"], name="contact_org_vendor_idx")]
 
     def __str__(self):
         return self.full_name
@@ -622,6 +632,7 @@ class TeamingRequest(TimeStampedModel):
 
     class Meta:
         ordering = ["status", "due_date", "-updated_at"]
+        indexes = [models.Index(fields=["organization", "company_name"], name="teaming_org_company_idx")]
 
     def __str__(self):
         return f"{self.company_name} - {self.role}"

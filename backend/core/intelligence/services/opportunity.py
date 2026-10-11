@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Any
 
 from django.db.models import Q
+from django.utils import timezone
 
 from ...integrations import fetch_sam_opportunity_detail, search_usaspending_awards
 from ...models import Award, Opportunity, OrganizationProfile
@@ -42,15 +43,17 @@ def _candidate_competitors(agency: str, naics: str, psc: str, limit: int = 8) ->
             "historical_awards": count,
             "historical_value": totals[name],
             "confidence": min(95, 50 + round((count / maximum) * 45)),
-            "classification": "ai_derived",
+            "classification": "forgegov_derived_historical_signal",
             "reason": "Historical awards overlap this agency, NAICS, or PSC. This is a likely competitor, not an official bidder list.",
         }
         for name, count in counts.most_common(limit)
     ]
 
 
-def _teaming_matches(naics: str, psc: str, limit: int = 8) -> list[dict[str, Any]]:
+def _teaming_matches(naics: str, psc: str, limit: int = 8, organization=None) -> list[dict[str, Any]]:
     profiles = OrganizationProfile.objects.filter(is_public=True, accepting_partners=True).select_related("organization")
+    if organization is not None:
+        profiles = profiles.exclude(organization=organization)
     rows: list[dict[str, Any]] = []
     for profile in profiles[:200]:
         naics_codes = profile.naics_codes or []
@@ -79,7 +82,53 @@ def _teaming_matches(naics: str, psc: str, limit: int = 8) -> list[dict[str, Any
     return sorted(rows, key=lambda row: row["score"], reverse=True)[:limit]
 
 
-def opportunity_intelligence(source_id: str, refresh: bool = False) -> dict[str, Any]:
+def _incumbent_candidates(awards, *, agency: str, naics: str, psc: str, title: str, limit: int = 8) -> list[dict[str, Any]]:
+    title_terms = {word.lower() for word in str(title or "").split() if len(word) >= 5}
+    grouped: dict[str, dict[str, Any]] = {}
+    today = timezone.now().date()
+    for award in awards:
+        name = str(getattr(award, "recipient_name", "") or "").strip()
+        if not name:
+            continue
+        reasons: list[str] = []
+        score = 0
+        award_agency = str(getattr(award, "awarding_agency", "") or getattr(award, "funding_agency", "") or "")
+        if agency and agency.lower() in award_agency.lower():
+            score += 25; reasons.append("agency match")
+        if naics and getattr(award, "naics_code", "") == naics:
+            score += 25; reasons.append(f"NAICS {naics} match")
+        if psc and getattr(award, "psc_code", "") == psc:
+            score += 20; reasons.append(f"PSC {psc} match")
+        description_terms = {word.lower() for word in str(getattr(award, "description", "") or "").split() if len(word) >= 5}
+        overlap = len(title_terms & description_terms)
+        if overlap:
+            score += min(15, overlap * 3); reasons.append(f"{overlap} description term match(es)")
+        if getattr(award, "end_date", None) and award.end_date >= today:
+            score += 10; reasons.append("period of performance is current")
+        if getattr(award, "parent_award_number", ""):
+            score += 5; reasons.append("predecessor/parent award evidence")
+        key = str(getattr(award, "recipient_uei", "") or name.upper())
+        row = grouped.setdefault(key, {"recipient_name": name, "recipient_uei": getattr(award, "recipient_uei", ""), "award_count": 0, "obligated": 0.0, "score": 0, "reasons": [], "latest_end": None, "award_id": ""})
+        row["award_count"] += 1
+        row["obligated"] += _decimal(getattr(award, "obligated_amount", 0))
+        if score > row["score"]:
+            row["score"] = score
+            row["reasons"] = reasons
+            row["award_id"] = getattr(award, "source_id", "")
+        if getattr(award, "end_date", None) and (not row["latest_end"] or award.end_date > row["latest_end"]):
+            row["latest_end"] = award.end_date
+    ranked = sorted(grouped.values(), key=lambda row: (row["score"], row["latest_end"] or today.min, row["obligated"]), reverse=True)[:limit]
+    for row in ranked:
+        row["confidence"] = min(95, row.pop("score"))
+        row["name"] = row["recipient_name"]
+        row["latest_end"] = row["latest_end"].isoformat() if row["latest_end"] else None
+        row["status"] = "likely" if row["confidence"] >= 55 else "weak_signal"
+        row["classification"] = "forgegov_derived_incumbent_signal"
+        row["warning"] = "Verify the predecessor contract and current holder; this is not a confirmed incumbent designation."
+    return ranked
+
+
+def opportunity_intelligence(source_id: str, refresh: bool = False, organization=None) -> dict[str, Any]:
     stored = Opportunity.objects.filter(source_id=source_id).first()
     warnings: list[str] = []
     detail: dict[str, Any] = {}
@@ -116,27 +165,26 @@ def opportunity_intelligence(source_id: str, refresh: bool = False) -> dict[str,
         })
         if len(past_winners) >= 8:
             break
-    incumbent = past_winners[0] if past_winners else {"status": "not_found", "classification": "official", "reason": "No reliable historical award evidence matched this opportunity. Use Refresh research after more award data is synchronized."}
-    if isinstance(incumbent, dict) and incumbent.get("name"):
-        incumbent["status"] = "likely"
-        incumbent["match_reason"] = "Most recent matching historical award. Verify against the predecessor contract before treating as confirmed."
+    candidates = _incumbent_candidates(awards, agency=agency, naics=naics, psc=psc, title=title)
+    incumbent = candidates[0] if candidates else {"status": "not_found", "classification": "official_evidence_missing", "reason": "No reliable historical award evidence matched this opportunity. Refresh research after more award data is synchronized."}
     evidence = [official_evidence("SAM.gov", "Opportunity notice", f"https://sam.gov/opp/{source_id}/view", "Official solicitation record")]
     if past_winners:
         evidence.append(official_evidence("USAspending / stored awards", "Historical award records", detail="Normalized award history stored by ForgeGov"))
     competitors = _candidate_competitors(agency, naics, psc)
     if competitors:
         evidence.append(derived_evidence("ForgeGov competition engine", "Likely competitor ranking", "Ranks historical award overlap; it is not an official bidder list.", Confidence.MEDIUM))
-    teaming = _teaming_matches(naics, psc)
+    teaming = _teaming_matches(naics, psc, organization=organization)
     result = IntelligenceResult(
         subject_id=source_id,
         subject_type="opportunity",
         data={
             "opportunity": {"source_id": source_id, "title": title, "agency": agency, "naics": naics, "psc": psc, "source_url": f"https://sam.gov/opp/{source_id}/view"},
             "incumbent": incumbent,
+            "incumbent_candidates": candidates,
             "past_winners": past_winners,
             "likely_competitors": competitors,
             "teaming_recommendations": teaming,
-            "labels": {"official": "Official government or stored public data", "ai_derived": "Inference—not an official bidder list", "platform": "ForgeGov company-network data"},
+            "labels": {"official": "Official government or stored public data", "forgegov_derived_historical_signal": "ForgeGov historical inference—not an official bidder list", "platform": "ForgeGov company-network data"},
         },
         evidence=evidence,
         warnings=warnings,
