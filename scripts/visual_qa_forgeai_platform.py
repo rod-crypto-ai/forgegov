@@ -61,6 +61,7 @@ def run_case(browser_type, scenario: tuple[str, int, int]) -> list[str]:
     context = browser.new_context(viewport={"width": width, "height": height})
     page: Page = context.new_page()
     install_api_fixtures(page)
+    page.route("**/api/auth/csrf/**", fulfill({"csrfToken": "forgegov-visual-qa"}))
     page.route("**/api/ai/platform/**", fulfill(PLATFORM))
     page.route("**/api/ai/conversations/**", fulfill([]))
     page.route("**/api/ai/chat/**", fulfill(ANSWER))
