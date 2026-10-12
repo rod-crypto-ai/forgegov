@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED = "3.2.5"
-FRONTEND_EXPECTED = "3.2.5"
+EXPECTED = "3.2.6"
+FRONTEND_EXPECTED = "3.2.6"
 errors: list[str] = []
 
 
@@ -15,12 +15,12 @@ def require(condition: bool, message: str):
         errors.append(message)
 
 
-require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.2.5")
+require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.2.6")
 require(not (ROOT / "INSTALL.command").exists(), "obsolete root INSTALL.command must be removed")
 require(not (ROOT / "VERIFY.command").exists(), "obsolete root VERIFY.command must be removed")
 package = json.loads((ROOT / "frontend/package.json").read_text())
-require(package.get("version") == FRONTEND_EXPECTED, "frontend package version is not 3.2.5")
-require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.2.5")
+require(package.get("version") == FRONTEND_EXPECTED, "frontend package version is not 3.2.6")
+require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.2.6")
 
 # Historical migrations must never depend on a moving target.
 for migration in ROOT.glob("backend/*/migrations/*.py"):
@@ -301,6 +301,22 @@ for needle in ("test_operations_requires_authentication", "test_stage_gate_block
     require(needle in regression_325, f"v3.2.5 regression coverage missing: {needle}")
 require((ROOT / "backend/core/migrations/0039_v325_capture_operations.py").exists(), "v3.2.5 capture operations migration is missing")
 require((ROOT / "scripts/visual_qa_capture_operations.py").exists(), "v3.2.5 responsive capture QA is missing")
+
+# v3.2.6 ForgeAI Intelligence Platform.
+forgeai_platform = (ROOT / "backend/core/forgeai_platform.py").read_text()
+forgeai_source = (ROOT / "backend/core/ai.py").read_text()
+forgeai_page = (ROOT / "frontend/components/assistant-workspace.tsx").read_text()
+regression_326 = (ROOT / "backend/core/test_v326_forgeai_platform.py").read_text()
+for needle in ("start_research_run", "complete_research_run", "evidence_summary", "duplicate_running_requests_blocked", "autonomous_record_changes"):
+    require(needle in forgeai_platform, f"v3.2.6 ForgeAI governance service missing: {needle}")
+for needle in ("[COMPANY-1]", "[CAPTURE-", "[PROPOSAL-", "Organize substantive answers under Verified Evidence", "Never autonomously create"):
+    require(needle in forgeai_source, f"v3.2.6 unified grounding/control missing: {needle}")
+for needle in ("FORGEAI INTELLIGENCE PLATFORM", "Research workflow", "Evidence and provenance", "Source counts do not prove completeness"):
+    require(needle in forgeai_page, f"v3.2.6 ForgeAI workspace UI missing: {needle}")
+for needle in ("test_persisted_chat_records_provenance_and_evidence_summary", "test_identical_running_request_is_blocked_without_second_provider_call", "test_grounding_excludes_other_workspace_private_context", "test_platform_status_is_workspace_scoped_and_does_not_expose_prompts"):
+    require(needle in regression_326, f"v3.2.6 regression coverage missing: {needle}")
+require((ROOT / "backend/core/migrations/0040_v326_forgeai_intelligence_platform.py").exists(), "v3.2.6 ForgeAI migration is missing")
+require((ROOT / "scripts/visual_qa_forgeai_platform.py").exists(), "v3.2.6 ForgeAI responsive QA is missing")
 
 if errors:
     print("Private beta launch source audit FAILED:")

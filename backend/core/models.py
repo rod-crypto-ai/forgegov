@@ -1826,6 +1826,56 @@ class AIMessage(TimeStampedModel):
     class Meta:
         ordering = ["created_at"]
 
+
+class ForgeAIResearchRun(TimeStampedModel):
+    """Immutable provenance and execution state for one ForgeAI request."""
+
+    class Status(models.TextChoices):
+        RUNNING = "running", "Running"
+        SUCCEEDED = "succeeded", "Succeeded"
+        FAILED = "failed", "Failed"
+
+    class Workflow(models.TextChoices):
+        RESEARCH = "research", "Research"
+        OPPORTUNITY = "opportunity", "Opportunity"
+        CAPTURE = "capture", "Capture"
+        PROPOSAL = "proposal", "Proposal"
+        MARKET = "market", "Market"
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="forgeai_research_runs")
+    conversation = models.ForeignKey(AIConversation, null=True, blank=True, on_delete=models.SET_NULL, related_name="research_runs")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="forgeai_research_runs")
+    workflow = models.CharField(max_length=30, choices=Workflow.choices, default=Workflow.RESEARCH)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.RUNNING)
+    request_fingerprint = models.CharField(max_length=64)
+    provider = models.CharField(max_length=80, blank=True)
+    model = models.CharField(max_length=120, blank=True)
+    provider_response_id = models.CharField(max_length=255, blank=True)
+    provider_request_id = models.CharField(max_length=255, blank=True)
+    source_manifest = models.JSONField(default=list, blank=True)
+    evidence_summary = models.JSONField(default=dict, blank=True)
+    token_usage = models.JSONField(default=dict, blank=True)
+    used_live_web = models.BooleanField(default=False)
+    used_workspace_context = models.BooleanField(default=True)
+    financial_context_permitted = models.BooleanField(default=False)
+    error_code = models.CharField(max_length=80, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    duration_ms = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("organization", "created_by", "request_fingerprint"),
+                condition=models.Q(status="running"),
+                name="uniq_running_forgeai_request",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["organization", "status", "-created_at"], name="forgeai_org_status_idx"),
+            models.Index(fields=["organization", "workflow", "-created_at"], name="forgeai_org_workflow_idx"),
+        ]
+
 class OpportunityDocument(TimeStampedModel):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"

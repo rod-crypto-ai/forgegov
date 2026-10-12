@@ -26,6 +26,14 @@ from .tenant_security import (
     enforce_governance_step_up,
 )
 from .ai import OpenAIIntegrationError, ask_ai, live_web_status
+from .forgeai_platform import (
+    DuplicateResearchRun,
+    WORKFLOWS,
+    complete_research_run,
+    fail_research_run,
+    platform_payload,
+    start_research_run,
+)
 from .live_web import search as live_web_search
 
 from .integrations import (
@@ -589,13 +597,27 @@ def ai_chat(request):
     history = request.data.get("history") or []
     if not isinstance(history, list):
         return Response({"detail": "history must be a list."}, status=status.HTTP_400_BAD_REQUEST)
+    research_run = None
     try:
         organization = _request_organization(request)
+        workflow = str(request.data.get("workflow") or "research").strip().lower()
+        if workflow not in WORKFLOWS:
+            return Response({"detail": "Unsupported ForgeAI workflow."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            research_run = start_research_run(
+                organization=organization,
+                user=request.user,
+                workflow=workflow,
+                message=message,
+            )
+        except DuplicateResearchRun as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         conversation_id = request.data.get("conversation_id")
         conversation = None
         if conversation_id:
             conversation = AIConversation.objects.filter(pk=conversation_id, organization=organization).first()
             if not conversation:
+                fail_research_run(research_run, error_code="conversation_not_found")
                 return Response({"detail": "Conversation not found in this workspace."}, status=status.HTTP_404_NOT_FOUND)
         elif request.data.get("persist"):
             project_room = None
@@ -603,19 +625,49 @@ def ai_chat(request):
             if project_room_id:
                 project_room = accessible_project_rooms(request).filter(pk=project_room_id).first()
                 if not project_room:
+                    fail_research_run(research_run, error_code="project_room_not_accessible")
                     return Response({"detail": "Project Room not found or not accessible."}, status=status.HTTP_404_NOT_FOUND)
             conversation = AIConversation.objects.create(organization=organization, project_room=project_room, title=message[:120], created_by=request.user)
         if conversation:
+            research_run.conversation = conversation
+            research_run.save(update_fields=["conversation", "updated_at"])
             AIMessage.objects.create(conversation=conversation, role=AIMessage.Role.USER, content=message)
-        result = ask_ai(message=message, history=history, organization=organization, user=request.user)
+        result = ask_ai(message=message, history=history, organization=organization, user=request.user, workflow=workflow)
         if conversation:
             AIMessage.objects.create(conversation=conversation, role=AIMessage.Role.ASSISTANT, content=result.get("answer", ""), sources=result.get("sources") or [], model=result.get("model", ""), provider=result.get("provider", ""))
             result["conversation_id"] = conversation.id
+        membership = active_membership(request.user)
+        financial_context_permitted = bool(membership and membership.role in {
+            Membership.Role.OWNER,
+            Membership.Role.ADMIN,
+            Membership.Role.PRICING,
+        })
+        result["evidence_summary"] = complete_research_run(
+            research_run,
+            result,
+            conversation=conversation,
+            financial_context_permitted=financial_context_permitted,
+        )
+        result["research_run_id"] = research_run.id
+        result["workflow"] = workflow
         return Response(result)
     except Organization.DoesNotExist:
+        fail_research_run(research_run, error_code="workspace_required")
         return Response({"detail": "An active workspace membership is required."}, status=status.HTTP_403_FORBIDDEN)
     except OpenAIIntegrationError as exc:
+        fail_research_run(research_run, error_code=f"provider_{exc.status_code}")
         return Response({"detail": str(exc)}, status=exc.status_code)
+    except Exception:
+        fail_research_run(research_run, error_code="unexpected_error")
+        raise
+
+
+@api_view(["GET"])
+def forgeai_platform(request):
+    try:
+        return Response(platform_payload(_request_organization(request)))
+    except Organization.DoesNotExist:
+        return Response({"detail": "An active workspace membership is required."}, status=status.HTTP_403_FORBIDDEN)
 
 
 @api_view(["GET"])

@@ -6,7 +6,7 @@
 2. v3.2.3 — Opportunity Intelligence & Discovery 2.0 (completed)
 3. v3.2.4 — Market & Competitor Intelligence 2.0 (completed)
 4. v3.2.5 — Capture Operations & Pipeline 2.0 (completed)
-5. v3.2.6 — ForgeAI Intelligence Platform (next)
+5. v3.2.6 — ForgeAI Intelligence Platform (in validation)
 
 Connector reliability, source provenance, discovery filters, pagination, saved searches,
 permitted attachment access, change detection, duplicate prevention, and source freshness
