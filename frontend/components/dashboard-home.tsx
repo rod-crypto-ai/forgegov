@@ -22,7 +22,17 @@ export default function DashboardHome() {
   const [commandCenter,setCommandCenter]=useState<CommandCenter>({metrics:{pipeline:0,active_rooms:0,open_tasks:0,overdue:0,unread_alerts:0,pending_invitations:0},deadlines:[],activity:[],insights:[],quick_actions:[]});
   const [error, setError] = useState("");
   const [loading,setLoading]=useState(true);
-  useEffect(() => { Promise.all([apiGet<Summary>("/dashboard/summary/"), apiGet<Integrations>("/integrations/status/?probe=true"), apiGet<CommandCenter>("/dashboard/command-center/")]).then(([a,b,c]) => {setSummary(a); setIntegrations(b); setCommandCenter(c);}).catch((e) => setError(e instanceof Error ? e.message : "Backend unavailable")).finally(()=>setLoading(false)); }, []);
+  useEffect(() => {
+    let active = true;
+    Promise.all([apiGet<Summary>("/dashboard/summary/"), apiGet<CommandCenter>("/dashboard/command-center/")])
+      .then(([summaryData, commandData]) => { if (active) { setSummary(summaryData); setCommandCenter(commandData); } })
+      .catch((e) => { if (active) setError(e instanceof Error ? e.message : "Backend unavailable"); })
+      .finally(() => { if (active) setLoading(false); });
+    apiGet<Integrations>("/integrations/status/")
+      .then((data) => { if (active) setIntegrations(data); })
+      .catch(() => { /* Connector status is supplemental and must not block the dashboard. */ });
+    return () => { active = false; };
+  }, []);
   const stages = useMemo(() => Object.entries(summary.pursuits?.by_stage ?? {}), [summary]);
   const total = Math.max(summary.pursuits?.total ?? 0, 1);
   const hour = new Date().getHours();
@@ -45,7 +55,7 @@ export default function DashboardHome() {
 
     <section className="data-status-strip">
       <div><i className={integrations.sam_gov?.configured ? "ok" : "warn"}/><span><b>SAM.gov</b><small>{integrations.sam_gov?.configured ? "Configured · verify live status in Connector Manager" : "API key required"}</small></span></div>
-      <div><i className={integrations.usaspending?.reachable ? "ok" : "warn"}/><span><b>USAspending</b><small>{integrations.usaspending?.reachable ? "Live award data" : "Connection unavailable"}</small></span></div>
+      <div><i className={integrations.usaspending?.reachable ? "ok" : "warn"}/><span><b>USAspending</b><small>{integrations.usaspending?.reachable ? "Reachability recently verified" : "Stored data · verify live status in Connector Manager"}</small></span></div>
       <div><i className="warn"/><span><b>Grants.gov</b><small>Public source · live status not verified here</small></span></div>
       <div><i className={integrations.ai?.web_search_status === "live" || integrations.ai?.web_search_reachable ? "ok" : "warn"}/><span><b>Live web</b><small>{integrations.ai?.web_search_status === "live" || integrations.ai?.web_search_reachable ? "Live Web Connected" : integrations.ai?.web_search_status === "degraded" ? "Degraded — cached intelligence available" : integrations.ai?.web_search_status === "unavailable" ? "Live Web Unavailable" : integrations.ai?.web_search_configured ? "Private service configured" : "Setup required"}</small></span></div>
       <div><Database size={17}/><span><b>{integrations.usaspending?.stored_awards ?? summary.awards?.total ?? 0} awards indexed</b><small>Stored in ForgeGov</small></span></div>
@@ -91,7 +101,7 @@ export default function DashboardHome() {
             <Link className="workspace-launch-grant" href="/opportunities/federal-grants"><span className="launch-icon teal"><FileSearch/></span><div><b>Federal grant opportunities</b><small>Search Grants.gov, review application details, and use contextual AI.</small><em>Search live grants <ArrowRight size={13}/></em></div></Link>
             <Link className="workspace-launch-subnet" href="/opportunities/subcontracting"><span className="launch-icon violet"><Handshake/></span><div><b>Subcontracting opportunities</b><small>Review current SBA SUBNet listings and reported SAM subawards.</small><em>Open subcontracting <ArrowRight size={13}/></em></div></Link>
             <Link href="/opportunities/federal-forecasts"><span className="launch-icon amber"><Radar/></span><div><b>Procurement forecasts</b><small>Review forward-looking agency acquisition sources and activity.</small><em>Open forecast feed <ArrowRight size={13}/></em></div></Link>
-            <Link href="/opportunities/federal-vehicles"><span className="launch-icon blue"><Database/></span><div><b>Contract vehicles</b><small>Explore IDIQ, BPA, and vehicle-holder intelligence.</small><em>Search vehicles <ArrowRight size={13}/></em></div></Link>
+            <Link href="/opportunities/federal-vehicles"><span className="launch-icon blue"><Database/></span><div><b>Contract vehicle awards</b><small>Explore USAspending IDIQ, BPA, and vehicle-holder award intelligence.</small><em>Research vehicle awards <ArrowRight size={13}/></em></div></Link>
             <Link href="/awards/federal-contracts"><span className="launch-icon teal"><Award/></span><div><b>Award intelligence</b><small>Analyze recipients, agencies, obligations, and incumbents.</small><em>Explore USAspending <ArrowRight size={13}/></em></div></Link>
             <Link href="/participants/vendors"><span className="launch-icon violet"><Users/></span><div><b>Vendor intelligence</b><small>Research competitors, partners, UEIs, and award history.</small><em>Open vendor profiles <ArrowRight size={13}/></em></div></Link>
             <Link href="/participants/federal-agencies"><span className="launch-icon amber"><Building2/></span><div><b>Agency intelligence</b><small>Understand buying offices, spending, categories, and contacts.</small><em>View federal agencies <ArrowRight size={13}/></em></div></Link>

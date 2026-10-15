@@ -111,12 +111,17 @@ def sync_usaspending_awards(*, start_date: str | None = None, end_date: str | No
                     source_id=usaspending_source_id(record),
                     reason="award_sync_error", error=exc, award_sync_run=run,
                 )
+        if bool(getattr(connector, "last_has_next", False)):
+            errors.append(
+                f"USAspending has additional pages after the configured {pages}-page limit. "
+                "Increase USASPENDING_SYNC_PAGES or shorten the sync window."
+            )
         run.status = AwardSyncRun.Status.PARTIAL if errors else AwardSyncRun.Status.SUCCEEDED
     except Exception as exc:
         errors.append(str(exc))
         run.status = AwardSyncRun.Status.FAILED
     run.completed_at = timezone.now()
-    run.pages_processed = max(1, pages)
+    run.pages_processed = int(getattr(connector, "last_pages_processed", 0))
     run.records_seen = seen
     run.records_created = created
     run.records_updated = updated

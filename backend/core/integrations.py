@@ -1399,7 +1399,7 @@ def search_sba_subnet_opportunities(*, query: str = "", state: str = "", page: i
     ):
         candidate=str(candidate or "").strip()
         if candidate and candidate not in source_urls: source_urls.append(candidate)
-    headers={"User-Agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ForgeGov/2.5.0","Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language":"en-US,en;q=0.9","Cache-Control":"no-cache"}
+    headers={"User-Agent":"Mozilla/5.0 (compatible; ForgeGov; +https://forge-gov.com)","Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language":"en-US,en;q=0.9","Cache-Control":"no-cache"}
 
     def parse_page(html:str,response_url:str)->tuple[list[dict[str,Any]],bool]:
         soup=BeautifulSoup(html,"html.parser"); results=[]

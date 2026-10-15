@@ -11,6 +11,27 @@ export type ApiList<T = Record<string, unknown>> = {
 type ErrorPayload = { detail?: unknown } & Record<string, unknown>;
 let csrfToken: string | null = null;
 let csrfRequest: Promise<string> | null = null;
+const DEFAULT_TIMEOUT_MS = 20_000;
+
+async function fetchWithTimeout(input: RequestInfo | URL, options: RequestInit = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const externalSignal = options.signal;
+  const abortFromCaller = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) abortFromCaller();
+  else externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timer = globalThis.setTimeout(() => controller.abort(new DOMException("Request timed out", "TimeoutError")), timeoutMs);
+  try {
+    return await fetch(input, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted && !externalSignal?.aborted) {
+      throw new Error("The service did not respond within 20 seconds. Try again or check Connector Manager.");
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", abortFromCaller);
+  }
+}
 
 function isUnsafe(method?: string) {
   return !["GET", "HEAD", "OPTIONS", "TRACE"].includes((method ?? "GET").toUpperCase());
@@ -35,7 +56,7 @@ async function getCsrfToken(force = false): Promise<string> {
   }
   if (csrfToken) return csrfToken;
   if (!csrfRequest) {
-    csrfRequest = fetch(`${API_BASE_URL}/auth/csrf/`, {
+    csrfRequest = fetchWithTimeout(`${API_BASE_URL}/auth/csrf/`, {
       method: "GET",
       credentials: "include",
       cache: "no-store",
@@ -61,7 +82,7 @@ async function requestJson<T>(path: string, options: RequestInit = {}, allowRefr
   }
   if (isUnsafe(method)) headers.set("X-CSRFToken", await getCsrfToken());
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetchWithTimeout(`${API_BASE_URL}${path}`, {
     ...options,
     method,
     headers,
@@ -114,7 +135,7 @@ export function normalizeList<T>(payload: T[] | ApiList<T>): T[] {
 
 export async function checkBackend(): Promise<boolean> {
   try {
-    const response = await fetch(`${API_BASE_URL}/health/`, { cache: "no-store", credentials: "include" });
+    const response = await fetchWithTimeout(`${API_BASE_URL}/health/`, { cache: "no-store", credentials: "include" });
     return response.ok;
   } catch {
     return false;

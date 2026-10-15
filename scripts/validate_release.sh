@@ -88,6 +88,9 @@ docker compose exec backend python manage.py test core.test_v325_capture_operati
 echo "[17f/25] v3.2.6 ForgeAI intelligence platform tests"
 docker compose exec backend python manage.py test core.test_v326_forgeai_platform --verbosity 2
 
+echo "[17g/25] v3.2.6 subscription-readiness stabilization tests"
+docker compose exec backend python manage.py test core.test_v326_subscription_readiness --verbosity 2
+
 echo "[18/25] Live Web runtime connectivity"
 docker compose exec backend python manage.py shell -c 'from core.live_web import search; r=search("federal acquisition forecast", limit=1, timeout=15, allow_cached=False); print(r); assert r.get("status") == "live" and r.get("reachable") is True, r'
 

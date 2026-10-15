@@ -98,7 +98,7 @@ export default function ConnectorManagerPage() {
 
     <section className="evidence-standard-panel">
       <div><span className="eyebrow">TRUST STANDARD</span><h2>Official data and AI inference stay separate.</h2></div>
-      <p>Every v2.7 intelligence response carries a source classification, confidence level, timestamp, and evidence. Likely competitors are never presented as confirmed bidders.</p>
+      <p>ForgeGov intelligence responses carry a source classification, confidence level, timestamp, and evidence. Likely competitors are never presented as confirmed bidders.</p>
     </section>
   </div>;
 }

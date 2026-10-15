@@ -31,28 +31,52 @@ def check_external_integrations():
 @shared_task(bind=True, autoretry_for=(IntegrationError,), retry_backoff=True, retry_kwargs={"max_retries": 3})
 def sync_recent_sam_opportunities(self, days: int = 1, limit: int = 1000):
     today = date.today()
+    max_records = max(1, int(limit))
+    page_size = min(max_records, 1000)
     run = DataSyncRun.objects.create(
         source="sam.gov",
-        request_metadata={"days": days, "limit": limit},
+        request_metadata={"days": days, "max_records": max_records, "page_size": page_size},
     )
     try:
-        result = search_sam_opportunities(
-            posted_from=(today - timedelta(days=max(1, days))).strftime("%m/%d/%Y"),
-            posted_to=today.strftime("%m/%d/%Y"),
-            limit=limit,
-            persist=True,
-            sync_run=run,
-        )
-        persisted = result["persisted"]
+        totals = {"created": 0, "updated": 0, "unchanged": 0, "quarantined": 0}
+        errors: list[str] = []
+        records_received = 0
+        total_records = 0
+        offset = 0
+        while records_received < max_records:
+            result = search_sam_opportunities(
+                posted_from=(today - timedelta(days=max(1, days))).strftime("%m/%d/%Y"),
+                posted_to=today.strftime("%m/%d/%Y"),
+                limit=min(page_size, max_records - records_received),
+                offset=offset,
+                persist=True,
+                sync_run=run,
+            )
+            rows = result.get("opportunities") or []
+            persisted = result.get("persisted") or {}
+            total_records = max(total_records, int(result.get("total_records") or 0))
+            records_received += len(rows)
+            for key in totals:
+                totals[key] += int(persisted.get(key) or 0)
+            errors.extend(str(value) for value in (persisted.get("errors") or []))
+            if not rows or len(rows) < int(result.get("limit") or page_size) or records_received >= total_records:
+                break
+            offset += int(result.get("limit") or page_size)
+
+        truncated = total_records > records_received
+        if truncated:
+            errors.append(f"SAM.gov reported {total_records} records; this run safely processed {records_received}. Increase SAM_DAILY_SYNC_LIMIT or shorten the sync window.")
         run.request_metadata = {**(run.request_metadata or {}), "integrity": {
-            "unchanged": persisted.get("unchanged", 0),
-            "quarantined": persisted.get("quarantined", 0),
+            "total_reported": total_records,
+            "complete": not truncated,
+            "unchanged": totals["unchanged"],
+            "quarantined": totals["quarantined"],
         }}
-        run.status = DataSyncRun.Status.PARTIAL if persisted.get("quarantined") else DataSyncRun.Status.SUCCESS
-        run.records_received = len(result["opportunities"])
-        run.records_created = persisted["created"]
-        run.records_updated = persisted["updated"]
-        run.error_message = " | ".join(persisted.get("errors") or [])[:2000]
+        run.status = DataSyncRun.Status.PARTIAL if totals["quarantined"] or truncated else DataSyncRun.Status.SUCCESS
+        run.records_received = records_received
+        run.records_created = totals["created"]
+        run.records_updated = totals["updated"]
+        run.error_message = " | ".join(errors)[:2000]
         run.finished_at = timezone.now()
         run.save(update_fields=[
             "status",
@@ -69,6 +93,8 @@ def sync_recent_sam_opportunities(self, days: int = 1, limit: int = 1000):
             "records_received": run.records_received,
             "records_created": run.records_created,
             "records_updated": run.records_updated,
+            "complete": not truncated,
+            "total_reported": total_records,
         }
     except Exception as exc:
         run.status = DataSyncRun.Status.FAILED

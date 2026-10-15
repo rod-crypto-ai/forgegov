@@ -50,6 +50,8 @@ class UsaSpendingAwardConnector(ProcurementConnector):
         end_date = filters.get("end_date") or date.today().isoformat()
         pages = max(1, min(int(filters.get("pages") or 1), 50))
         limit = max(1, min(int(filters.get("limit") or 100), 100))
+        self.last_pages_processed = 0
+        self.last_has_next = False
         for page in range(1, pages + 1):
             payload = search_usaspending_awards(
                 keyword=filters.get("keyword", ""),
@@ -63,11 +65,13 @@ class UsaSpendingAwardConnector(ProcurementConnector):
                 persist=False,
             )
             rows = payload.get("results") or []
+            self.last_pages_processed = page
             for row in rows:
                 if isinstance(row, dict):
                     yield row
             metadata = payload.get("page_metadata") or {}
-            if metadata and not metadata.get("hasNext", metadata.get("has_next", False)):
+            self.last_has_next = bool(metadata.get("hasNext", metadata.get("has_next", False))) if metadata else len(rows) >= limit
+            if not self.last_has_next:
                 break
             if len(rows) < limit:
                 break
