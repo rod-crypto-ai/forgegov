@@ -303,6 +303,7 @@ class SavedSearch(TimeStampedModel):
     filters = models.JSONField(default=dict)
     alert_frequency = models.CharField(max_length=20, default="daily")
     enabled = models.BooleanField(default=True)
+    last_evaluated_at = models.DateTimeField(default=timezone.now, null=True, blank=True)
 
 
 class DataSyncRun(TimeStampedModel):

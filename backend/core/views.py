@@ -188,6 +188,77 @@ def _truthy(value: str | None) -> bool:
     return str(value or "").lower() in {"1", "true", "yes", "on"}
 
 
+PIPELINE_TO_PURSUIT_STAGE = {
+    PipelineItem.Stage.DISCOVERED: Pursuit.Stage.TRIAGE,
+    PipelineItem.Stage.REVIEWING: Pursuit.Stage.TRIAGE,
+    PipelineItem.Stage.QUALIFIED: Pursuit.Stage.QUALIFY,
+    PipelineItem.Stage.BID_DECISION: Pursuit.Stage.BID_DECISION,
+    PipelineItem.Stage.CAPTURE: Pursuit.Stage.CAPTURE,
+    PipelineItem.Stage.TEAMING: Pursuit.Stage.CAPTURE,
+    PipelineItem.Stage.PROPOSAL: Pursuit.Stage.PROPOSAL,
+    PipelineItem.Stage.SUBMITTED: Pursuit.Stage.SUBMITTED,
+    PipelineItem.Stage.AWARDED: Pursuit.Stage.AWARDED,
+    PipelineItem.Stage.LOST: Pursuit.Stage.LOST,
+    PipelineItem.Stage.NO_BID: Pursuit.Stage.NO_BID,
+    PipelineItem.Stage.ARCHIVED: Pursuit.Stage.ARCHIVED,
+}
+PURSUIT_TO_PIPELINE_STAGE = {
+    Pursuit.Stage.TRIAGE: PipelineItem.Stage.REVIEWING,
+    Pursuit.Stage.QUALIFY: PipelineItem.Stage.QUALIFIED,
+    Pursuit.Stage.BID_DECISION: PipelineItem.Stage.BID_DECISION,
+    Pursuit.Stage.CAPTURE: PipelineItem.Stage.CAPTURE,
+    Pursuit.Stage.PROPOSAL: PipelineItem.Stage.PROPOSAL,
+    Pursuit.Stage.SUBMITTED: PipelineItem.Stage.SUBMITTED,
+    Pursuit.Stage.AWARDED: PipelineItem.Stage.AWARDED,
+    Pursuit.Stage.LOST: PipelineItem.Stage.LOST,
+    Pursuit.Stage.NO_BID: PipelineItem.Stage.NO_BID,
+    Pursuit.Stage.ARCHIVED: PipelineItem.Stage.ARCHIVED,
+}
+
+
+def _sync_pursuit_from_pipeline(item: PipelineItem) -> None:
+    if not item.opportunity_id:
+        return
+    Pursuit.objects.filter(
+        organization=item.organization,
+        opportunity=item.opportunity,
+    ).update(
+        stage=PIPELINE_TO_PURSUIT_STAGE.get(item.stage, Pursuit.Stage.CAPTURE),
+        owner=item.owner,
+        estimated_value=item.estimated_value,
+        probability_of_win=item.probability_of_win,
+        next_action=item.next_action,
+        updated_at=timezone.now(),
+    )
+
+
+def _sync_pipeline_from_pursuit(pursuit: Pursuit) -> None:
+    if not pursuit.opportunity_id:
+        return
+    values = {
+        "stage": PURSUIT_TO_PIPELINE_STAGE.get(pursuit.stage, PipelineItem.Stage.CAPTURE),
+        "estimated_value": pursuit.estimated_value,
+        "probability_of_win": pursuit.probability_of_win,
+        "next_action": pursuit.next_action,
+        "updated_at": timezone.now(),
+    }
+    if pursuit.owner_id:
+        values["owner_id"] = pursuit.owner_id
+    PipelineItem.objects.filter(
+        organization=pursuit.organization,
+        opportunity=pursuit.opportunity,
+    ).update(**values)
+
+
+def _action_past_tense(action: str) -> str:
+    return {
+        "accept": "accepted",
+        "decline": "declined",
+        "cancel": "cancelled",
+        "resend": "resent",
+    }.get(action, action)
+
+
 def _current_intelligence_alerts(queryset, *, now=None):
     """Limit counters to recent, actionable alerts without deleting alert history."""
     current_time = now or timezone.now()
@@ -845,7 +916,8 @@ def pipeline_to_pursuit(request, pipeline_id: int):
     pursuit, created = Pursuit.objects.get_or_create(
         organization=item.organization, opportunity=item.opportunity,
         defaults={
-            "title": item.opportunity.title, "stage": Pursuit.Stage.QUALIFY,
+            "title": item.opportunity.title, "stage": Pursuit.Stage.CAPTURE,
+            "owner": item.owner,
             "estimated_value": item.estimated_value, "probability_of_win": item.probability_of_win,
             "due_date": item.opportunity.response_deadline, "next_action": item.next_action or "Build capture plan",
             "notes": item.notes,
@@ -854,6 +926,7 @@ def pipeline_to_pursuit(request, pipeline_id: int):
     if item.stage not in {PipelineItem.Stage.AWARDED, PipelineItem.Stage.LOST, PipelineItem.Stage.NO_BID}:
         item.stage = PipelineItem.Stage.CAPTURE
         item.save(update_fields=["stage", "updated_at"])
+    _sync_pipeline_from_pursuit(pursuit)
     return Response(PursuitSerializer(pursuit).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
 
@@ -1025,6 +1098,10 @@ class PipelineItemViewSet(OrganizationScopedViewSetMixin, viewsets.ModelViewSet)
     def get_queryset(self):
         return self.scope_queryset(PipelineItem.objects.select_related("opportunity", "organization", "owner")).order_by("-updated_at", "-id")
 
+    def perform_update(self, serializer):
+        item = serializer.save()
+        _sync_pursuit_from_pipeline(item)
+
 
 class PursuitViewSet(OrganizationScopedViewSetMixin, viewsets.ModelViewSet):
     serializer_class = PursuitSerializer
@@ -1044,6 +1121,7 @@ class PursuitViewSet(OrganizationScopedViewSetMixin, viewsets.ModelViewSet):
         previous_stage = previous.stage
         previous_probability = previous.probability_of_win
         pursuit = serializer.save()
+        _sync_pipeline_from_pursuit(pursuit)
         if pursuit.stage != previous_stage or pursuit.probability_of_win != previous_probability:
             PursuitChange.objects.create(
                 organization=pursuit.organization,
@@ -1224,7 +1302,11 @@ def opportunity_command_summary(request, notice_id: str):
             "estimated_value": pipeline.estimated_value if pipeline else None,
             "next_action": pipeline.next_action if pipeline else "Add to pipeline to activate pursuit workflow.",
         },
-        "documents": {"ready": ready_documents, "total": total_documents},
+        "documents": {
+            "ready": ready_documents,
+            "total": total_documents,
+            "available": len(opportunity.resource_links or []),
+        },
         "decision": decision.get("decision", {}),
         "pricing": ({
             "status": pricing["plan"]["status"] if pricing else "not_started",
@@ -3587,7 +3669,8 @@ def network_connection_response(request, connection_id: int):
     row.responded_by = request.user
     row.responded_at = timezone.now()
     row.save(update_fields=["status", "responded_by", "responded_at", "updated_at"])
-    notify_organization_members(organization=row.requester, title=f"Connection request {action}ed", message=f"{organization.name} {action}ed your company connection request.", kind="network_connection_response", link="/network?tab=partners")
+    past_action = _action_past_tense(action)
+    notify_organization_members(organization=row.requester, title=f"Connection request {past_action}", message=f"{organization.name} {past_action} your company connection request.", kind="network_connection_response", link="/network?tab=partners")
     return Response(NetworkConnectionSerializer(row).data)
 
 
@@ -3695,7 +3778,8 @@ def project_room_invitation_manage(request, invitation_id: int):
             send_system_email(subject=f"Project Room invitation from {organization.name}", message=f"Open ForgeGov to review the invitation: {settings.FRONTEND_URL.rstrip('/')}{link}", recipient=member.user.email)
     else:
         return Response({"detail": "action must be resend or cancel."}, status=status.HTTP_400_BAD_REQUEST)
-    ProjectRoomActivity.objects.create(project_room=row.project_room, actor=request.user, action=f"partner_invitation_{action}", summary=f"{action.title()}ed invitation for {row.invited_organization.name}.")
+    past_action = _action_past_tense(action)
+    ProjectRoomActivity.objects.create(project_room=row.project_room, actor=request.user, action=f"partner_invitation_{action}", summary=f"{past_action.title()} invitation for {row.invited_organization.name}.")
     return Response(ProjectRoomInvitationSerializer(row).data)
 
 
@@ -3726,8 +3810,9 @@ def project_room_invitation_response(request, invitation_id: int):
             defaults={"role": ProjectRoomMember.Role.MANAGER, "added_by": request.user},
         )
     owner_org = row.project_room.owner_organization
-    notify_organization_members(organization=owner_org, title=f"Project Room invitation {action}ed", message=f"{organization.name} {action}ed the invitation to {row.project_room.name}.", kind="project_room_invitation_response", link=f"/project-rooms/{row.project_room_id}", project_room=row.project_room)
-    ProjectRoomActivity.objects.create(project_room=row.project_room, actor=request.user, action=f"partner_invitation_{action}ed", summary=f"{organization.name} {action}ed the Project Room invitation.")
+    past_action = _action_past_tense(action)
+    notify_organization_members(organization=owner_org, title=f"Project Room invitation {past_action}", message=f"{organization.name} {past_action} the invitation to {row.project_room.name}.", kind="project_room_invitation_response", link=f"/project-rooms/{row.project_room_id}", project_room=row.project_room)
+    ProjectRoomActivity.objects.create(project_room=row.project_room, actor=request.user, action=f"partner_invitation_{past_action}", summary=f"{organization.name} {past_action} the Project Room invitation.")
     return Response(ProjectRoomInvitationSerializer(row).data)
 
 

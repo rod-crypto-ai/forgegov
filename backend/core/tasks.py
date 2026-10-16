@@ -1,12 +1,14 @@
 from datetime import date, timedelta
 
 from celery import shared_task
+from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 
 from .integrations import IntegrationError, search_grants_opportunities, search_sam_opportunities, usaspending_status
 from .models import (
     CollaborationNotification,
+    ConnectorSource,
     DataSyncRun,
     IntelligenceAlert,
     Membership,
@@ -88,6 +90,16 @@ def sync_recent_sam_opportunities(self, days: int = 1, limit: int = 1000):
             "request_metadata",
             "updated_at",
         ])
+        ConnectorSource.objects.update_or_create(
+            key="sam-opportunities",
+            defaults={
+                "name": "SAM.gov Opportunities",
+                "last_sync_at": run.finished_at,
+                "record_count": Opportunity.objects.filter(source="sam.gov").count(),
+                "last_status": "healthy" if run.status == DataSyncRun.Status.SUCCESS else "degraded",
+                "last_error": run.error_message,
+            },
+        )
         return {
             "run_id": run.pk,
             "records_received": run.records_received,
@@ -146,7 +158,7 @@ def sync_usaspending_awards(self, days: int = 7, pages: int = 10, limit: int = 1
 
 @shared_task(bind=True, autoretry_for=(IntegrationError,), retry_backoff=True, retry_kwargs={"max_retries": 2})
 def evaluate_saved_search_alerts(self, organization_id: int | None = None):
-    """Evaluate enabled SAM.gov and Grants.gov saved searches and create deduplicated alerts."""
+    """Evaluate saved searches without backfilling the entire current market as unread alerts."""
     from .models import IntelligenceAlert, Opportunity, SavedSearch
 
     created = 0
@@ -155,6 +167,10 @@ def evaluate_saved_search_alerts(self, organization_id: int | None = None):
     if organization_id is not None:
         searches = searches.filter(organization_id=organization_id)
     for saved in searches:
+        evaluation_started_at = timezone.now()
+        previous_evaluation = saved.last_evaluated_at
+        alert_cap = max(1, int(getattr(settings, "SAVED_SEARCH_ALERT_MAX_PER_RUN", 25)))
+        created_for_search = 0
         filters = dict(saved.filters or {})
         source = str(filters.pop("source", "sam.gov")).lower()
         try:
@@ -201,11 +217,23 @@ def evaluate_saved_search_alerts(self, organization_id: int | None = None):
             continue
 
         evaluated += 1
+        if previous_evaluation is None:
+            saved.last_evaluated_at = evaluation_started_at
+            saved.save(update_fields=["last_evaluated_at", "updated_at"])
+            continue
         for record in records:
             source_id = str(record.get("source_id") or record.get("noticeId") or "")
             if not source_id:
                 continue
             opportunity = Opportunity.objects.filter(source_id=source_id).first()
+            observed_at = (
+                getattr(opportunity, "posted_date", None)
+                or getattr(opportunity, "created_at", None)
+            )
+            if observed_at and observed_at <= previous_evaluation:
+                continue
+            if created_for_search >= alert_cap:
+                continue
             alert = IntelligenceAlert.objects.filter(
                 organization=saved.organization,
                 source_id=source_id,
@@ -227,7 +255,10 @@ def evaluate_saved_search_alerts(self, organization_id: int | None = None):
             )
             if was_created:
                 _fanout_intelligence_alert(alert, category="opportunity", critical=False)
+                created_for_search += 1
             created += int(was_created)
+        saved.last_evaluated_at = evaluation_started_at
+        saved.save(update_fields=["last_evaluated_at", "updated_at"])
     return {"saved_searches_evaluated": evaluated, "alerts_created": created}
 
 
