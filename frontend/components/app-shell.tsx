@@ -11,6 +11,7 @@ import { apiGet } from "@/lib/api";
 import { PlatformAdminNav } from "@/components/platform-admin-nav";
 import { BetaFeedbackButton } from "@/components/beta-feedback";
 import { useThemePreferences } from "@/components/theme-provider";
+import { isPublicRoute } from "@/lib/routes";
 
 type SearchHit={type:string;id:string|number;title:string;subtitle?:string;href:string};
 
@@ -79,7 +80,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   function submit(event:React.FormEvent){event.preventDefault();const value=query.trim();setSearchOpen(false);router.push(value?`/search?q=${encodeURIComponent(value)}`:"/search")}
   function liveSearch(source:"contracts"|"grants"){const value=query.trim();setSearchOpen(false);router.push(`/${source==="grants"?"opportunities/federal-grants":"opportunities/federal-contracts"}${value?`?q=${encodeURIComponent(value)}&auto=1`:""}`)}
   function choose(hit:SearchHit){setSearchOpen(false);setQuery("");router.push(hit.href)}
-  if(["/sign-in","/register","/forgot-password","/terms","/privacy"].includes(pathname)||(pathname==="/"&&!session))return <>{children}</>;
+  if(isPublicRoute(pathname)&&(!session||pathname!=="/"))return <>{children}</>;
   const initials=`${session?.user.first_name?.[0]??""}${session?.user.last_name?.[0]??""}`||session?.user.email?.[0]?.toUpperCase()||"U";
   const displayName=`${session?.user.first_name??""} ${session?.user.last_name??""}`.trim()||session?.user.email||"ForgeGov user";
   return <div className={`forge-shell ${effectiveCollapsed?"sidebar-collapsed":""}`}>

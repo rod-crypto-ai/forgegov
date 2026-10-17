@@ -17,6 +17,7 @@ backend/celerybeat-schedule*
 frontend/node_modules/
 frontend/.next/
 frontend/out/
+frontend/tsconfig.tsbuildinfo
 frontend/**/*.before-frontend-fix
 
 # Environment

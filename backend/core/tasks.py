@@ -1,12 +1,14 @@
 from datetime import date, timedelta
 
 from celery import shared_task
+from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 
 from .integrations import IntegrationError, search_grants_opportunities, search_sam_opportunities, usaspending_status
 from .models import (
     CollaborationNotification,
+    ConnectorSource,
     DataSyncRun,
     IntelligenceAlert,
     Membership,
@@ -31,28 +33,52 @@ def check_external_integrations():
 @shared_task(bind=True, autoretry_for=(IntegrationError,), retry_backoff=True, retry_kwargs={"max_retries": 3})
 def sync_recent_sam_opportunities(self, days: int = 1, limit: int = 1000):
     today = date.today()
+    max_records = max(1, int(limit))
+    page_size = min(max_records, 1000)
     run = DataSyncRun.objects.create(
         source="sam.gov",
-        request_metadata={"days": days, "limit": limit},
+        request_metadata={"days": days, "max_records": max_records, "page_size": page_size},
     )
     try:
-        result = search_sam_opportunities(
-            posted_from=(today - timedelta(days=max(1, days))).strftime("%m/%d/%Y"),
-            posted_to=today.strftime("%m/%d/%Y"),
-            limit=limit,
-            persist=True,
-            sync_run=run,
-        )
-        persisted = result["persisted"]
+        totals = {"created": 0, "updated": 0, "unchanged": 0, "quarantined": 0}
+        errors: list[str] = []
+        records_received = 0
+        total_records = 0
+        offset = 0
+        while records_received < max_records:
+            result = search_sam_opportunities(
+                posted_from=(today - timedelta(days=max(1, days))).strftime("%m/%d/%Y"),
+                posted_to=today.strftime("%m/%d/%Y"),
+                limit=min(page_size, max_records - records_received),
+                offset=offset,
+                persist=True,
+                sync_run=run,
+            )
+            rows = result.get("opportunities") or []
+            persisted = result.get("persisted") or {}
+            total_records = max(total_records, int(result.get("total_records") or 0))
+            records_received += len(rows)
+            for key in totals:
+                totals[key] += int(persisted.get(key) or 0)
+            errors.extend(str(value) for value in (persisted.get("errors") or []))
+            if not rows or len(rows) < int(result.get("limit") or page_size) or records_received >= total_records:
+                break
+            offset += int(result.get("limit") or page_size)
+
+        truncated = total_records > records_received
+        if truncated:
+            errors.append(f"SAM.gov reported {total_records} records; this run safely processed {records_received}. Increase SAM_DAILY_SYNC_LIMIT or shorten the sync window.")
         run.request_metadata = {**(run.request_metadata or {}), "integrity": {
-            "unchanged": persisted.get("unchanged", 0),
-            "quarantined": persisted.get("quarantined", 0),
+            "total_reported": total_records,
+            "complete": not truncated,
+            "unchanged": totals["unchanged"],
+            "quarantined": totals["quarantined"],
         }}
-        run.status = DataSyncRun.Status.PARTIAL if persisted.get("quarantined") else DataSyncRun.Status.SUCCESS
-        run.records_received = len(result["opportunities"])
-        run.records_created = persisted["created"]
-        run.records_updated = persisted["updated"]
-        run.error_message = " | ".join(persisted.get("errors") or [])[:2000]
+        run.status = DataSyncRun.Status.PARTIAL if totals["quarantined"] or truncated else DataSyncRun.Status.SUCCESS
+        run.records_received = records_received
+        run.records_created = totals["created"]
+        run.records_updated = totals["updated"]
+        run.error_message = " | ".join(errors)[:2000]
         run.finished_at = timezone.now()
         run.save(update_fields=[
             "status",
@@ -64,11 +90,23 @@ def sync_recent_sam_opportunities(self, days: int = 1, limit: int = 1000):
             "request_metadata",
             "updated_at",
         ])
+        ConnectorSource.objects.update_or_create(
+            key="sam-opportunities",
+            defaults={
+                "name": "SAM.gov Opportunities",
+                "last_sync_at": run.finished_at,
+                "record_count": Opportunity.objects.filter(source="sam.gov").count(),
+                "last_status": "healthy" if run.status == DataSyncRun.Status.SUCCESS else "degraded",
+                "last_error": run.error_message,
+            },
+        )
         return {
             "run_id": run.pk,
             "records_received": run.records_received,
             "records_created": run.records_created,
             "records_updated": run.records_updated,
+            "complete": not truncated,
+            "total_reported": total_records,
         }
     except Exception as exc:
         run.status = DataSyncRun.Status.FAILED
@@ -120,7 +158,7 @@ def sync_usaspending_awards(self, days: int = 7, pages: int = 10, limit: int = 1
 
 @shared_task(bind=True, autoretry_for=(IntegrationError,), retry_backoff=True, retry_kwargs={"max_retries": 2})
 def evaluate_saved_search_alerts(self, organization_id: int | None = None):
-    """Evaluate enabled SAM.gov and Grants.gov saved searches and create deduplicated alerts."""
+    """Evaluate saved searches without backfilling the entire current market as unread alerts."""
     from .models import IntelligenceAlert, Opportunity, SavedSearch
 
     created = 0
@@ -129,6 +167,10 @@ def evaluate_saved_search_alerts(self, organization_id: int | None = None):
     if organization_id is not None:
         searches = searches.filter(organization_id=organization_id)
     for saved in searches:
+        evaluation_started_at = timezone.now()
+        previous_evaluation = saved.last_evaluated_at
+        alert_cap = max(1, int(getattr(settings, "SAVED_SEARCH_ALERT_MAX_PER_RUN", 25)))
+        created_for_search = 0
         filters = dict(saved.filters or {})
         source = str(filters.pop("source", "sam.gov")).lower()
         try:
@@ -175,11 +217,23 @@ def evaluate_saved_search_alerts(self, organization_id: int | None = None):
             continue
 
         evaluated += 1
+        if previous_evaluation is None:
+            saved.last_evaluated_at = evaluation_started_at
+            saved.save(update_fields=["last_evaluated_at", "updated_at"])
+            continue
         for record in records:
             source_id = str(record.get("source_id") or record.get("noticeId") or "")
             if not source_id:
                 continue
             opportunity = Opportunity.objects.filter(source_id=source_id).first()
+            observed_at = (
+                getattr(opportunity, "posted_date", None)
+                or getattr(opportunity, "created_at", None)
+            )
+            if observed_at and observed_at <= previous_evaluation:
+                continue
+            if created_for_search >= alert_cap:
+                continue
             alert = IntelligenceAlert.objects.filter(
                 organization=saved.organization,
                 source_id=source_id,
@@ -201,7 +255,10 @@ def evaluate_saved_search_alerts(self, organization_id: int | None = None):
             )
             if was_created:
                 _fanout_intelligence_alert(alert, category="opportunity", critical=False)
+                created_for_search += 1
             created += int(was_created)
+        saved.last_evaluated_at = evaluation_started_at
+        saved.save(update_fields=["last_evaluated_at", "updated_at"])
     return {"saved_searches_evaluated": evaluated, "alerts_created": created}
 
 

@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from ...integrations import IntegrationError, upsert_usaspending_award, usaspending_source_id
 from ...integration_resilience import quarantine_record
-from ...models import Award, AwardSyncRun, ConnectorSource
+from ...models import Award, AwardSyncRun, ConnectorSource, Opportunity
 from ..connectors import connector_registry, get_connector
 
 
@@ -51,6 +51,18 @@ def connector_registry_payload(probe: bool = False) -> dict[str, Any]:
                 else ""
             )
             row.save(update_fields=["last_status", "last_checked_at", "last_error", "updated_at"])
+        record_count = row.record_count
+        if row.key == "sam-opportunities":
+            record_count = Opportunity.objects.filter(source="sam.gov").count()
+        elif row.key == "grants-opportunities":
+            record_count = Opportunity.objects.filter(source="grants.gov").count()
+        elif row.key == "usaspending-awards":
+            record_count = Award.objects.filter(source="usaspending.gov").count()
+        elif row.key == "usaspending-vehicles":
+            record_count = Award.objects.filter(
+                source="usaspending.gov",
+                award_type__in=[Award.AwardType.IDV, Award.AwardType.VEHICLE],
+            ).count()
         results.append({
             "key": row.key,
             "name": row.name,
@@ -72,7 +84,7 @@ def connector_registry_payload(probe: bool = False) -> dict[str, Any]:
             "detail": health.get("detail") if health else "Live reachability has not been verified in this view. Run Probe connectors.",
             "last_checked_at": row.last_checked_at,
             "last_sync_at": row.last_sync_at,
-            "record_count": row.record_count,
+            "record_count": record_count,
         })
     healthy = sum(1 for r in results if r["status"] == "healthy")
     verified = sum(1 for r in results if r["status"] in {"healthy", "degraded", "unavailable"})
@@ -111,12 +123,17 @@ def sync_usaspending_awards(*, start_date: str | None = None, end_date: str | No
                     source_id=usaspending_source_id(record),
                     reason="award_sync_error", error=exc, award_sync_run=run,
                 )
+        if bool(getattr(connector, "last_has_next", False)):
+            errors.append(
+                f"USAspending has additional pages after the configured {pages}-page limit. "
+                "Increase USASPENDING_SYNC_PAGES or shorten the sync window."
+            )
         run.status = AwardSyncRun.Status.PARTIAL if errors else AwardSyncRun.Status.SUCCEEDED
     except Exception as exc:
         errors.append(str(exc))
         run.status = AwardSyncRun.Status.FAILED
     run.completed_at = timezone.now()
-    run.pages_processed = max(1, pages)
+    run.pages_processed = int(getattr(connector, "last_pages_processed", 0))
     run.records_seen = seen
     run.records_created = created
     run.records_updated = updated

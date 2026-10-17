@@ -73,14 +73,14 @@ export default function ConnectorManagerPage() {
 
     <section className="connector-summary-grid">
       <article><ServerCog/><span><small>Total connectors</small><strong>{data.summary.total}</strong></span></article>
-      <article><CheckCircle2/><span><small>Verified healthy</small><strong>{data.summary.healthy}</strong></span></article>
+      <article><CheckCircle2/><span><small>Reachable now</small><strong>{data.summary.healthy}</strong></span></article>
       <article><TriangleAlert/><span><small>Needs attention</small><strong>{data.summary.attention}</strong></span></article>
       <article><Activity/><span><small>Sources assessed</small><strong>{assessedPercent}%</strong></span></article>
     </section>
 
     <section className="connector-grid">
       {data.connectors.map(row => <article className={`connector-card status-${row.status}`} key={row.key}>
-        <header><span className="connector-icon"><ServerCog/></span><div><h2>{row.name || row.label}</h2><p>{row.detail || "Connector metadata registered."}</p></div><span className="connector-status"><i/>{row.status.replaceAll("_", " ")}</span></header>
+        <header><span className="connector-icon"><ServerCog/></span><div><h2>{row.name || row.label}</h2><p>{row.detail || "Connector metadata registered."}</p></div><span className="connector-status"><i/>{row.status === "healthy" ? "reachable" : row.status.replaceAll("_", " ")}</span></header>
         <dl>
           <div><dt>Scope</dt><dd>{row.scope}{row.jurisdiction_name ? ` · ${row.jurisdiction_name}` : ""}</dd></div>
           <div><dt>Configuration</dt><dd>{row.configured === null ? "Not probed" : row.configured ? "Configured" : "Required"}</dd></div>
@@ -98,7 +98,7 @@ export default function ConnectorManagerPage() {
 
     <section className="evidence-standard-panel">
       <div><span className="eyebrow">TRUST STANDARD</span><h2>Official data and AI inference stay separate.</h2></div>
-      <p>Every v2.7 intelligence response carries a source classification, confidence level, timestamp, and evidence. Likely competitors are never presented as confirmed bidders.</p>
+      <p>ForgeGov intelligence responses carry a source classification, confidence level, timestamp, and evidence. Likely competitors are never presented as confirmed bidders.</p>
     </section>
   </div>;
 }

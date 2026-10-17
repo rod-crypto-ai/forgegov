@@ -162,7 +162,7 @@ class SavedSearchSerializer(WorkspaceRelationshipValidationMixin, serializers.Mo
     class Meta:
         model = SavedSearch
         fields = "__all__"
-        read_only_fields = ("id", "organization", "owner", "created_at", "updated_at")
+        read_only_fields = ("id", "organization", "owner", "last_evaluated_at", "created_at", "updated_at")
 
 
 class IntelligenceAlertSerializer(serializers.ModelSerializer):

@@ -2,23 +2,23 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-EXPECTED_VERSION="3.2.5"
+EXPECTED_VERSION="3.2.6"
 
 echo "[1/25] Source + release identity"
 python3 -m compileall -q backend
 python3 - <<'PY2'
 import json, pathlib
 root=pathlib.Path('.')
-assert (root/'VERSION').read_text().strip() == '3.2.5'
+assert (root/'VERSION').read_text().strip() == '3.2.6'
 package=json.loads((root/'frontend/package.json').read_text())
-assert package['version'] == '3.2.5'
+assert package['version'] == '3.2.6'
 assert package['dependencies']['next'] == '16.4.0'
-assert 'VERSION = "3.2.5"' in (root/'backend/core/version.py').read_text()
+assert 'VERSION = "3.2.6"' in (root/'backend/core/version.py').read_text()
 lock=json.loads((root/'frontend/package-lock.json').read_text())
-assert lock['packages']['']['version'] == '3.2.5', 'frontend package-lock root version is not 3.2.5'
+assert lock['packages']['']['version'] == '3.2.6', 'frontend package-lock root version is not 3.2.6'
 assert lock['packages']['']['dependencies']['next'] == '16.4.0', 'secure Next.js lockfile baseline is missing'
 assert lock['packages']['node_modules/next']['version'] == '16.4.0', 'installed Next.js lock entry is not the validated secure baseline'
-print('Release identity: 3.2.5')
+print('Release identity: 3.2.6')
 PY2
 
 echo "[2/25] Release source + production architecture audit"
@@ -85,6 +85,12 @@ docker compose exec backend python manage.py test core.test_v324_market_competit
 echo "[17e/25] v3.2.5 capture operations + pipeline tests"
 docker compose exec backend python manage.py test core.test_v325_capture_operations --verbosity 2
 
+echo "[17f/25] v3.2.6 ForgeAI intelligence platform tests"
+docker compose exec backend python manage.py test core.test_v326_forgeai_platform --verbosity 2
+
+echo "[17g/25] v3.2.6 subscription-readiness stabilization tests"
+docker compose exec backend python manage.py test core.test_v326_subscription_readiness --verbosity 2
+
 echo "[18/25] Live Web runtime connectivity"
 docker compose exec backend python manage.py shell -c 'from core.live_web import search; r=search("federal acquisition forecast", limit=1, timeout=15, allow_cached=False); print(r); assert r.get("status") == "live" and r.get("reachable") is True, r'
 
@@ -143,4 +149,4 @@ echo "[25/25] Health + readiness + container status"
 EXPECTED_VERSION="$EXPECTED_VERSION" ./scripts/release_smoke.sh
 docker compose ps
 
-echo "ForgeGov v3.2.5 validation completed successfully."
+echo "ForgeGov v3.2.6 validation completed successfully."

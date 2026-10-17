@@ -60,3 +60,5 @@ jobs:
         run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python scripts/visual_qa_market_intelligence.py
       - name: Cross-browser v3.2.5 capture operations responsive QA
         run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python scripts/visual_qa_capture_operations.py
+      - name: Cross-browser v3.2.6 ForgeAI platform responsive QA
+        run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python scripts/visual_qa_forgeai_platform.py

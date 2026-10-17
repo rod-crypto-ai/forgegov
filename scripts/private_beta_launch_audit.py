@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED = "3.2.5"
-FRONTEND_EXPECTED = "3.2.5"
+EXPECTED = "3.2.6"
+FRONTEND_EXPECTED = "3.2.6"
 errors: list[str] = []
 
 
@@ -15,12 +15,12 @@ def require(condition: bool, message: str):
         errors.append(message)
 
 
-require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.2.5")
+require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.2.6")
 require(not (ROOT / "INSTALL.command").exists(), "obsolete root INSTALL.command must be removed")
 require(not (ROOT / "VERIFY.command").exists(), "obsolete root VERIFY.command must be removed")
 package = json.loads((ROOT / "frontend/package.json").read_text())
-require(package.get("version") == FRONTEND_EXPECTED, "frontend package version is not 3.2.5")
-require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.2.5")
+require(package.get("version") == FRONTEND_EXPECTED, "frontend package version is not 3.2.6")
+require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.2.6")
 
 # Historical migrations must never depend on a moving target.
 for migration in ROOT.glob("backend/*/migrations/*.py"):
@@ -74,7 +74,8 @@ landing = (ROOT / "frontend/components/public-landing.tsx").read_text()
 require("Find the work. Understand the market. Run the capture." in landing, "public landing page hero is missing")
 require("/auth/registration-config/" in landing, "landing page does not reflect runtime registration state")
 auth_provider = (ROOT / "frontend/components/auth-provider.tsx").read_text()
-require('pathname === "/"' in auth_provider, "root landing route is not public")
+routes_source = (ROOT / "frontend/lib/routes.ts").read_text()
+require('pathname === "/"' in routes_source, "root landing route is not public")
 creator_permissions = (ROOT / "backend/platform_admin/permissions.py").read_text()
 require("IsPlatformCreator" in creator_permissions and '"creator"' in creator_permissions, "creator role enforcement is missing")
 creator_command = (ROOT / "backend/platform_admin/management/commands/promote_creator.py").read_text()
@@ -182,12 +183,19 @@ settings_page = (ROOT / "frontend/app/settings/page.tsx").read_text()
 for needle in ("Appearance", "ForgeGov AI & Capture Copilot", "Notifications", "Account & workspace", "Security"):
     require(needle in settings_page, f"Settings Center section missing: {needle}")
 copilot_ui = (ROOT / "frontend/components/capture-copilot.tsx").read_text()
-require("FORGEAI CAPTURE COPILOT · v3.2.1" in copilot_ui, "Capture Copilot UI release identity is missing")
+require("FORGEAI CAPTURE COPILOT" in copilot_ui, "Capture Copilot identity is missing")
 require('brief.economics.restricted?"Restricted"' in copilot_ui, "Capture Copilot UI does not honor financial redaction")
 opportunity_page = (ROOT / "frontend/app/opportunities/federal-contracts/[noticeId]/page.tsx").read_text()
 require("Capture Copilot" in opportunity_page and '"copilot"' in opportunity_page, "opportunity workspace Capture Copilot tab is missing")
 layout = (ROOT / "frontend/app/layout.tsx").read_text()
 require("ThemeProvider" in layout, "app-wide ThemeProvider is missing")
+public_routes = (ROOT / "frontend/lib/routes.ts").read_text()
+app_shell = (ROOT / "frontend/components/app-shell.tsx").read_text()
+auth_provider = (ROOT / "frontend/components/auth-provider.tsx").read_text()
+for route in ("/reset-password", "/verify-email"):
+    require(route in public_routes, f"public authentication route missing from shared policy: {route}")
+require('import { isPublicRoute } from "@/lib/routes"' in app_shell, "AppShell does not use the shared public-route policy")
+require('import { isPublicRoute } from "@/lib/routes"' in auth_provider, "AuthProvider does not use the shared public-route policy")
 regression = (ROOT / "backend/core/test_v320_capture_copilot_settings.py").read_text()
 for needle in ("financial_context_is_redacted", "private_workspace_grounding_preference", "history_is_hidden_after_role_loses_financial_access"):
     require(needle in regression, f"v3.2.0 security regression coverage missing: {needle}")
@@ -295,12 +303,40 @@ capture_page = (ROOT / "frontend/app/capture/operations/page.tsx").read_text()
 regression_325 = (ROOT / "backend/core/test_v325_capture_operations.py").read_text()
 for needle in ("ALLOWED_TRANSITIONS", "MILESTONE_TEMPLATES", "_gate_findings", "WeeklyCaptureReview", "unlinked_pipeline_items"):
     require(needle in capture_operations, f"v3.2.5 capture operations service missing: {needle}")
-for needle in ("Capture Operations & Pipeline 2.0", "Weekly capture review", "Governed transition", "Agency exposure"):
+for needle in ("Capture Operations & Pipeline", "Weekly capture review", "Governed transition", "Agency exposure"):
     require(needle in capture_page, f"v3.2.5 capture operations UI missing: {needle}")
 for needle in ("test_operations_requires_authentication", "test_stage_gate_blocks_incomplete_bid_review", "test_tenant_workload_and_capture_records_are_isolated", "test_weekly_review_is_idempotent_per_workspace_and_week"):
     require(needle in regression_325, f"v3.2.5 regression coverage missing: {needle}")
 require((ROOT / "backend/core/migrations/0039_v325_capture_operations.py").exists(), "v3.2.5 capture operations migration is missing")
 require((ROOT / "scripts/visual_qa_capture_operations.py").exists(), "v3.2.5 responsive capture QA is missing")
+
+# v3.2.6 ForgeAI Intelligence Platform.
+forgeai_platform = (ROOT / "backend/core/forgeai_platform.py").read_text()
+forgeai_source = (ROOT / "backend/core/ai.py").read_text()
+forgeai_page = (ROOT / "frontend/components/assistant-workspace.tsx").read_text()
+regression_326 = (ROOT / "backend/core/test_v326_forgeai_platform.py").read_text()
+for needle in ("start_research_run", "complete_research_run", "evidence_summary", "duplicate_running_requests_blocked", "autonomous_record_changes"):
+    require(needle in forgeai_platform, f"v3.2.6 ForgeAI governance service missing: {needle}")
+for needle in ("[COMPANY-1]", "[CAPTURE-", "[PROPOSAL-", "Organize substantive answers under Verified Evidence", "Never autonomously create"):
+    require(needle in forgeai_source, f"v3.2.6 unified grounding/control missing: {needle}")
+for needle in ("FORGEAI INTELLIGENCE PLATFORM", "Research workflow", "Evidence and provenance", "Source counts do not prove completeness"):
+    require(needle in forgeai_page, f"v3.2.6 ForgeAI workspace UI missing: {needle}")
+for needle in ("test_persisted_chat_records_provenance_and_evidence_summary", "test_identical_running_request_is_blocked_without_second_provider_call", "test_grounding_excludes_other_workspace_private_context", "test_platform_status_is_workspace_scoped_and_does_not_expose_prompts"):
+    require(needle in regression_326, f"v3.2.6 regression coverage missing: {needle}")
+require((ROOT / "backend/core/migrations/0040_v326_forgeai_intelligence_platform.py").exists(), "v3.2.6 ForgeAI migration is missing")
+require((ROOT / "scripts/visual_qa_forgeai_platform.py").exists(), "v3.2.6 ForgeAI responsive QA is missing")
+
+# v3.2.6 authenticated live-audit hardening.
+dashboard_alias = ROOT / "frontend/app/dashboard/page.tsx"
+alerts_ui = (ROOT / "frontend/components/expansion-workspaces.tsx").read_text()
+opportunity_explorer = (ROOT / "frontend/components/opportunity-explorer.tsx").read_text()
+regression_326_readiness = (ROOT / "backend/core/test_v326_subscription_readiness.py").read_text()
+require(dashboard_alias.exists() and 'redirect("/")' in dashboard_alias.read_text(), "authenticated /dashboard compatibility route is missing")
+for needle in ("Current unread", "All current", "Full history", "Mark current read", "page_size"):
+    require(needle in alerts_ui, f"manageable intelligence-alert queue control missing: {needle}")
+require('http_method_names = ["get", "post", "patch", "delete", "head", "options"]' in views, "intelligence-alert bulk POST actions are disabled")
+require('status: "active"' in opportunity_explorer, "SAM.gov search does not default to active opportunities")
+require("test_mark_all_read_can_limit_the_update_to_current_alerts" in regression_326_readiness, "current-alert bulk-read regression coverage is missing")
 
 if errors:
     print("Private beta launch source audit FAILED:")

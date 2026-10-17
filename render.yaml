@@ -243,6 +243,8 @@ services:
     value: '6'
   - key: SAM_SYNC_OVERLAP_DAYS
     value: '2'
+  - key: SAM_DAILY_SYNC_LIMIT
+    value: '10000'
   - key: USASPENDING_SYNC_ENABLED
     value: 'true'
   - key: USASPENDING_SYNC_INTERVAL_HOURS
@@ -250,7 +252,7 @@ services:
   - key: USASPENDING_SYNC_OVERLAP_DAYS
     value: '7'
   - key: USASPENDING_SYNC_PAGES
-    value: '10'
+    value: '50'
   - key: USASPENDING_SYNC_PAGE_SIZE
     value: '100'
   - key: ALERTS_ENABLED

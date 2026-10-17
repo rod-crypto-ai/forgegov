@@ -177,7 +177,7 @@ if os.getenv("SAM_SYNC_ENABLED", "false").lower() == "true":
     CELERY_BEAT_SCHEDULE["sync-recent-sam-opportunities"] = {
         "task": "core.tasks.sync_recent_sam_opportunities",
         "schedule": int(os.getenv("SAM_SYNC_INTERVAL_HOURS", "6")) * 60 * 60,
-        "kwargs": {"days": int(os.getenv("SAM_SYNC_OVERLAP_DAYS", "2")), "limit": int(os.getenv("SAM_DAILY_SYNC_LIMIT", "1000"))},
+        "kwargs": {"days": int(os.getenv("SAM_SYNC_OVERLAP_DAYS", "2")), "limit": int(os.getenv("SAM_DAILY_SYNC_LIMIT", "10000"))},
     }
 if os.getenv("USASPENDING_SYNC_ENABLED", "false").lower() == "true":
     CELERY_BEAT_SCHEDULE["sync-usaspending-awards"] = {

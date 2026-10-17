@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { authFetch } from "@/lib/api";
+import { isPublicRoute } from "@/lib/routes";
 
 type Session = {
   user: { id: number; email: string; first_name: string; last_name: string };
@@ -32,9 +33,6 @@ type AuthContextValue = {
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
-const publicPaths = ["/sign-in", "/register", "/forgot-password", "/reset-password", "/verify-email", "/terms", "/privacy"];
-const isPublicPath = (pathname:string) => pathname === "/" || publicPaths.some((path) => pathname.startsWith(path));
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
@@ -68,7 +66,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [reload]);
 
   useEffect(() => {
-    if (!loading && !session && !isPublicPath(pathname)) {
+    if (!loading && !session && !isPublicRoute(pathname)) {
       router.replace(`/sign-in?next=${encodeURIComponent(pathname)}`);
     }
     if (!loading && session && (pathname === "/sign-in" || pathname === "/register")) {
@@ -91,10 +89,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo(() => ({ session, workspaces, loading, reload, switchWorkspace, logout }), [session, workspaces, loading, reload, switchWorkspace, logout]);
 
-  if (loading && !isPublicPath(pathname)) {
+  if (loading && !isPublicRoute(pathname)) {
     return <div className="auth-loading"><div className="auth-spinner" /><p>Securing your ForgeGov workspace…</p></div>;
   }
-  if (!session && !isPublicPath(pathname)) return null;
+  if (!session && !isPublicRoute(pathname)) return null;
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
