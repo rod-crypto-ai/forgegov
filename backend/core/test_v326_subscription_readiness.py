@@ -1,3 +1,4 @@
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.test import TestCase, override_settings
@@ -199,3 +200,25 @@ class SubscriptionReadinessRegressionTests(AuthenticatedApiTestCase):
 
         self.assertEqual(_action_past_tense("decline"), "declined")
         self.assertEqual(_action_past_tense("resend"), "resent")
+
+    def test_mark_all_read_can_limit_the_update_to_current_alerts(self):
+        current = IntelligenceAlert.objects.create(
+            organization=self.organization,
+            alert_type=IntelligenceAlert.AlertType.NEW_OPPORTUNITY,
+            title="Current alert",
+        )
+        historical = IntelligenceAlert.objects.create(
+            organization=self.organization,
+            alert_type=IntelligenceAlert.AlertType.NEW_OPPORTUNITY,
+            title="Historical alert",
+        )
+        IntelligenceAlert.objects.filter(pk=historical.pk).update(created_at=timezone.now() - timedelta(days=8))
+
+        response = self.client.post("/api/alerts/mark-all-read/?active=true", {}, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["updated"], 1)
+        current.refresh_from_db()
+        historical.refresh_from_db()
+        self.assertTrue(current.read)
+        self.assertFalse(historical.read)

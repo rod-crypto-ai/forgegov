@@ -1926,7 +1926,7 @@ def run_saved_search_alerts(request):
 
 class IntelligenceAlertViewSet(OrganizationScopedViewSetMixin, viewsets.ModelViewSet):
     serializer_class = IntelligenceAlertSerializer
-    http_method_names = ["get", "patch", "delete", "head", "options"]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
     def get_queryset(self):
         queryset = self.scope_queryset(

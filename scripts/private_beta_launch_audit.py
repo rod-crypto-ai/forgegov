@@ -326,6 +326,18 @@ for needle in ("test_persisted_chat_records_provenance_and_evidence_summary", "t
 require((ROOT / "backend/core/migrations/0040_v326_forgeai_intelligence_platform.py").exists(), "v3.2.6 ForgeAI migration is missing")
 require((ROOT / "scripts/visual_qa_forgeai_platform.py").exists(), "v3.2.6 ForgeAI responsive QA is missing")
 
+# v3.2.6 authenticated live-audit hardening.
+dashboard_alias = ROOT / "frontend/app/dashboard/page.tsx"
+alerts_ui = (ROOT / "frontend/components/expansion-workspaces.tsx").read_text()
+opportunity_explorer = (ROOT / "frontend/components/opportunity-explorer.tsx").read_text()
+regression_326_readiness = (ROOT / "backend/core/test_v326_subscription_readiness.py").read_text()
+require(dashboard_alias.exists() and 'redirect("/")' in dashboard_alias.read_text(), "authenticated /dashboard compatibility route is missing")
+for needle in ("Current unread", "All current", "Full history", "Mark current read", "page_size"):
+    require(needle in alerts_ui, f"manageable intelligence-alert queue control missing: {needle}")
+require('http_method_names = ["get", "post", "patch", "delete", "head", "options"]' in views, "intelligence-alert bulk POST actions are disabled")
+require('status: "active"' in opportunity_explorer, "SAM.gov search does not default to active opportunities")
+require("test_mark_all_read_can_limit_the_update_to_current_alerts" in regression_326_readiness, "current-alert bulk-read regression coverage is missing")
+
 if errors:
     print("Private beta launch source audit FAILED:")
     for error in errors:

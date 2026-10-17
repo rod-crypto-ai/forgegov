@@ -65,14 +65,14 @@ const SAM_SET_ASIDE_OPTIONS = [
 function defaultFilters(query = ""): Filters {
   return {
     q: query, agency: "", naics: "", psc: "", state: "", solnum: "", set_aside: "",
-    posted_from: "", posted_to: "", response_from: "", response_to: "", status: "", opportunity_number: "", aln: "", funding_categories: "",
+    posted_from: "", posted_to: "", response_from: "", response_to: "", status: "active", opportunity_number: "", aln: "", funding_categories: "",
     eligibilities: "", funding_instruments: "", statuses: "forecasted|posted", sort_by: "",
   };
 }
 
 function hasCustomFilters(filters: Filters, isGrants: boolean) {
   const ignored = new Set(isGrants ? ["statuses", "sort_by"] : []);
-  return Object.entries(filters).some(([key, value]) => !ignored.has(key) && value.trim() !== "")
+  return Object.entries(filters).some(([key, value]) => !ignored.has(key) && value.trim() !== "" && !(key === "status" && !isGrants && value === "active"))
     || (isGrants && filters.statuses !== "forecasted|posted")
     || (isGrants && filters.sort_by.trim() !== "");
 }
