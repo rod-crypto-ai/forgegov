@@ -33,6 +33,166 @@ class Organization(TimeStampedModel):
         return self.name
 
 
+class SubscriptionPlan(TimeStampedModel):
+    """Provider-neutral commercial terms and server-owned access rules."""
+
+    class BillingInterval(models.TextChoices):
+        MONTH = "month", "Monthly"
+        YEAR = "year", "Annual"
+        MANUAL = "manual", "Manually managed"
+
+    code = models.SlugField(max_length=80, unique=True)
+    name = models.CharField(max_length=160)
+    description = models.TextField(blank=True)
+    currency = models.CharField(max_length=3, default="USD")
+    price_cents = models.PositiveIntegerField(default=0)
+    billing_interval = models.CharField(max_length=20, choices=BillingInterval.choices, default=BillingInterval.MANUAL)
+    trial_days = models.PositiveSmallIntegerField(default=0)
+    entitlements = models.JSONField(default=dict, blank=True)
+    limits = models.JSONField(default=dict, blank=True)
+    active = models.BooleanField(default=True)
+    publicly_available = models.BooleanField(default=False)
+    display_order = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ["display_order", "price_cents", "id"]
+
+    def __str__(self):
+        return self.name
+
+
+class OrganizationSubscription(TimeStampedModel):
+    """The workspace access contract; payment-provider state is mirrored, never client-owned."""
+
+    class Status(models.TextChoices):
+        GRANDFATHERED = "grandfathered", "Grandfathered access"
+        LEGACY = "legacy", "Legacy access"
+        TRIALING = "trialing", "Trialing"
+        ACTIVE = "active", "Active"
+        PAST_DUE = "past_due", "Past due"
+        PAUSED = "paused", "Paused"
+        CANCELLED = "cancelled", "Cancelled"
+        EXPIRED = "expired", "Expired"
+
+    class Provider(models.TextChoices):
+        DISABLED = "disabled", "Not configured"
+        MANUAL = "manual", "Manually managed"
+        STRIPE = "stripe", "Stripe"
+
+    organization = models.OneToOneField(Organization, on_delete=models.CASCADE, related_name="subscription")
+    plan = models.ForeignKey(SubscriptionPlan, on_delete=models.PROTECT, related_name="subscriptions")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.LEGACY)
+    provider = models.CharField(max_length=20, choices=Provider.choices, default=Provider.DISABLED)
+    provider_customer_id = models.CharField(max_length=255, blank=True, db_index=True)
+    provider_subscription_id = models.CharField(max_length=255, blank=True, db_index=True)
+    provider_state_updated_at = models.DateTimeField(null=True, blank=True)
+    grandfathered = models.BooleanField(default=False)
+    grandfathered_at = models.DateTimeField(null=True, blank=True)
+    grandfathered_reason = models.CharField(max_length=255, blank=True)
+    seat_quantity = models.PositiveIntegerField(default=1, validators=[MinValueValidator(1)])
+    trial_consumed_at = models.DateTimeField(null=True, blank=True)
+    trial_ends_at = models.DateTimeField(null=True, blank=True)
+    current_period_starts_at = models.DateTimeField(null=True, blank=True)
+    current_period_ends_at = models.DateTimeField(null=True, blank=True)
+    grace_ends_at = models.DateTimeField(null=True, blank=True)
+    cancel_at_period_end = models.BooleanField(default=False)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    provider_metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["organization_id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("provider", "provider_customer_id"),
+                condition=~models.Q(provider_customer_id=""),
+                name="uniq_subscription_provider_customer",
+            ),
+            models.UniqueConstraint(
+                fields=("provider", "provider_subscription_id"),
+                condition=~models.Q(provider_subscription_id=""),
+                name="uniq_subscription_provider_record",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(grandfathered=False)
+                    | models.Q(
+                        grandfathered=True,
+                        grandfathered_at__isnull=False,
+                        provider="disabled",
+                        provider_customer_id="",
+                        provider_subscription_id="",
+                        status="grandfathered",
+                    )
+                ),
+                name="grandfathered_subscription_is_provider_free",
+            ),
+        ]
+
+    @property
+    def access_state(self):
+        if self.grandfathered:
+            return self.Status.GRANDFATHERED
+        now = timezone.now()
+        if self.status == self.Status.TRIALING:
+            if not self.trial_ends_at or self.trial_ends_at <= now:
+                return self.Status.EXPIRED
+        if self.status == self.Status.PAST_DUE:
+            if not self.grace_ends_at or self.grace_ends_at <= now:
+                return self.Status.EXPIRED
+        return self.status
+
+    @property
+    def permits_access(self):
+        return self.access_state in {
+            self.Status.GRANDFATHERED,
+            self.Status.LEGACY,
+            self.Status.TRIALING,
+            self.Status.ACTIVE,
+            self.Status.PAST_DUE,
+        }
+
+
+class SubscriptionUsageCounter(TimeStampedModel):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="subscription_usage")
+    metric = models.SlugField(max_length=100)
+    period_starts_at = models.DateTimeField()
+    period_ends_at = models.DateTimeField()
+    quantity = models.PositiveBigIntegerField(default=0)
+
+    class Meta:
+        ordering = ["-period_starts_at", "metric"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("organization", "metric", "period_starts_at", "period_ends_at"),
+                name="uniq_subscription_usage_window",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(period_ends_at__gt=models.F("period_starts_at")),
+                name="subscription_usage_valid_window",
+            ),
+        ]
+        indexes = [models.Index(fields=["organization", "metric", "-period_starts_at"], name="subusage_org_metric_idx")]
+
+
+class BillingEvent(TimeStampedModel):
+    """Replay-safe provider event receipt without retaining payment payloads or card data."""
+
+    provider = models.CharField(max_length=20, choices=OrganizationSubscription.Provider.choices)
+    provider_event_id = models.CharField(max_length=255)
+    event_type = models.CharField(max_length=160)
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.SET_NULL, related_name="billing_events")
+    payload_digest = models.CharField(max_length=64)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    processing_error = models.CharField(max_length=1000, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=("provider", "provider_event_id"), name="uniq_billing_provider_event"),
+        ]
+        indexes = [models.Index(fields=["provider", "event_type", "-created_at"], name="billing_provider_type_idx")]
+
+
 class Membership(TimeStampedModel):
     class Role(models.TextChoices):
         OWNER = "owner", "Owner"

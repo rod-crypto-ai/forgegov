@@ -75,6 +75,7 @@ from .security_services import (
     verify_recovery_code,
     verify_totp,
 )
+from .subscriptions import ensure_organization_subscription
 
 User = get_user_model()
 
@@ -288,6 +289,7 @@ def register(request):
                 )
                 role = Membership.Role.OWNER
                 Membership.objects.create(organization=organization, user=user, role=role)
+                ensure_organization_subscription(organization)
 
     audit(
         request,

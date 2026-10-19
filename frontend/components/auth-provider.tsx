@@ -11,6 +11,7 @@ type Session = {
   role: string;
   capabilities?: {
     company_admin:boolean;
+    billing_admin:boolean;
     financial_read:boolean;
     financial_write:boolean;
     proposal_read:boolean;

@@ -280,6 +280,22 @@ EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() == "true"
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "ForgeGov <noreply@forge-gov.com>")
 
+# Commercial billing remains fail-closed until a provider and reviewed terms are enabled.
+BILLING_PROVIDER = os.getenv("BILLING_PROVIDER", "disabled").strip().lower()
+if BILLING_PROVIDER not in {"disabled", "manual", "stripe"}:
+    raise ImproperlyConfigured("BILLING_PROVIDER must be disabled, manual, or stripe.")
+BILLING_CHECKOUT_ENABLED = os.getenv("BILLING_CHECKOUT_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+BILLING_PORTAL_ENABLED = os.getenv("BILLING_PORTAL_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
+STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "").strip()
+STRIPE_TRIAL_PAYMENT_METHOD_MODE = os.getenv("STRIPE_TRIAL_PAYMENT_METHOD_MODE", "unconfigured").strip().lower()
+if STRIPE_TRIAL_PAYMENT_METHOD_MODE not in {"unconfigured", "required", "optional_cancel", "optional_pause"}:
+    raise ImproperlyConfigured("STRIPE_TRIAL_PAYMENT_METHOD_MODE must be unconfigured, required, optional_cancel, or optional_pause.")
+STRIPE_API_BASE_URL = os.getenv("STRIPE_API_BASE_URL", "https://api.stripe.com/v1").rstrip("/")
+STRIPE_WEBHOOK_TOLERANCE_SECONDS = max(60, int(os.getenv("STRIPE_WEBHOOK_TOLERANCE_SECONDS", "300")))
+BILLING_GRACE_DAYS = max(0, int(os.getenv("BILLING_GRACE_DAYS", "0")))
+
 
 # ForgeGov v3.0.8 connector resilience.
 CONNECTOR_RETRY_ATTEMPTS = int(os.getenv("CONNECTOR_RETRY_ATTEMPTS", "3"))

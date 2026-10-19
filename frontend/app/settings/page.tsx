@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
+  BadgeDollarSign,
   Bell,
   Bot,
   Check,
@@ -169,7 +170,7 @@ export default function SettingsPage(){
 
         <section id="account" className="data-panel settings-section">
           <div className="panel-heading"><UserRound/><div><h2>Account & workspace</h2><p>Your personal identity and company profile remain separate from UI preferences.</p></div></div>
-          <div className="settings-link-list"><Link href="/account"><UserRound/><div><strong>Personal profile & company information</strong><span>{session?.user.email} · {session?.organization.name}</span></div><ChevronRight/></Link><Link href="/company"><LayoutPanelLeft/><div><strong>Company Hub</strong><span>Company profile, team, invitations, and relationships</span></div><ChevronRight/></Link>{session?.capabilities?.company_admin&&<Link href="/team"><SlidersHorizontal/><div><strong>Team administration</strong><span>Roles and authorized company membership</span></div><ChevronRight/></Link>}</div>
+          <div className="settings-link-list"><Link href="/account"><UserRound/><div><strong>Personal profile & company information</strong><span>{session?.user.email} · {session?.organization.name}</span></div><ChevronRight/></Link><Link href="/company"><LayoutPanelLeft/><div><strong>Company Hub</strong><span>Company profile, team, invitations, and relationships</span></div><ChevronRight/></Link>{session?.capabilities?.company_admin&&<Link href="/team"><SlidersHorizontal/><div><strong>Team administration</strong><span>Roles and authorized company membership</span></div><ChevronRight/></Link>}{session?.capabilities?.billing_admin&&<Link href="/billing"><BadgeDollarSign/><div><strong>Plan & billing</strong><span>Workspace access, commercial terms, entitlements, and measured usage</span></div><ChevronRight/></Link>}</div>
         </section>
 
         <section id="security" className="data-panel settings-section">

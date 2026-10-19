@@ -61,3 +61,7 @@ FORGEGOV_QA_BASE_URL="$BASE_URL" \
 echo "Running v3.2.6 ForgeAI-platform responsive QA..."
 FORGEGOV_QA_BASE_URL="$BASE_URL" \
   .venv-visual-qa/bin/python scripts/visual_qa_forgeai_platform.py
+
+echo "Running v3.3.0 commercial billing responsive QA..."
+FORGEGOV_QA_BASE_URL="$BASE_URL" \
+  .venv-visual-qa/bin/python scripts/visual_qa_billing.py

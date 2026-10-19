@@ -105,6 +105,7 @@ def membership_capabilities(membership: Membership | None) -> dict[str, bool]:
     role = membership.role if membership else None
     return {
         "company_admin": role in COMPANY_ADMIN_ROLES,
+        "billing_admin": role in COMPANY_ADMIN_ROLES,
         "financial_read": role in FINANCIAL_ROLES,
         "financial_write": role in FINANCIAL_ROLES,
         "proposal_read": role in PROPOSAL_READ_ROLES,

@@ -10,7 +10,7 @@ from rest_framework.decorators import action, api_view, throttle_classes, permis
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from .notifications import notify_organization_members, notify_project_room_participants, send_system_email
-from .permissions import ReadOnlyOrContributor, active_membership
+from .permissions import IsOrganizationAdmin, ReadOnlyOrContributor, active_membership
 from .tenant_security import (
     IsExecutiveFinancialMember,
     IsFinancialMember,
@@ -35,6 +35,8 @@ from .forgeai_platform import (
     start_research_run,
 )
 from .live_web import search as live_web_search
+from .subscriptions import increment_usage, subscription_summary
+from .billing import BillingConfigurationError, BillingProviderError, create_checkout_session, create_portal_session, process_stripe_webhook
 
 from .integrations import (
     IntegrationError,
@@ -55,6 +57,7 @@ from .integrations import (
 )
 from .models import (
     Agency,
+    AuditLog,
     Award,
     Category,
     Contact,
@@ -309,6 +312,66 @@ def governance_role_matrix(request):
         "capabilities": membership_capabilities(membership),
         "matrix": role_capability_matrix(),
     })
+
+
+@api_view(["GET"])
+@permission_classes([IsOrganizationAdmin])
+def billing_summary(request):
+    membership = active_membership(request.user)
+    return Response(subscription_summary(membership.organization))
+
+
+@api_view(["POST"])
+@permission_classes([IsOrganizationAdmin])
+def billing_checkout(request):
+    membership = active_membership(request.user)
+    try:
+        payload = create_checkout_session(organization=membership.organization, user=request.user)
+    except BillingConfigurationError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+    except BillingProviderError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+    AuditLog.objects.create(
+        organization=membership.organization,
+        actor=request.user,
+        action="billing.checkout_started",
+        object_type="organization",
+        object_id=str(membership.organization_id),
+        metadata={"provider": "stripe", "checkout_session_id": payload["id"]},
+    )
+    return Response(payload, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@permission_classes([IsOrganizationAdmin])
+def billing_portal(request):
+    membership = active_membership(request.user)
+    try:
+        payload = create_portal_session(organization=membership.organization)
+    except BillingConfigurationError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+    except BillingProviderError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+    AuditLog.objects.create(
+        organization=membership.organization,
+        actor=request.user,
+        action="billing.portal_opened",
+        object_type="organization",
+        object_id=str(membership.organization_id),
+        metadata={"provider": "stripe", "portal_session_id": payload["id"]},
+    )
+    return Response(payload, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def billing_stripe_webhook(request):
+    signature = request.headers.get("Stripe-Signature", "")
+    try:
+        payload = process_stripe_webhook(request.body, signature)
+    except (BillingConfigurationError, BillingProviderError) as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(payload)
 
 
 @api_view(["GET", "POST"])
@@ -719,6 +782,7 @@ def ai_chat(request):
             conversation=conversation,
             financial_context_permitted=financial_context_permitted,
         )
+        increment_usage(organization, "forgeai_runs")
         result["research_run_id"] = research_run.id
         result["workflow"] = workflow
         return Response(result)
