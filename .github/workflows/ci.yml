@@ -66,3 +66,59 @@ jobs:
         run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python scripts/visual_qa_forgeai_platform.py
       - name: Cross-browser v3.3.0 billing responsive QA
         run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python scripts/visual_qa_billing.py
+
+  docker-release-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure isolated test environment
+        run: |
+          cp .env.example .env
+          python3 - <<'PY'
+          import secrets
+          from pathlib import Path
+          path = Path(".env")
+          text = path.read_text().replace("replace-with-a-long-random-value", secrets.token_urlsafe(48))
+          path.write_text(text)
+          PY
+      - name: Build production containers
+        run: |
+          docker compose config --quiet
+          docker compose build backend worker beat
+          docker build --target runner --build-arg NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000/api -t forgegov-release-qa ./frontend
+      - name: Start isolated services and verify migrations
+        run: |
+          docker compose up -d --wait backend worker beat
+          docker compose exec -T backend python manage.py check
+          docker compose exec -T backend python manage.py makemigrations --check --dry-run
+          docker compose exec -T backend python manage.py test core.test_v330_commercial_readiness --verbosity 1
+          ./scripts/release_smoke.sh
+      - name: Verify database backup and isolated restore
+        run: |
+          ./scripts/backup_database.sh backups/v330-ci.dump
+          ./scripts/verify_backup_restore.sh backups/v330-ci.dump
+      - name: Verify non-root runtime and production frontend
+        run: |
+          for service in backend worker beat; do
+            test "$(docker compose exec -T "$service" id -u)" != "0"
+          done
+          docker run -d --name forgegov-release-frontend -p 127.0.0.1:3100:3000 forgegov-release-qa
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3100/sign-in >/dev/null; then
+              curl -fsS http://127.0.0.1:3100/brand/forgegov-logo.png >/dev/null
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+      - name: Collect failure diagnostics
+        if: failure()
+        run: |
+          docker compose logs --tail=100
+          docker logs forgegov-release-frontend || true
+      - name: Clean up isolated services
+        if: always()
+        run: |
+          docker rm -f forgegov-release-frontend || true
+          docker compose down -v
