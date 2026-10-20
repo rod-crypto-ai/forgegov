@@ -82,6 +82,17 @@ jobs:
           text = path.read_text().replace("replace-with-a-long-random-value", secrets.token_urlsafe(48))
           path.write_text(text)
           PY
+          # Exercise the image filesystem instead of local-development bind mounts.
+          cat > compose.release-ci.yml <<'YAML'
+          services:
+            backend:
+              volumes: !reset []
+            worker:
+              volumes: !reset []
+            beat:
+              volumes: !reset []
+          YAML
+          echo "COMPOSE_FILE=docker-compose.yml:compose.release-ci.yml" >> "$GITHUB_ENV"
       - name: Build production containers
         run: |
           docker compose config --quiet
