@@ -13,7 +13,9 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install -r backend/requirements.txt
-      - run: python backend/manage.py test core
+      - run: python backend/manage.py test core platform_admin
+      - run: python backend/manage.py makemigrations --check --dry-run
+      - run: python scripts/private_beta_launch_audit.py
       - name: Ruff fatal-error gate
         run: ruff check backend --select E9,F63,F7,F82
 
@@ -62,3 +64,5 @@ jobs:
         run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python scripts/visual_qa_capture_operations.py
       - name: Cross-browser v3.2.6 ForgeAI platform responsive QA
         run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python scripts/visual_qa_forgeai_platform.py
+      - name: Cross-browser v3.3.0 billing responsive QA
+        run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python scripts/visual_qa_billing.py

@@ -3,7 +3,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-IMAGE="forgegov-visual-qa-frontend:3.2.6"
+IMAGE="forgegov-visual-qa-frontend:3.3.0"
 CONTAINER="forgegov-visual-qa-frontend"
 PORT="${FORGEGOV_QA_FRONTEND_PORT:-3100}"
 BASE_URL="http://127.0.0.1:${PORT}"
