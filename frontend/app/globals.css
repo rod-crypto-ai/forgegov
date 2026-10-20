@@ -1452,3 +1452,11 @@ html[data-theme="dark"] .session-icon{background:#15273f}
 @media(max-width:760px){.billing-hero{flex-direction:column}.billing-summary-grid,.billing-detail-grid{grid-template-columns:1fr}.billing-list>div{grid-template-columns:auto minmax(0,1fr)}.billing-list small{grid-column:2;text-align:left}}
 .billing-actions{display:flex;flex-wrap:wrap;gap:8px}.billing-actions button{display:inline-flex;align-items:center;gap:8px}.billing-actions button svg{width:16px;height:16px}
 .billing-offer{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-soft)}.billing-offer span{color:var(--muted)}
+
+/* Official ForgeGov brand system */
+.forge-logo{flex:0 0 auto;background:transparent!important;box-shadow:none!important;border-radius:0!important;overflow:visible;line-height:0}
+.forge-logo img{display:block;width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 7px 12px rgba(0,105,255,.28))}
+.forge-brand>span:last-child,.landing-brand>span:last-child{color:#2e9cff}
+.forge-brand>span:last-child b,.landing-brand>span:last-child b{color:#f2f5f8}
+.forgegov-wordmark{display:flex;align-items:baseline;gap:0;font-style:normal;letter-spacing:.075em}
+.forgegov-wordmark span{color:#f2f5f8}.forgegov-wordmark em{color:#2e9cff;font-style:normal}

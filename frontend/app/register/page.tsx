@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Building2, CheckCircle2, LockKeyhole, MailCheck, ShieldCheck } from "lucide-react";
 import { authFetch } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
+import { ForgeGovAuthBrand } from "@/components/forgegov-logo";
 
 type RegistrationConfig={
   mode:string;
@@ -65,7 +66,7 @@ function RegisterForm() {
   const controlled=config&&["private_beta","invite_only","closed"].includes(config.mode)&&!invite;
   if(controlled){
     return <main className="auth-page"><section className="auth-card">
-      <div className="auth-brand"><span className="forge-logo"><span>F</span>G</span><div><b>FORGEGOV</b><small>Controlled access</small></div></div>
+      <ForgeGovAuthBrand subtitle="Controlled access"/>
       <ShieldCheck size={36}/>
       <h1>ForgeGov access is controlled</h1>
       <p>ForgeGov is currently operating with company-controlled registration. New users join through a secure invitation from an approved company workspace.</p>
@@ -80,7 +81,7 @@ function RegisterForm() {
   }
 
   return <main className="auth-page"><section className="auth-card auth-card-wide">
-    <div className="auth-brand"><span className="forge-logo"><span>F</span>G</span><div><b>FORGEGOV</b><small>Secure GovCon workspace</small></div></div>
+    <ForgeGovAuthBrand subtitle="Secure GovCon workspace"/>
     <div className="identity-heading"><ShieldCheck size={34}/><div><h1>{invite?"Join your ForgeGov company":"Create your ForgeGov account"}</h1><p>{invite?"Your invitation binds this account to the company that invited you.":"Create your identity first. ForgeGov will then create your company workspace or route you to an existing company for approval."}</p></div></div>
     <form onSubmit={submit} className="auth-grid">
       <label><span>First name</span><input value={form.first_name} onChange={e=>set("first_name",e.target.value)} required autoComplete="given-name"/></label>
