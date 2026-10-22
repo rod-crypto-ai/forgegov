@@ -58,6 +58,8 @@ def run(page):
     expect(room_task.locator("select")).to_have_value("done")
     page.screenshot(path=str(OUT / "room-work.png"), full_page=True)
     page.set_viewport_size({"width": 390, "height": 844})
+    room_task.scroll_into_view_if_needed()
+    expect(room_task).to_be_in_viewport()
     assert page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth") <= 2
     page.screenshot(path=str(OUT / "room-work-phone.png"), full_page=True)
     page.set_viewport_size({"width": 1440, "height": 900})

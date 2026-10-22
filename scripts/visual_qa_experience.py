@@ -247,6 +247,11 @@ def room_detail_failures(page, evidence_key):
     page.goto(BASE_URL + "/project-rooms/9", wait_until="networkidle")
     page.get_by_role("heading", name="QA secure room", exact=True).wait_for()
     page.get_by_role("button", name="Work & files", exact=True).click()
+    badge = page.locator(".privacy-badge.internal")
+    assert badge.evaluate("e=>e.getClientRects().length") == 1
+    assert page.locator(".room-hero-meta .company-identity-name").evaluate("e=>parseFloat(getComputedStyle(e).borderTopWidth)") == 0
+    if page.locator("html").get_attribute("data-theme") == "dark":
+        assert all("255, 255, 255" not in color for color in page.locator(".room-hero-meta > span").evaluate_all("es=>es.map(e=>getComputedStyle(e).backgroundColor)"))
     title = page.get_by_placeholder("Add a task", exact=True)
     title.fill("QA retained room task")
     page.get_by_role("button", name="Add task", exact=True).click()

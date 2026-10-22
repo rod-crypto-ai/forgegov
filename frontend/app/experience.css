@@ -53,6 +53,7 @@ html[data-density] .data-panel:has(> .data-toolbar, > .workspace-section-header,
 .room-work-form { display: grid; gap: 12px; }
 .room-work-form > input { width: 100%; }
 .room-work-form > button { justify-self: start; }
+.privacy-badge { display: inline-flex; white-space: nowrap; vertical-align: middle; }
 .advanced-filter-grid > button { align-self: end; }
 .advanced-filter-grid > label { min-width: 0; }
 .quick-create-form { align-items: end; }

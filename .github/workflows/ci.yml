@@ -42,6 +42,8 @@ jobs:
       image: mcr.microsoft.com/playwright/python:v1.57.0-noble
       options: --ipc=host
     steps:
+      - name: Align disposable container home ownership for Firefox
+        run: chown "$(id -u):$(id -g)" /github/home
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:

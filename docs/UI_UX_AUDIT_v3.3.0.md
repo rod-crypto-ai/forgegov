@@ -222,6 +222,11 @@ experience tests; fatal-error lint and source audit passed. Production builds, l
   the creation form and board. Room-specific card stacking and a consistent form/board gap
   correct that geometry. Discussion/note forms use consistent gaps and full-width text fields;
   room task, discussion, note and file fields have explicit accessible names.
+- Phone evidence exposed inherited room-header badge borders on every nested company-identity
+  span. The original selector now applies only to direct badges and uses the theme surface;
+  metadata aligns to intrinsic height. Privacy badges stay on one line. The room task board is
+  keyboard-focusable with a labelled scroll region; phone persistence QA scrolls the saved task
+  into view. Singular member/partner counts no longer render plural labels.
 - Run 39850903020 passed all four jobs: 372 backend tests, 30 shared experience cases and
   four existing 21-case responsive suites. Dark room/dashboard, proposal editor and phone pricing
   screenshots were manually reviewed. These fixtures do not establish live external provider health.
