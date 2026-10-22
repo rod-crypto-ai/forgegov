@@ -64,7 +64,7 @@ padding improved, but dark shortcut backgrounds and metric text still failed vis
 passing structural assertions. Stage 2 corrects those tokens and expands the dark-theme assertions.
 UX-07 therefore remains partially verified until the second-stage evidence is reviewed.
 
-## Stage 2 corrections — validation underway
+## Stage 2 corrections — CI verified (aac8fe3)
 
 - Company invitation inputs had no reusable dimensions/border treatment. Shared form controls now
   inherit consistent 42px minimum height, padding, focus styling and theme tokens.
@@ -87,17 +87,22 @@ UX-07 therefore remains partially verified until the second-stage evidence is re
   totals/filtering, empty/paginated results, official nested category fields and partial-record safety.
 - Browser regression expanded to task creation/timezone conversion and failed mutations, saved-search
   empty guidance, report rendering/pagination/CSV, company control geometry and dark shortcut surfaces.
+  All 30 expanded cases passed in CI run 39778500757; backend/frontend/Docker jobs also passed.
+  Screenshots of dark phone dashboard, desktop funding, phone entrants and dark company were reviewed.
+  Remaining company summary contrast and mobile sticky pagination defects led directly to stage 4.
 
 ## Open release gates
 
 - Award ingestion has recently failed to reach USAspending, although connector probes succeeded.
   Network/provider recovery and classification backfill must be verified independently of field fixes.
-- Forecast/state-local directories are not live notices; preserve honest source labels and review
-  directory card statuses. Do not rebrand reference coverage as a live integration.
+- Forecast/state-local directories are not live notices. Forecast directory labels corrected in
+  stage 4; continue verifying source availability independently of directory coverage.
 - Generic IDV/vehicle result interactions and large-result pagination still need follow-up.
 - Full workflow, accessibility and visual coverage remains incomplete. Do not mark the audit complete
   or approve commercial release solely because fixture-driven CI passes.
 - No production deployment, merge, release tag, billing activation or customer-data migration in this pass.
+- Public Terms of Use and Privacy Notice still explicitly identify themselves as operational private-beta
+  drafts pending qualified-counsel review. Do not rewrite this into a claim of legal approval.
 
 ## Verification results
 
@@ -122,3 +127,16 @@ JSON evidence for review. Production browser access remains available.
 - Production session expired during the audit. Existing authenticated observations remain valid,
   but remaining live authenticated workflow tests require reauthentication; do not infer results
   from fixtures or change customer preferences merely to test themes.
+
+## Stage 4 visual evidence follow-up — validation pending
+
+- Stage-2 screenshots exposed sticky pagination overlaying report metrics on phones. Pagination now
+  stays in document flow; extra mobile bottom clearance keeps fixed feedback access off final content.
+- Company summary cards inherit theme surfaces, profile checkboxes align inline with their labels,
+  and adjacent company panels no longer stretch to an empty tall column. Team/invitation lists have
+  explicit empty guidance. The summary theme fix was introduced in stage 3.
+- Forecast cards no longer fabricate Active/event status or a Feed label from directory references.
+  They say Directory reference / source and the drawer explicitly states it is not a live notice.
+  Searches are labelled, empty/loading states are explicit, and request sequencing rejects stale results.
+- Added browser assertions for in-flow pagination, dark company surfaces, invitation guidance and
+  fallback directory labels/source details. Fixture snapshots are not proof of live forecast notices.

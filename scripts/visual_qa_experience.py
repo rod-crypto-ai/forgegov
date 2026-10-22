@@ -160,6 +160,7 @@ def reports_and_company(page, evidence_key):
         page.get_by_role("heading", name=heading, exact=True).wait_for()
         page.locator(".data-table tbody tr").wait_for()
         assert geometry(page)["overflow"] <= 2
+        assert page.locator(".pagination-bar").evaluate("e=>getComputedStyle(e).position") != "sticky"
         assert page.get_by_text("Stored federal award history only, not a live market total.", exact=True).is_visible()
         if evidence_key:
             page.screenshot(path=str(OUT / f"{evidence_key}-{kind}.png"), full_page=True)
@@ -178,9 +179,21 @@ def reports_and_company(page, evidence_key):
     page.locator(".company-hub-form").wait_for()
     inputs = page.locator('.invite-company-form input').evaluate_all("es => es.map(e=>({height:e.getBoundingClientRect().height,radius:parseFloat(getComputedStyle(e).borderRadius)}))")
     assert inputs and all(value["height"] >= 40 and value["radius"] >= 8 for value in inputs), inputs
+    if page.locator("html").get_attribute("data-theme") == "dark":
+        assert page.locator(".workspace-summary > div").first.evaluate("e=>getComputedStyle(e).backgroundColor") != "rgb(255, 255, 255)"
+    page.get_by_text("No employee invitations", exact=True).wait_for()
     assert geometry(page)["overflow"] <= 2
     if evidence_key:
         page.screenshot(path=str(OUT / f"{evidence_key}-company.png"), full_page=True)
+    page.route("**/api/intelligence/forecasts/sources/**", lambda route: fulfill(route, {"status": "fallback", "reachable": False, "results": [{"agency": "QA Agency", "forecast_url": "https://www.acquisition.gov/procurement-forecasts", "description": "Official directory reference"}], "warning": "Directory snapshot; source refresh unavailable."}))
+    page.goto(BASE_URL + "/opportunities/federal-forecasts", wait_until="networkidle")
+    page.get_by_text("Directory reference", exact=True).wait_for()
+    assert page.get_by_text("Active", exact=True).count() == 0
+    page.get_by_role("button", name="View source details", exact=False).click()
+    page.get_by_text("Directory link, not a live notice", exact=True).wait_for()
+    page.get_by_role("button", name="Close forecast source", exact=True).click()
+    if evidence_key:
+        page.screenshot(path=str(OUT / f"{evidence_key}-forecasts.png"), full_page=True)
 
 
 def run_case(browser, engine, name, width, height, theme):

@@ -74,6 +74,11 @@ dialog.pursuit-detail-modal > footer { background: var(--panel-soft); }
 .simple-row > span { min-width: 0; overflow-wrap: anywhere; }
 .simple-row time { flex-shrink: 0; color: var(--muted); }
 .audit-log-search { display: grid; gap: 6px; max-width: 480px; margin-bottom: 18px; color: var(--muted); font-size: 12px; }
+.pagination-bar { position: static; flex-wrap: wrap; }
+.company-hub-grid { align-items: start; }
+.company-hub-form .check-row { gap: 12px 20px; }
+.company-hub-form .check-row label { display: inline-flex; align-items: center; gap: 8px; }
+.company-hub-form .check-row input { width: 18px; height: 18px; margin: 0; flex-shrink: 0; }
 .page-hero, .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
 .panel-heading h2 { font-size: 20px; }
 .panel-heading > svg { color: var(--accent); flex-shrink: 0; margin-top: 3px; }
@@ -141,4 +146,6 @@ html[data-theme="dark"] .data-table tbody tr:hover { background: var(--panel-sof
   .federal-feed-card-actions { gap: 8px; }
   .page-hero, .page-header { flex-direction: column; gap: 16px; }
   .simple-row { flex-direction: column; gap: 8px; }
+  .pagination-bar { position: static; flex-wrap: wrap; }
+  .forge-content { padding-bottom: 88px; }
 }
