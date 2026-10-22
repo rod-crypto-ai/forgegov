@@ -194,3 +194,6 @@ experience tests; fatal-error lint and source audit passed. Production builds, l
   creating government award records. Existing exports, result filters and navigation remain available.
 - Read-only Render log queries returned no retained matching error entries. Database sync metadata
   established the later partial recovery described above; no sync, limit or production data was changed.
+- One WebKit case exposed a rejected background route prefetch for a newly created Project Room
+  during subsequent navigation. Room-card links now fetch their protected workspace when opened,
+  avoiding speculative room-page requests while retaining normal navigation.

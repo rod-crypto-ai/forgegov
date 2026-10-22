@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -368,12 +369,15 @@ def run_case(browser, engine, name, width, height, theme):
 
 def main():
     report = {"scope": "isolated UI fixtures; not live provider validation", "cases": {}}
+    smoke = "--smoke" in sys.argv
     with sync_playwright() as p:
-        for engine in ("chromium", "firefox", "webkit"):
+        for engine in (("chromium",) if smoke else ("chromium", "firefox", "webkit")):
             browser = getattr(p, engine).launch()
             try:
                 for name, width, height in SCENARIOS:
                     for theme in ("light", "dark"):
+                        if smoke and (name, theme) not in (("phone", "dark"), ("desktop", "light")):
+                            continue
                         key = f"{engine}-{name}-{theme}"
                         result = run_case(browser, engine, name, width, height, theme)
                         report["cases"][key] = result

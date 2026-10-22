@@ -58,6 +58,8 @@ jobs:
           for attempt in $(seq 1 60); do curl -fsS http://127.0.0.1:3100/intelligence/market >/dev/null && exit 0; sleep 1; done
           cat /tmp/forgegov-next.log
           exit 1
+      - name: Early phone and desktop workflow checks
+        run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python scripts/visual_qa_experience.py --smoke
       - name: Cross-browser v3.2.4 market responsive QA
         run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python scripts/visual_qa_market_intelligence.py
       - name: Cross-browser v3.2.5 capture operations responsive QA
