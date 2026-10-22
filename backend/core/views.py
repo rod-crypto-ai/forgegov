@@ -170,6 +170,7 @@ from .market_intelligence import (
     vehicle_analysis,
     vendor_dossier,
 )
+from .market_reports import market_report
 from .capture_copilot import COPILOT_MODES, build_capture_copilot_brief, run_capture_copilot
 from .proposal_workspace import build_proposal_workspace
 from .proposal_execution import proposal_execution_payload, ensure_proposal_execution, update_plan, update_requirement, update_review, update_finding
@@ -1882,6 +1883,25 @@ def market_map_view(request):
     if category_type not in {"naics", "psc"}:
         return Response({"detail": "type must be naics or psc."}, status=status.HTTP_400_BAD_REQUEST)
     return Response(market_map(category_type=category_type, code=str(request.query_params.get("code") or "")[:12]))
+
+
+@api_view(["GET"])
+def market_report_view(request):
+    try:
+        _request_organization(request)
+    except Organization.DoesNotExist:
+        return Response({"detail": "A valid workspace membership is required."}, status=status.HTTP_403_FORBIDDEN)
+    kind = str(request.query_params.get("kind") or "funding")
+    if kind not in {"funding", "new-entrants"}:
+        return Response({"detail": "kind must be funding or new-entrants."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        days = int(request.query_params.get("days", "90"))
+        page = int(request.query_params.get("page", "1"))
+        if not 1 <= days <= 3650 or not 1 <= page <= 10000:
+            raise ValueError
+    except (TypeError, ValueError):
+        return Response({"detail": "days must be 1–3650 and page must be 1–10000."}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(market_report(kind=kind, days=days, page=page, agency=str(request.query_params.get("agency") or "").strip()[:255], naics=str(request.query_params.get("naics") or "").strip()[:12]))
 
 
 @api_view(["GET"])

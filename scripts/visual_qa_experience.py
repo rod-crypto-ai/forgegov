@@ -55,8 +55,76 @@ def geometry(page):
     }""")
 
 
+def capture_workflows(page, evidence_key):
+    """Check actual rendered mutations against disposable HTTP fixtures."""
+    tasks = []
+    writes = []
+    page.route("**/api/auth/csrf/**", lambda route: fulfill(route, {"csrfToken": "isolated-ui-qa"}))
+    page.route("**/api/tasks/?*", lambda route: fulfill(route, {"results": tasks}))
+    def create_task(route):
+        body = route.request.post_data_json
+        writes.append(body)
+        tasks.append({"id": 1, "title": body["title"], "due_at": body["due_at"], "completed": False})
+        fulfill(route, tasks[0], 201)
+    page.route("**/api/workflow/tasks/", create_task)
+    page.goto(BASE_URL + "/capture/tasks", wait_until="networkidle")
+    page.get_by_text("No tasks yet", exact=True).wait_for()
+    page.get_by_label("Task title", exact=True).fill("QA capture action")
+    page.get_by_label("Due date (your local time)", exact=True).fill("2026-11-02T09:00")
+    page.get_by_role("button", name="Add task", exact=True).click()
+    page.get_by_text("QA capture action", exact=True).wait_for()
+    assert len(writes) == 1
+    assert writes[0]["due_at"] == "2026-11-02T00:00:00.000Z", writes
+    page.route("**/api/tasks/1/", lambda route: fulfill(route, {"detail": "Controlled task rejection"}, 503))
+    page.get_by_role("button", name="Complete: QA capture action", exact=True).click()
+    page.get_by_role("alert").filter(has_text="Controlled task rejection").wait_for()
+    assert page.get_by_role("button", name="Complete: QA capture action", exact=True).get_attribute("aria-pressed") == "false"
+    if evidence_key:
+        page.screenshot(path=str(OUT / f"{evidence_key}-task-error.png"), full_page=True)
+    page.route("**/api/saved-searches/?*", lambda route: fulfill(route, {"results": []}))
+    page.goto(BASE_URL + "/capture/saved-searches", wait_until="networkidle")
+    page.get_by_text("No saved searches yet", exact=True).wait_for()
+    assert page.get_by_role("link", name="Find opportunities", exact=True).is_visible()
+
+
+def reports_and_company(page, evidence_key):
+    def report_response(route):
+        query = parse_qs(urlparse(route.request.url).query)
+        kind = query["kind"][0]
+        current_page = int(query["page"][0])
+        rows = [{"awarding_agency": "QA Agency", "recipient_name": "QA Entrant", "recipient_uei": "QAUEI", "first_award": "2026-10-01", "latest_award": "2026-10-20", "award_count": 2, "obligated": 1000000, "recipients": 1, "share_percent": 100}]
+        fulfill(route, {"kind": kind, "source": "USAspending.gov", "generated_at": "2026-10-22T00:00:00Z", "coverage_note": "Stored federal award history only, not a live market total.", "count": 26, "page": current_page, "total_pages": 2, "results": rows, "totals": {"records": 2, "obligated": 1000000, "latest_source_update": None}, "sync": {"status": "failed", "last_completed_at": "2026-10-22T00:00:00Z"}})
+    page.route("**/api/reports/market/**", report_response)
+    for kind, heading in [("funding", "Agency funding distribution"), ("new-entrants", "First observed recipient–agency relationships")]:
+        page.goto(BASE_URL + "/reports/" + kind, wait_until="networkidle")
+        page.get_by_role("heading", name=heading, exact=True).wait_for()
+        page.locator(".data-table tbody tr").wait_for()
+        assert geometry(page)["overflow"] <= 2
+        assert page.get_by_text("Stored federal award history only, not a live market total.", exact=True).is_visible()
+        if evidence_key:
+            page.screenshot(path=str(OUT / f"{evidence_key}-{kind}.png"), full_page=True)
+        page.get_by_role("button", name="Next", exact=True).click()
+        page.get_by_text("Page 2 of 2", exact=True).wait_for()
+        with page.expect_download() as download:
+            page.get_by_role("button", name="Export current page", exact=True).click()
+        assert download.value.suggested_filename == kind + "-page-2.csv"
+    profile = {key: "" for key in ("organization_name", "uei", "cage_code", "tagline", "description", "website", "city", "state", "country", "contact_email")}
+    profile.update({key: [] for key in ("naics_codes", "psc_codes", "capabilities", "certifications", "contract_vehicles", "service_areas")})
+    profile.update({"organization_name": "QA Company", "is_public": False, "accepting_partners": False})
+    page.route("**/api/network/profile/**", lambda route: fulfill(route, profile))
+    for pattern in ("**/api/team/members/**", "**/api/team/invitations/**", "**/api/network/connections/**", "**/api/company/join-requests/**"):
+        page.route(pattern, lambda route: fulfill(route, []))
+    page.goto(BASE_URL + "/company", wait_until="networkidle")
+    page.locator(".company-hub-form").wait_for()
+    inputs = page.locator('.invite-company-form input').evaluate_all("es => es.map(e=>({height:e.getBoundingClientRect().height,radius:parseFloat(getComputedStyle(e).borderRadius)}))")
+    assert inputs and all(value["height"] >= 40 and value["radius"] >= 8 for value in inputs), inputs
+    assert geometry(page)["overflow"] <= 2
+    if evidence_key:
+        page.screenshot(path=str(OUT / f"{evidence_key}-company.png"), full_page=True)
+
+
 def run_case(browser, engine, name, width, height, theme):
-    context = browser.new_context(viewport={"width": width, "height": height}, color_scheme=theme)
+    context = browser.new_context(viewport={"width": width, "height": height}, color_scheme=theme, timezone_id="Asia/Tokyo", accept_downloads=True)
     page = context.new_page()
     install(page, theme)
     errors = []
@@ -71,6 +139,8 @@ def run_case(browser, engine, name, width, height, theme):
         assert dashboard["surface"], "shared surface token is undefined"
         if theme == "dark":
             assert dashboard["panelColor"] != "rgb(255, 255, 255)", dashboard
+            backgrounds = page.locator('.workspace-launch-grid > a').evaluate_all("es=>es.map(e=>getComputedStyle(e).backgroundColor)")
+            assert "rgb(255, 255, 255)" not in backgrounds, backgrounds
         page.screenshot(path=str(OUT / f"{engine}-{name}-{theme}-dashboard.png"), full_page=True)
         page.goto(BASE_URL + "/opportunities/recent-federal-activity", wait_until="networkidle")
         page.get_by_role("heading", name="SAM controlled opportunity", exact=True).wait_for()
@@ -108,6 +178,9 @@ def run_case(browser, engine, name, width, height, theme):
         page.get_by_role("alert").filter(has_text="Controlled source failure").wait_for()
         assert page.locator(".federal-feed-card").count() == 0
         assert page.get_by_text("1 synchronized record", exact=True).count() == 0
+        evidence_key = f"{engine}-{name}-{theme}" if engine == "chromium" and name in ("phone", "desktop") else None
+        capture_workflows(page, evidence_key)
+        reports_and_company(page, evidence_key)
         assert not errors, errors
         return {"passed": True, "dashboard": dashboard, "feed": metrics}
     except Exception as error:

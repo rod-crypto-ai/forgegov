@@ -77,15 +77,15 @@ export default function DashboardHome() {
     </section>
 
     <section className="mission-intelligence-strip">
-      <div><span className="panel-kicker">INTELLIGENCE PULSE</span><strong>{commandCenter.intelligence?.recent_awards_30d ?? 0}</strong><small>award records refreshed in the last 30 days</small></div>
+      <div><span className="panel-kicker">INTELLIGENCE PULSE</span><strong>{commandCenter.intelligence?.recent_awards_30d ?? 0}</strong><small>awards with a source update in the last 30 days</small></div>
       <div><span className="panel-kicker">WEIGHTED PURSUIT VALUE</span><strong>{money.format(commandCenter.metrics.weighted_pipeline ?? summary.pursuits?.weighted_value ?? 0)}</strong><small>Probability-adjusted active pursuits</small></div>
       <div><span className="panel-kicker">CONNECTOR STATUS</span><strong>{commandCenter.intelligence?.connectors.verified?`${commandCenter.intelligence.connectors.healthy}/${commandCenter.intelligence.connectors.total}`:"Not probed"}</strong><small>{commandCenter.intelligence?.connectors.attention ? `${commandCenter.intelligence.connectors.attention} source(s) have recorded failures; run live verification` : "Run live verification for current reachability"}</small></div>
-      <div><span className="panel-kicker">AWARD FRESHNESS</span><strong>{commandCenter.intelligence?.latest_award_sync_status?.replaceAll("_"," ") ?? "not run"}</strong><small>{commandCenter.intelligence?.latest_award_sync ? `Last sync ${new Date(commandCenter.intelligence.latest_award_sync).toLocaleString()}` : "Run USAspending ingestion to populate market evidence"}</small></div>
+      <div><span className="panel-kicker">AWARD FRESHNESS</span><strong>{commandCenter.intelligence?.latest_award_sync_status?.replaceAll("_"," ") ?? "not run"}</strong><small>{commandCenter.intelligence?.latest_award_sync ? `Last sync attempt ${new Date(commandCenter.intelligence.latest_award_sync).toLocaleString()}` : "Run USAspending ingestion to populate market evidence"}</small></div>
       <Link href="/intelligence/awards">Open award intelligence <ArrowRight size={14}/></Link>
     </section>
 
     <section className="metric-grid">
-      <Link href="/opportunities/federal-contracts" className="metric-card blue"><span><FileSearch/>Active opportunities</span><strong>{summary.opportunities?.active ?? 0}</strong><small>{summary.opportunities?.total ?? 0} notices indexed</small><i><TrendingUp size={14}/> Live market</i></Link>
+      <Link href="/opportunities/federal-contracts" className="metric-card blue"><span><FileSearch/>Active opportunities</span><strong>{summary.opportunities?.active ?? 0}</strong><small>{summary.opportunities?.total ?? 0} notices indexed</small><i><TrendingUp size={14}/> Stored notices</i></Link>
       <Link href="/awards/federal-contracts" className="metric-card teal"><span><CircleDollarSign/>Award obligations</span><strong>{money.format(summary.awards?.obligated_total ?? 0)}</strong><small>{summary.awards?.total ?? 0} award records</small><i><Radar size={14}/> USAspending</i></Link>
       <Link href="/capture/pursuits" className="metric-card violet"><span><Target/>Active pursuits</span><strong>{summary.pursuits?.total ?? 0}</strong><small>{money.format(summary.pursuits?.weighted_value ?? 0)} probability-adjusted value</small><i><TrendingUp size={14}/> Capture</i></Link>
       <Link href="/capture/tasks" className="metric-card amber"><span><CalendarClock/>Open actions</span><strong>{summary.tasks?.open ?? 0}</strong><small>{summary.tasks?.overdue ?? 0} overdue</small><i><BellRing size={14}/> Needs attention</i></Link>
@@ -94,7 +94,7 @@ export default function DashboardHome() {
     <section className="dashboard-layout">
       <div className="dashboard-primary">
         <section className="pro-panel market-radar">
-          <header><div><span className="panel-kicker">MARKET RADAR</span><h2>Intelligence workspaces</h2><p>Live public data and capture workflows organized by the decisions you need to make.</p></div><Link href="/opportunities/federal-contracts">Explore all <ArrowRight size={15}/></Link></header>
+          <header><div><span className="panel-kicker">MARKET RADAR</span><h2>Intelligence workspaces</h2><p>Federal source research and capture workflows organized by the decisions you need to make.</p></div><Link href="/opportunities/federal-contracts">Explore all <ArrowRight size={15}/></Link></header>
           <div className="workspace-launch-grid">
             <Link className="workspace-launch-project" href="/project-rooms"><span className="launch-icon violet"><FolderKanban/></span><div><b>Project Rooms</b><small>Manage tasks, discussions, internal notes, controlled files, and approved partner-company access.</small><em>Open secure collaboration <ArrowRight size={13}/></em></div></Link>
             <Link className="workspace-launch-contract" href="/opportunities/federal-contracts"><span className="launch-icon blue"><Search/></span><div><b>Federal contract opportunities</b><small>Search active SAM.gov notices and open full opportunity workspaces.</small><em>Search live contracts <ArrowRight size={13}/></em></div></Link>

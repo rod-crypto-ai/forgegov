@@ -40,8 +40,65 @@ Status: in progress. This is a launch-readiness correction pass, not a new roadm
 
 ## Coverage ledger
 
-Production checked: landing, sign-in, dashboard, federal contract search. Remaining routes and
-workflow checks are pending; source review and fixture tests alone do not establish live-data health.
+Production inspected: landing/sign-in; dashboard; federal opportunity search and recent activity;
+connectors; capture operations, pipelines, pursuits, tasks, saved searches, alerts and teaming;
+Project Rooms; company/network/contacts; executive, funding and new-entrant reports; forecasts,
+vehicles, subcontracting, state/local sources and grants; award intelligence and federal awards;
+vendor/agency research, categories/NAICS; settings, account, security, billing, workspace,
+notifications and audit log. A route visit is not an end-to-end workflow pass. Production writes
+to customer workspaces, authentication policy and billing have deliberately not been exercised.
+ForgeAI responses, document/pricing/proposal workflows, public recovery flows, detailed opportunity
+tabs, and complete large-result pagination still require focused interactive verification.
+
+## Stage 1 evidence — commit b8627a3
+
+All four CI jobs passed in run 39775801893: backend, frontend, Docker release QA and responsive
+release QA. The four existing browser suites passed 21 cases each. The added experience suite
+passed 30 cases: Chromium/Firefox/WebKit, five viewport sizes (390–1920px), light/dark themes.
+Evidence artifact: `responsive-experience-evidence` (14-day CI retention).
+
+UX-01 through UX-06 have automated regression coverage and stage-1 browser evidence. Dashboard
+empty-card heights are content-sized (110–201px on phones), document overflow is zero, and feed
+control insets are 15px on phones / 25px on desktop. Screenshots were manually reviewed: shared
+padding improved, but dark shortcut backgrounds and metric text still failed visual review despite
+passing structural assertions. Stage 2 corrects those tokens and expands the dark-theme assertions.
+UX-07 therefore remains partially verified until the second-stage evidence is reviewed.
+
+## Stage 2 corrections — validation underway
+
+- Company invitation inputs had no reusable dimensions/border treatment. Shared form controls now
+  inherit consistent 42px minimum height, padding, focus styling and theme tokens.
+- Funding and New Entrants routes displayed a generic private-pipeline report. They now use an
+  authenticated, read-only stored-public-award report endpoint with agency/NAICS filters, pagination,
+  current-page CSV export and meaningful loading/error/empty states. Entrants are grouped over all
+  available stored history *before* applying the first-observed date window. Coverage limitations
+  explicitly prevent presenting first-observed relationships as proof of new market entrants.
+- Read-only production aggregates found 13,232 stored awards with zero NAICS, PSC or source update
+  values. The importer requested undocumented field names and defaulted to award-ID sorting. It now
+  requests documented `NAICS`, `PSC`, `Last Modified Date` fields, extracts nested category codes,
+  sorts by last modification, and preserves existing known values when a partial record omits them.
+  Primary references: USAspending API `spending_by_award.md` contract and corresponding v2 view in
+  https://github.com/fedspendingtransparency/usaspending-api. This does not repair existing production
+  history until a separately approved, bounded ingestion is completed and checked.
+- Dashboard wording distinguishes stored notices, source dates and last sync attempts; live award
+  search explains historical source evidence. Removed stale account/settings version text and
+  implementation-oriented customer copy. Added accessible workspace view-toggle state.
+- Six backend tests cover report authorization, parameters, historical entrant exclusion, funding
+  totals/filtering, empty/paginated results, official nested category fields and partial-record safety.
+- Browser regression expanded to task creation/timezone conversion and failed mutations, saved-search
+  empty guidance, report rendering/pagination/CSV, company control geometry and dark shortcut surfaces.
+
+## Open release gates
+
+- Award ingestion has recently failed to reach USAspending, although connector probes succeeded.
+  Network/provider recovery and classification backfill must be verified independently of field fixes.
+- Forecast/state-local directories are not live notices; preserve honest source labels and review
+  directory card statuses. Do not rebrand reference coverage as a live integration.
+- Project Rooms needs explicit empty/loading/error handling; closed pursuit stages can disappear
+  from the board; audit-log row geometry and generic IDV/vehicle result interactions need follow-up.
+- Full workflow, accessibility and visual coverage remains incomplete. Do not mark the audit complete
+  or approve commercial release solely because fixture-driven CI passes.
+- No production deployment, merge, release tag, billing activation or customer-data migration in this pass.
 
 ## Verification results
 

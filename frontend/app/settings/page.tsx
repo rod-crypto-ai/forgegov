@@ -150,7 +150,7 @@ export default function SettingsPage(){
         </section>
 
         <section id="notifications" className="data-panel settings-section">
-          <div className="panel-heading"><Bell/><div><h2>Notifications</h2><p>Control the delivery channels and intelligence brief cadence added in v3.1.2.</p></div></div>
+          <div className="panel-heading"><Bell/><div><h2>Notifications</h2><p>Choose how you receive workspace notifications and intelligence briefs.</p></div></div>
           {notification?<div className="settings-toggle-list">{notificationLabels.map(([key,label,description])=><label className="settings-toggle" key={key}><div><strong>{label}</strong><p>{description}</p></div><input type="checkbox" disabled={busy==="notification"} checked={Boolean(notification[key])} onChange={()=>void toggleNotification(key)}/><span/></label>)}</div>:<div className="table-state compact-state"><RefreshCw className="spin"/><strong>Loading notification preferences…</strong></div>}
           <div className="settings-footer"><Link className="secondary-button" href="/notifications">Open full Notification Center<ChevronRight size={15}/></Link></div>
         </section>
