@@ -196,6 +196,26 @@ def proposal_editing(page, evidence_key):
     assert geometry(page)["overflow"] <= 2
     if evidence_key:
         page.screenshot(path=str(OUT / f"{evidence_key}-proposal.png"), full_page=True)
+    plan = {key: 0 for key in ("fringe_percent", "overhead_percent", "ga_percent", "material_handling_percent", "subcontract_handling_percent", "payroll_burden_percent", "target_profit_percent", "minimum_margin_percent", "annual_escalation_percent", "pursuit_cost", "performance_months", "payment_lag_days", "mobilization_cost", "available_working_capital")}
+    plan.update({"id": 1, "name": "QA costing", "revision": 1, "status": "draft", "notes": "", "updated_at": "2026-10-22T00:00:00Z"})
+    pricing = {"plan": plan, "totals": {"price": 1100, "total_cost": 1000, "profit": 100, "margin_percent": 9.09, "markup_percent": 10, "pursuit_cost": 0}, "items": [], "clins": [], "scenarios": [], "guardrails": [{"severity": "warning", "title": "QA margin evidence", "detail": "Controlled assumptions"}], "prime_sub": {"subcontractors": [], "totals": {}, "cashflow": {}}, "opportunity": {"source_id": notice, "title": "QA proposal opportunity", "solicitation_number": "QA-PROPOSAL", "agency": "QA Agency"}}
+    page.route(f"**/api/pricing/opportunities/{notice}/price-to-win/", lambda route: fulfill(route, {"detail": "Controlled missing comparables"}, 503))
+    page.route(f"**/api/pricing/opportunities/{notice}/", lambda route: fulfill(route, pricing) if route.request.method == "GET" else fulfill(route, {"detail": "Controlled pricing rejection"}, 503))
+    page.get_by_role("tab", name="Pricing", exact=True).click()
+    page.get_by_role("heading", name="Pricing Workspace", exact=True).wait_for()
+    assert page.locator(".pricing-kpis").get_by_text("$1,100", exact=True).is_visible()
+    if page.locator("html").get_attribute("data-theme") == "dark":
+        assert page.locator(".pricing-kpis article").first.evaluate("e=>getComputedStyle(e).backgroundColor") != "rgb(255, 255, 255)"
+    page.get_by_role("button", name="Cost Build-Up", exact=True).click()
+    page.locator(".pricing-form").get_by_label("Name", exact=True).fill("QA labor")
+    page.get_by_label("Hours", exact=True).fill("2")
+    page.get_by_label("Hourly Cost", exact=True).fill("50")
+    page.get_by_role("button", name="Add Cost Item", exact=True).click()
+    page.get_by_text("Controlled pricing rejection", exact=True).wait_for()
+    assert page.locator(".pricing-kpis").get_by_text("$1,100", exact=True).is_visible()
+    assert geometry(page)["overflow"] <= 2
+    if evidence_key:
+        page.screenshot(path=str(OUT / f"{evidence_key}-pricing.png"), full_page=True)
 
 
 def sam_award_pages(page, evidence_key):

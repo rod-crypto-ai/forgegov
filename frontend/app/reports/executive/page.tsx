@@ -64,7 +64,7 @@ export default function ExecutivePortfolioPage(){
 
   return <main className="page-shell portfolio-page">
     <header className="portfolio-hero">
-      <div><span className="eyebrow">FORGEGOV V3.0 — EXECUTIVE FINANCIAL INTELLIGENCE</span><h1>Portfolio Revenue & Profit Intelligence</h1><p>See what the pipeline is worth, what it is likely to produce, what margin it carries, and whether the company has enough working capital to execute the work it is pursuing.</p></div>
+      <div><span className="eyebrow">EXECUTIVE FINANCIAL INTELLIGENCE</span><h1>Portfolio Revenue & Profit Intelligence</h1><p>See what the pipeline is worth, what it is likely to produce, what margin it carries, and whether the company has enough working capital to execute the work it is pursuing.</p></div>
       <div className="portfolio-actions"><button className="secondary-button" onClick={()=>void load()} disabled={busy==="load"}><RefreshCw size={16}/> Refresh</button><button className="primary-button" onClick={()=>void snapshot()} disabled={busy==="snapshot"}>{busy==="snapshot"?"Recording…":"Record Executive Snapshot"}</button></div>
     </header>
 

@@ -94,7 +94,9 @@ UX-07 therefore remains partially verified until the second-stage evidence is re
 ## Open release gates
 
 - Award ingestion has recently failed to reach USAspending, although connector probes succeeded.
-  Network/provider recovery and classification backfill must be verified independently of field fixes.
+  A later read-only check found ingestion recovered to a partial 5,000-record / 50-page run
+  (run 37, completed 2026-10-22T16:53:36Z). All 13,232 stored awards still lack NAICS, PSC and
+  source-update values. Classification refresh and completeness remain separate release gates.
 - Forecast/state-local directories are not live notices. Forecast directory labels corrected in
   stage 4; continue verifying source availability independently of directory coverage.
 - Generic IDV/vehicle result interactions and large-result pagination still need follow-up.
@@ -179,3 +181,16 @@ renewed successfully as the existing workspace owner; no account/security policy
   and both themes. These checks do not establish live model quality or production proposal readiness.
 - Stage-5 CI exposed a test-fixture collision: identical SAM/SBA titles were intentionally deduplicated
   by search, hiding a synthetic test result. Source-specific titles now isolate routing behavior.
+
+Local validation after the fixture correction: all 372 backend tests passed, including 8 targeted
+experience tests; fatal-error lint and source audit passed. Production builds, lint and typecheck passed.
+
+## Stage 7 — pricing theme and final workflow evidence
+
+- Pricing retained fixed white hero/KPI/navigation/control backgrounds in dark mode. Shared semantic
+  colors now cover those surfaces and guardrail panels. Controlled browser pricing data verifies
+  displayed totals, rejected cost-item mutations preserving prior totals, and phone/desktop overflow.
+- Global search now has an explicit accessible name. Empty IDV/vehicle views no longer suggest
+  creating government award records. Existing exports, result filters and navigation remain available.
+- Read-only Render log queries returned no retained matching error entries. Database sync metadata
+  established the later partial recovery described above; no sync, limit or production data was changed.

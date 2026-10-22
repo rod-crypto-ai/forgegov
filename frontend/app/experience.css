@@ -141,6 +141,14 @@ html[data-theme="dark"] :is(.release-four-summary > div, .source-health-pill, .i
 }
 html[data-theme="dark"] .release-four-summary :is(strong, b) { color: var(--text); }
 html[data-theme="dark"] .release-four-summary :is(span, small) { color: var(--muted); }
+html[data-theme="dark"] :is(.pricing-hero, .pricing-status, .pricing-kpis article, .pricing-subnav,
+  .pricing-subnav button.active, .pricing-scenario-editor header, .pricing-approval-bar, .pricing-loading) {
+  background: var(--panel); color: var(--text); border-color: var(--border);
+}
+html[data-theme="dark"] .pricing-guardrails article { background: var(--panel-soft); color: var(--text); }
+html[data-theme="dark"] :is(.pricing-form input, .pricing-form select, .pricing-rate-grid input, .pricing-approval-bar select) {
+  background: var(--panel-soft); color: var(--text);
+}
 
 @media (max-width: 1100px) {
   .executive-head { align-items: flex-start; flex-direction: column; }
