@@ -46,6 +46,13 @@ html[data-density] .data-panel:has(> .data-toolbar, > .workspace-section-header,
 .head-actions .button { min-height: var(--control-height); height: auto; padding-block: 10px; white-space: nowrap; }
 .primary-button, .secondary-button, .toolbar-button { min-height: var(--control-height); line-height: 1.35; }
 .advanced-filter-grid { align-items: end; }
+.room-task-board > form { margin-bottom: 20px; }
+.room-task-card { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 10px; }
+.room-task-card strong { overflow-wrap: anywhere; }
+.room-task-card select { width: 100%; }
+.room-work-form { display: grid; gap: 12px; }
+.room-work-form > input { width: 100%; }
+.room-work-form > button { justify-self: start; }
 .advanced-filter-grid > button { align-self: end; }
 .advanced-filter-grid > label { min-width: 0; }
 .quick-create-form { align-items: end; }

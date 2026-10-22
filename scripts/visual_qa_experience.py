@@ -258,6 +258,10 @@ def room_detail_failures(page, evidence_key):
     task.locator("select").select_option("done")
     page.get_by_role("status").filter(has_text="Controlled room stage rejection").wait_for()
     assert task.locator("select").input_value() == "todo"
+    spacing = task.evaluate("e=>({titleBottom:e.querySelector('strong').getBoundingClientRect().bottom, metadataTop:e.querySelector('small').getBoundingClientRect().top})")
+    assert spacing["metadataTop"] - spacing["titleBottom"] >= 8, spacing
+    gap = page.locator(".room-task-board").evaluate("e=>e.querySelector('.kanban-grid').getBoundingClientRect().top-e.querySelector('form').getBoundingClientRect().bottom")
+    assert gap >= 16, gap
     assert geometry(page)["overflow"] <= 2
     if evidence_key:
         page.screenshot(path=str(OUT / f"{evidence_key}-room-work-error.png"), full_page=True)

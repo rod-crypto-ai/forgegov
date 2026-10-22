@@ -57,6 +57,10 @@ def run(page):
     page.get_by_role("button", name="Work & files", exact=True).click()
     expect(room_task.locator("select")).to_have_value("done")
     page.screenshot(path=str(OUT / "room-work.png"), full_page=True)
+    page.set_viewport_size({"width": 390, "height": 844})
+    assert page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth") <= 2
+    page.screenshot(path=str(OUT / "room-work-phone.png"), full_page=True)
+    page.set_viewport_size({"width": 1440, "height": 900})
 
     page.goto(BASE + f"/opportunities/federal-contracts/{NOTICE}")
     page.get_by_role("tab", name="Proposal", exact=True).click()
@@ -97,7 +101,7 @@ with sync_playwright() as playwright:
     try:
         run(page)
         assert not errors, errors
-        (OUT / "report.json").write_text(json.dumps({"passed": True, "checks": ["task completion reload", "room creation reload", "proposal revision reload", "pricing item reload", "phone overflow"], "page_errors": errors}, indent=2))
+        (OUT / "report.json").write_text(json.dumps({"passed": True, "checks": ["task completion reload", "room creation reload", "room task completion reload", "proposal revision reload", "pricing item reload", "room and pricing phone overflow"], "page_errors": errors}, indent=2))
     except Exception as error:
         page.screenshot(path=str(OUT / "failure.png"), full_page=True)
         (OUT / "report.json").write_text(json.dumps({"passed": False, "error": str(error), "page_errors": errors}, indent=2))

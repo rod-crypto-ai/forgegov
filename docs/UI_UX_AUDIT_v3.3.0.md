@@ -212,11 +212,16 @@ experience tests; fatal-error lint and source audit passed. Production builds, l
 - Follow-up inspection found section creation still bypassed the shared structure-mutation handler.
   It now uses the same busy state, discard confirmation and visible error handling as volume creation;
   controlled browser rejection coverage checks that the existing section content survives.
+- Section-creation buttons identify their target volume for assistive technology.
 - Room-detail task, comment, note, file, membership, partner-access and lifecycle actions lacked
   a common rejected-request handler. They now preserve unsaved input, show server errors and
   block overlapping mutations. Initial room loading/failure has an explicit status/retry view.
   Controlled browser tests cover rejected task creation and movement; full-stack CI additionally
   creates and completes a room task and confirms its state after reload and in PostgreSQL.
+- Full-stack screenshots exposed task metadata squeezed beside the title and no gap between
+  the creation form and board. Room-specific card stacking and a consistent form/board gap
+  correct that geometry. Discussion/note forms use consistent gaps and full-width text fields;
+  room task, discussion, note and file fields have explicit accessible names.
 - Run 39850903020 passed all four jobs: 372 backend tests, 30 shared experience cases and
   four existing 21-case responsive suites. Dark room/dashboard, proposal editor and phone pricing
   screenshots were manually reviewed. These fixtures do not establish live external provider health.
