@@ -49,10 +49,11 @@ def seed():
 
 
 def verify():
-    from core.models import Organization, PricingCostItem, ProjectRoom, ProposalSection, Task
+    from core.models import Organization, PricingCostItem, ProjectRoom, ProjectRoomTask, ProposalSection, Task
     organization = Organization.objects.get(slug=SLUG)
     assert Task.objects.filter(organization=organization, title="Full-stack QA task", completed=True).exists()
     assert ProjectRoom.objects.filter(owner_organization=organization, name="Full-stack QA room").exists()
+    assert ProjectRoomTask.objects.filter(project_room__owner_organization=organization, title="Full-stack room task", status="done").exists()
     assert ProposalSection.objects.filter(volume__plan__organization=organization, content="Full-stack QA revision").exists()
     assert PricingCostItem.objects.filter(plan__organization=organization, name="Full-stack QA labor", labor_hours=2, labor_rate=50).exists()
     print("Verified task completion, room creation, proposal revision and pricing item in PostgreSQL.")

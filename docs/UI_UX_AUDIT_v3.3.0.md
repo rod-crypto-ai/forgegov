@@ -202,7 +202,8 @@ experience tests; fatal-error lint and source audit passed. Production builds, l
 - Docker release CI now exercises browser sign-in, task creation/completion, room creation,
   proposal revisions and pricing cost items against real Django endpoints and PostgreSQL.
   Reload checks and database assertions verify persistence; screenshots and a JSON report are
-  retained as a separate CI artifact. This stage awaits its first CI result.
+  retained as a separate CI artifact. Run 39852524054 passed the full-stack check and
+  database assertions; artifact 12458925806 records the initial persistence evidence.
 - The seed helper refuses execution unless the explicit isolated-QA flag, DEBUG mode and
   Docker database hostname all match. It creates only a synthetic tenant and identity.
   Browser mutations are restricted to the loopback frontend URL.
@@ -211,3 +212,11 @@ experience tests; fatal-error lint and source audit passed. Production builds, l
 - Follow-up inspection found section creation still bypassed the shared structure-mutation handler.
   It now uses the same busy state, discard confirmation and visible error handling as volume creation;
   controlled browser rejection coverage checks that the existing section content survives.
+- Room-detail task, comment, note, file, membership, partner-access and lifecycle actions lacked
+  a common rejected-request handler. They now preserve unsaved input, show server errors and
+  block overlapping mutations. Initial room loading/failure has an explicit status/retry view.
+  Controlled browser tests cover rejected task creation and movement; full-stack CI additionally
+  creates and completes a room task and confirms its state after reload and in PostgreSQL.
+- Run 39850903020 passed all four jobs: 372 backend tests, 30 shared experience cases and
+  four existing 21-case responsive suites. Dark room/dashboard, proposal editor and phone pricing
+  screenshots were manually reviewed. These fixtures do not establish live external provider health.

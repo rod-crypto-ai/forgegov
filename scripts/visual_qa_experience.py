@@ -223,6 +223,46 @@ def proposal_editing(page, evidence_key):
         page.screenshot(path=str(OUT / f"{evidence_key}-pricing.png"), full_page=True)
 
 
+def room_detail_failures(page, evidence_key):
+    """Rejected room mutations retain input and server-confirmed task state."""
+    room = {"id": 9, "name": "QA secure room", "description": "Controlled collaboration", "status": "planning", "owner_organization_name": "QA Company", "linked_pipeline_items": []}
+    tasks = []
+    reject = [True]
+    page.route("**/api/project-rooms/9/", lambda route: fulfill(route, room))
+    for endpoint in ("comments", "notes", "files", "activity"):
+        page.route(f"**/api/project-rooms/9/{endpoint}/", lambda route: fulfill(route, []))
+    page.route("**/api/project-rooms/9/access/", lambda route: fulfill(route, {"owner": True, "members": [], "available_members": [], "partners": [], "effective_access": {"can_contribute": True, "can_export": True}}))
+    page.route("**/api/network/connections/**", lambda route: fulfill(route, []))
+    page.route("**/api/network/project-room-invitations/", lambda route: fulfill(route, []))
+    def task_list(route):
+        if route.request.method == "GET":
+            fulfill(route, tasks)
+        elif reject[0]:
+            fulfill(route, {"detail": "Controlled room task rejection"}, 503)
+        else:
+            tasks.append({"id": 1, **route.request.post_data_json})
+            fulfill(route, tasks[0], 201)
+    page.route("**/api/project-rooms/9/tasks/", task_list)
+    page.route("**/api/project-rooms/9/tasks/1/", lambda route: fulfill(route, {"detail": "Controlled room stage rejection"}, 503))
+    page.goto(BASE_URL + "/project-rooms/9", wait_until="networkidle")
+    page.get_by_role("heading", name="QA secure room", exact=True).wait_for()
+    page.get_by_role("button", name="Work & files", exact=True).click()
+    title = page.get_by_placeholder("Add a task", exact=True)
+    title.fill("QA retained room task")
+    page.get_by_role("button", name="Add task", exact=True).click()
+    page.get_by_role("status").filter(has_text="Controlled room task rejection").wait_for()
+    assert title.input_value() == "QA retained room task"
+    reject[0] = False
+    page.get_by_role("button", name="Add task", exact=True).click()
+    task = page.locator(".source-card").filter(has=page.get_by_text("QA retained room task", exact=True))
+    task.locator("select").select_option("done")
+    page.get_by_role("status").filter(has_text="Controlled room stage rejection").wait_for()
+    assert task.locator("select").input_value() == "todo"
+    assert geometry(page)["overflow"] <= 2
+    if evidence_key:
+        page.screenshot(path=str(OUT / f"{evidence_key}-room-work-error.png"), full_page=True)
+
+
 def sam_award_pages(page, evidence_key):
     requests = []
     def awards(route):
@@ -362,6 +402,7 @@ def run_case(browser, engine, name, width, height, theme):
         sam_award_pages(page, evidence_key)
         if name in ("phone", "desktop"):
             proposal_editing(page, evidence_key)
+            room_detail_failures(page, evidence_key)
         assert not errors, errors
         return {"passed": True, "dashboard": dashboard, "feed": metrics}
     except Exception as error:
