@@ -87,6 +87,66 @@ def capture_workflows(page, evidence_key):
     assert page.get_by_role("link", name="Find opportunities", exact=True).is_visible()
 
 
+def pursuit_rooms_and_audit(page, evidence_key):
+    pursuits = [{"id": 7, "title": "QA retained pursuit", "stage": "lost", "probability_of_win": 25, "estimated_value": "100000", "due_date": "2026-11-02T00:00:00Z", "next_action": "Review outcome"}]
+    page.route("**/api/pursuits/?*", lambda route: fulfill(route, {"results": pursuits}))
+    def update_pursuit(route):
+        if route.request.post_data_json.get("stage") == "proposal":
+            fulfill(route, {"detail": "Controlled pursuit rejection"}, 503)
+        else:
+            pursuits[0].update(route.request.post_data_json)
+            fulfill(route, pursuits[0])
+    page.route("**/api/pursuits/7/", update_pursuit)
+    page.goto(BASE_URL + "/capture/pursuits", wait_until="networkidle")
+    opener = page.get_by_role("button", name="Open pursuit: QA retained pursuit", exact=True)
+    opener.wait_for()
+    stage = page.get_by_label("Stage: QA retained pursuit", exact=True)
+    assert stage.input_value() == "lost"
+    stage.select_option("proposal")
+    page.get_by_role("alert").filter(has_text="Controlled pursuit rejection").wait_for()
+    assert stage.input_value() == "lost"
+    opener.click()
+    dialog = page.get_by_role("dialog", name="QA retained pursuit", exact=True)
+    dialog.wait_for()
+    assert dialog.get_by_label("Due date", exact=True).input_value() == "2026-11-02T09:00"
+    dialog.press("Escape")
+    dialog.wait_for(state="hidden")
+    # Closed outcomes remain recoverable on the board after a successful move.
+    stage.select_option("archived")
+    page.locator(".kanban-column").filter(has=page.locator("header").filter(has_text="Archived")).get_by_role("button", name="Open pursuit: QA retained pursuit", exact=True).wait_for()
+    assert geometry(page)["overflow"] <= 2
+    if evidence_key:
+        page.screenshot(path=str(OUT / f"{evidence_key}-pursuits.png"), full_page=True)
+    rooms = []
+    page.route("**/api/project-rooms/?*", lambda route: fulfill(route, {"results": rooms}))
+    def create_room(route):
+        if route.request.method != "POST":
+            fulfill(route, {"results": rooms})
+            return
+        rooms.append({"id": 9, **route.request.post_data_json, "owner_organization_name": "QA Company", "partners": []})
+        fulfill(route, rooms[0], 201)
+    page.route("**/api/project-rooms/", create_room)
+    page.goto(BASE_URL + "/project-rooms", wait_until="networkidle")
+    page.get_by_text("No Project Rooms yet", exact=True).wait_for()
+    page.get_by_label("Room name", exact=True).fill("QA secure room")
+    page.get_by_role("button", name="Create Project Room", exact=True).click()
+    page.get_by_role("link", name="QA secure room", exact=True).wait_for()
+    page.get_by_role("status").filter(has_text="Project Room created.").wait_for()
+    if evidence_key:
+        page.screenshot(path=str(OUT / f"{evidence_key}-rooms.png"), full_page=True)
+    events = [{"id": i, "action": f"security.qa_event_{i}", "object_type": "workspace", "object_id": "1", "actor_name": "QA Owner", "created_at": "2026-10-22T00:00:00Z"} for i in range(26)]
+    page.route("**/api/audit-logs/**", lambda route: fulfill(route, events))
+    page.goto(BASE_URL + "/audit-log", wait_until="networkidle")
+    page.get_by_text("Page 1 of 2 · 26 loaded events", exact=True).wait_for()
+    assert page.locator(".simple-row").count() == 25
+    page.get_by_role("button", name="Next", exact=True).click()
+    page.get_by_text("security.qa_event_25", exact=True).wait_for()
+    assert page.locator(".simple-row").count() == 1
+    page.get_by_label("Filter loaded events", exact=True).fill("no-match")
+    page.get_by_text("No matching audit events", exact=True).wait_for()
+    assert geometry(page)["overflow"] <= 2
+
+
 def reports_and_company(page, evidence_key):
     def report_response(route):
         query = parse_qs(urlparse(route.request.url).query)
@@ -181,6 +241,7 @@ def run_case(browser, engine, name, width, height, theme):
         evidence_key = f"{engine}-{name}-{theme}" if engine == "chromium" and name in ("phone", "desktop") else None
         capture_workflows(page, evidence_key)
         reports_and_company(page, evidence_key)
+        pursuit_rooms_and_audit(page, evidence_key)
         assert not errors, errors
         return {"passed": True, "dashboard": dashboard, "feed": metrics}
     except Exception as error:

@@ -29,13 +29,13 @@ Status: in progress. This is a launch-readiness correction pass, not a new roadm
 
 | ID | Priority | Evidence and cause | State |
 | --- | --- | --- | --- |
-| UX-01 | High | Dashboard signal/deadline/activity cards force 390px height regardless of content; empty cards waste space while activity has an inner scrollbar. CSS fixed height/min/max height. | Open |
-| UX-02 | High | Federal search filter labels touch the panel's upper border. Generic `.data-panel` has no default content padding and structured children disagree about ownership. | Open |
-| UX-03 | Medium | Federal search action buttons stretch to a full grid row and large headings dominate the available workspace. | Open |
+| UX-01 | High | Dashboard signal/deadline/activity cards force 390px height regardless of content; empty cards waste space while activity has an inner scrollbar. CSS fixed height/min/max height. | Corrected; stage-1 screenshot and 30-case regression verified. |
+| UX-02 | High | Federal search filter labels touch the panel's upper border. Generic `.data-panel` has no default content padding and structured children disagree about ownership. | Shared inset corrected; stage-1 geometry/screenshots verified. |
+| UX-03 | Medium | Federal search action buttons stretch to a full grid row and large headings dominate the available workspace. | Shared control alignment and heading scale corrected; stage-1 browser verified. |
 | DATA-01 | High | Dashboard reports award sync `failed` with zero awards refreshed in 30 days despite 13,232 stored records. Current SAM.gov search returns results. Provider failure must not be represented as live award freshness. | Ingestion failure remains under investigation. Live connector probe succeeded for all seven machine-readable sources; state/local correctly reports reference-only. |
-| UX-04 | High | Federal feed source switch visibly renders old SAM rows as blank USAspending awards. The response is not tied to the selected source and older requests can overwrite newer responses. | Source guards and request ordering implemented; browser regression pending. |
-| UX-05 | High | Tasks and saved searches show blank content without loading/empty guidance. Task completion/deletion and saved-search deletion reject without user-facing errors. | Loading/empty states, accessible action labels, busy guards and mutation error handling implemented; browser regression pending. |
-| UX-06 | High | Pursuit stage movement updates the screen before saving; a rejected request leaves the card in the unsaved stage. | Stage display now changes only after a successful server response; regression pending. |
+| UX-04 | High | Federal feed source switch visibly renders old SAM rows as blank USAspending awards. The response is not tied to the selected source and older requests can overwrite newer responses. | Stage-1 out-of-order and failed-switch regression passed in all 30 cases. |
+| UX-05 | High | Tasks and saved searches show blank content without loading/empty guidance. Task completion/deletion and saved-search deletion reject without user-facing errors. | States and mutation handling corrected; expanded interactive checks in stage 2. |
+| UX-06 | High | Pursuit stage movement updates the screen before saving; a rejected request leaves the card in the unsaved stage. | Server-confirmed stage change implemented; failed/successful transition test added in stage 3. |
 | UX-07 | Medium | Legacy CSS uses undefined surface/foreground/background/input variables across network, room, and newer components. This breaks backgrounds and theme consistency. | Semantic aliases and shared dark dashboard colors implemented; browser regression pending. |
 
 ## Coverage ledger
@@ -94,16 +94,31 @@ UX-07 therefore remains partially verified until the second-stage evidence is re
   Network/provider recovery and classification backfill must be verified independently of field fixes.
 - Forecast/state-local directories are not live notices; preserve honest source labels and review
   directory card statuses. Do not rebrand reference coverage as a live integration.
-- Project Rooms needs explicit empty/loading/error handling; closed pursuit stages can disappear
-  from the board; audit-log row geometry and generic IDV/vehicle result interactions need follow-up.
+- Generic IDV/vehicle result interactions and large-result pagination still need follow-up.
 - Full workflow, accessibility and visual coverage remains incomplete. Do not mark the audit complete
   or approve commercial release solely because fixture-driven CI passes.
 - No production deployment, merge, release tag, billing activation or customer-data migration in this pass.
 
 ## Verification results
 
-Local full Django regression: 364/364 passed on 2026-10-22. Lint and typecheck passed for
-the initial shared CSS/feed changes; final rerun and production build are pending the complete stage.
+Local full Django regression: 370/370 passed on 2026-10-22 after stage 2. Lint, typecheck,
+production build, migration consistency, fatal-error lint, source audit and diff checks passed.
 Local browser binaries could not be downloaded (gateway/download errors); the cloud browser
 cannot reach the local Next.js server. GitHub responsive QA will produce screenshots and
 JSON evidence for review. Production browser access remains available.
+
+## Stage 3 corrections — browser validation pending
+
+- Pursuit board now retains Lost, No Bid and Archived lanes. A rejected stage save does not move
+  the card; mutation controls disable while saving. Native modal dialogs provide keyboard focus
+  containment and Escape dismissal, with an accessible opening button. Local date/time inputs
+  now convert correctly to UTC rather than silently treating displayed UTC as local time.
+- Project Rooms now distinguishes loading, empty, error and created states. Creation trims input,
+  blocks duplicate submission, preserves a success message and offers recovery on errors.
+- Audit log displays its actual latest-250-event scope, 25-event pages, a labelled loaded-event
+  filter, loading/error/empty states and responsive date/actor rows. No server permission changes.
+- Browser fixtures exercise failed and successful pursuit transitions, modal date display/Escape,
+  room creation, audit pagination/filtering and overflow at every tested viewport/theme/engine.
+- Production session expired during the audit. Existing authenticated observations remain valid,
+  but remaining live authenticated workflow tests require reauthentication; do not infer results
+  from fixtures or change customer preferences merely to test themes.
