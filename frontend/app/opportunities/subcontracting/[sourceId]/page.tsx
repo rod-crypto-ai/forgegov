@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { CompanyIdentity } from "@/components/company-identity";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Bot, Building2, CalendarClock, CheckCircle2, ExternalLink, FileSearch, Landmark, Mail, MapPin, Phone, RefreshCw, Target, Users } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
@@ -25,10 +25,11 @@ const date=(value?:string|null)=>value?new Date(value).toLocaleString():"Not pro
 
 export default function SubcontractOpportunityPage(){
   const params=useParams<{sourceId:string}>();
+  const requestedTab=useSearchParams().get("tab");
   const sourceId=decodeURIComponent(params.sourceId);
   const [data,setData]=useState<Workspace|null>(null);
   const [message,setMessage]=useState("Loading subcontract opportunity intelligence…");
-  const [activeTab,setActiveTab]=useState<Tab>("overview");
+  const [activeTab,setActiveTab]=useState<Tab>(requestedTab==="forgeai"||requestedTab==="capture"?"capture":"overview");
   const [adding,setAdding]=useState(false);
   const [question,setQuestion]=useState("Should we pursue this subcontract opportunity? What should we verify with the prime first?");
   const [answer,setAnswer]=useState("");

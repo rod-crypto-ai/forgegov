@@ -92,6 +92,9 @@ def run(page):
     page.set_viewport_size({"width": 390, "height": 844})
     page.screenshot(path=str(OUT / "pricing-phone.png"), full_page=True)
     assert page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth") <= 2
+    page.goto(BASE + f"/opportunities/federal-contracts/{NOTICE}?tab=forgeai")
+    page.get_by_role("heading", name="Decision support for the pursuit team", exact=True).wait_for(timeout=30000)
+    expect(page.get_by_role("tab", name="Capture Copilot", exact=True)).to_have_attribute("aria-selected", "true")
 
 
 with sync_playwright() as playwright:
@@ -103,7 +106,7 @@ with sync_playwright() as playwright:
     try:
         run(page)
         assert not errors, errors
-        (OUT / "report.json").write_text(json.dumps({"passed": True, "checks": ["task completion reload", "room creation reload", "room task completion reload", "proposal revision reload", "pricing item reload", "room and pricing phone overflow"], "page_errors": errors}, indent=2))
+        (OUT / "report.json").write_text(json.dumps({"passed": True, "checks": ["task completion reload", "room creation reload", "room task completion reload", "proposal revision reload", "pricing item reload", "room and pricing phone overflow", "SAM contextual ForgeAI deep link"], "page_errors": errors}, indent=2))
     except Exception as error:
         page.screenshot(path=str(OUT / "failure.png"), full_page=True)
         (OUT / "report.json").write_text(json.dumps({"passed": False, "error": str(error), "page_errors": errors}, indent=2))

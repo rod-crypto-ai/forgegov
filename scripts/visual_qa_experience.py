@@ -225,7 +225,7 @@ def proposal_editing(page, evidence_key):
 
 def room_detail_failures(page, evidence_key):
     """Rejected room mutations retain input and server-confirmed task state."""
-    room = {"id": 9, "name": "QA secure room", "description": "Controlled collaboration", "status": "planning", "owner_organization_name": "QA Company", "linked_pipeline_items": []}
+    room = {"id": 9, "name": "QA secure room", "description": "Controlled collaboration", "status": "planning", "owner_organization_name": "QA Company", "linked_pipeline_items": [], "opportunity_detail": {"source_id": "sba-subnet:qa-room", "source": "sba-subnet", "title": "QA source-aware room context"}}
     tasks = []
     reject = [True]
     page.route("**/api/project-rooms/9/", lambda route: fulfill(route, room))
@@ -246,6 +246,7 @@ def room_detail_failures(page, evidence_key):
     page.route("**/api/project-rooms/9/tasks/1/", lambda route: fulfill(route, {"detail": "Controlled room stage rejection"}, 503))
     page.goto(BASE_URL + "/project-rooms/9", wait_until="networkidle")
     page.get_by_role("heading", name="QA secure room", exact=True).wait_for()
+    assert page.get_by_role("link", name="Open opportunity", exact=True).get_attribute("href") == "/opportunities/subcontracting/sba-subnet%3Aqa-room"
     page.get_by_role("button", name="Work & files", exact=True).click()
     badge = page.locator(".privacy-badge.internal")
     assert badge.evaluate("e=>e.getClientRects().length") == 1
@@ -270,6 +271,28 @@ def room_detail_failures(page, evidence_key):
     assert geometry(page)["overflow"] <= 2
     if evidence_key:
         page.screenshot(path=str(OUT / f"{evidence_key}-room-work-error.png"), full_page=True)
+    page.get_by_role("button", name="Overview", exact=True).click()
+    page.get_by_role("link", name="ForgeAI", exact=True).click()
+    page.get_by_role("heading", name="ForgeAI subcontract analyst", exact=True).wait_for()
+
+    grant = {"opportunity": {"source_id": "grants.gov:123", "title": "QA grant room context"}, "description": "Controlled grant evidence", "documents": [], "source_url": "https://www.grants.gov/search-results-detail/123", "contacts": [], "eligibilities": [], "funding_instruments": [], "funding_categories": [], "alns": []}
+    page.route("**/api/live/grants/opportunities/123/", lambda route: fulfill(route, grant))
+    page.route("**/api/workflow/opportunity-workspaces/**", lambda route: fulfill(route, {"id": 1, "notes": "", "capture_summary": "", "risks": [], "compliance_items": [], "decision": "undecided"}))
+    room["opportunity_detail"] = {"source_id": "grants.gov:123", "source": "grants.gov", "title": "QA grant room context"}
+    page.goto(BASE_URL + "/project-rooms/9", wait_until="networkidle")
+    page.get_by_role("heading", name="QA secure room", exact=True).wait_for()
+    assert page.get_by_role("link", name="Open opportunity", exact=True).get_attribute("href") == "/opportunities/federal-grants/123"
+    page.get_by_role("link", name="ForgeAI", exact=True).click()
+    page.get_by_role("heading", name="Analyze this grant", exact=True).wait_for()
+    assert page.locator("#grant-ai").is_visible()
+
+    room["opportunity_detail"] = {"source_id": "qa-proposal-workflow", "source": "sam.gov", "title": "QA SAM room context"}
+    page.goto(BASE_URL + "/project-rooms/9", wait_until="networkidle")
+    page.get_by_role("heading", name="QA secure room", exact=True).wait_for()
+    assert page.get_by_role("link", name="Open opportunity", exact=True).get_attribute("href") == "/opportunities/federal-contracts/qa-proposal-workflow"
+    page.get_by_role("link", name="ForgeAI", exact=True).click()
+    page.get_by_role("tab", name="Capture Copilot", exact=True).wait_for()
+    assert page.get_by_role("tab", name="Capture Copilot", exact=True).get_attribute("aria-selected") == "true"
 
 
 def sam_award_pages(page, evidence_key):

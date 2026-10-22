@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { CheckCircle2, ChevronRight, Circle, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { apiDelete, apiGet, apiPatch, apiPost, normalizeList } from "@/lib/api";
+import { opportunityHref } from "@/lib/opportunity-routes";
 
 type Opportunity = { id:number; source_id?:string; source?:string; title:string; agency?:string; solicitation_number?:string; response_deadline?:string; source_url?:string };
 type Pipeline = { id:number; workspace_url?:string; teaming_workspace_url?:string; project_room?:number|null; project_room_name?:string; stage:string; owner?:number|null; owner_name?:string; probability_of_win:number; estimated_value?:string; next_action?:string; follow_up_date?:string|null; priority?:string; assigned_team?:string; notes?:string; opportunity_detail:Opportunity };
@@ -17,7 +18,6 @@ const pursuitStages=["triage","qualify","bid_decision","capture","proposal","sub
 const localDateTime=(value?:string)=>{if(!value)return "";const date=new Date(value);if(Number.isNaN(date.getTime()))return "";return new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,16)};
 const human=(v:string)=>v.replaceAll("_"," ").replace(/\b\w/g,c=>c.toUpperCase());
 const money=new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",maximumFractionDigits:0});
-const opportunityHref=(opportunity:Opportunity)=>{const sourceId=String(opportunity.source_id??"");if(opportunity.source==="grants.gov"||sourceId.startsWith("grants.gov:")){const id=sourceId.replace(/^grants\.gov:/,"");return id?`/opportunities/federal-grants/${encodeURIComponent(id)}`:"/opportunities/federal-grants"}if(opportunity.source==="sba-subnet"||sourceId.startsWith("sba-subnet:"))return sourceId?`/opportunities/subcontracting/${encodeURIComponent(sourceId)}`:"/opportunities/subcontracting";return sourceId?`/opportunities/federal-contracts/${encodeURIComponent(sourceId)}`:"/opportunities/federal-contracts"};
 
 export function PipelineWorkspace(){
  const [rows,setRows]=useState<Pipeline[]>([]);const [members,setMembers]=useState<Member[]>([]);const [rooms,setRooms]=useState<ProjectRoomOption[]>([]);const [error,setError]=useState("");const [loading,setLoading]=useState(true);const [creating,setCreating]=useState<number|null>(null);

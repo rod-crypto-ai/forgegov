@@ -227,6 +227,11 @@ experience tests; fatal-error lint and source audit passed. Production builds, l
   metadata aligns to intrinsic height. Privacy badges stay on one line. The room task board is
   keyboard-focusable with a labelled scroll region; phone persistence QA scrolls the saved task
   into view. Singular member/partner counts no longer render plural labels.
+- Project Room opportunity links still assumed SAM.gov. Pipeline and room links now share one
+  source-aware route helper. The existing contextual ForgeAI quick link was also ignored by the
+  destination pages; SAM and SBA now select their existing copilot/analyst panels, while grant
+  links scroll to the existing grant analysis panel. Browser checks exercise all three source links;
+  full-stack CI verifies deterministic SAM copilot context without generating a live AI answer.
 - Run 39850903020 passed all four jobs: 372 backend tests, 30 shared experience cases and
   four existing 21-case responsive suites. Dark room/dashboard, proposal editor and phone pricing
   screenshots were manually reviewed. These fixtures do not establish live external provider health.
