@@ -10,7 +10,7 @@ Status: in progress. This is a launch-readiness correction pass, not a new roadm
 - Production browser sign-in verified as workspace owner. Production inspection is read-only;
   workflow mutations run against isolated test data.
 - Preserve tenant permissions, official branding, customer records, and permanent billing
-  exemptions for Howard Dynamics and Strictly Hunter. No production billing activation.
+  exemptions for permanently exempt founding workspaces. No production billing activation.
 - Keep the deployed revision as the rollback baseline. Deployment is gated on validation.
 
 ## Ordered correction plan
@@ -32,7 +32,7 @@ Status: in progress. This is a launch-readiness correction pass, not a new roadm
 | UX-01 | High | Dashboard signal/deadline/activity cards force 390px height regardless of content; empty cards waste space while activity has an inner scrollbar. CSS fixed height/min/max height. | Corrected; stage-1 screenshot and 30-case regression verified. |
 | UX-02 | High | Federal search filter labels touch the panel's upper border. Generic `.data-panel` has no default content padding and structured children disagree about ownership. | Shared inset corrected; stage-1 geometry/screenshots verified. |
 | UX-03 | Medium | Federal search action buttons stretch to a full grid row and large headings dominate the available workspace. | Shared control alignment and heading scale corrected; stage-1 browser verified. |
-| DATA-01 | High | Dashboard reports award sync `failed` with zero awards refreshed in 30 days despite 13,232 stored records. Current SAM.gov search returns results. Provider failure must not be represented as live award freshness. | Ingestion failure remains under investigation. Live connector probe succeeded for all seven machine-readable sources; state/local correctly reports reference-only. |
+| DATA-01 | High | Dashboard reports a failed award sync despite stored award history. Current SAM.gov search returns results. Provider failure must not be represented as live award freshness. | A later read-only check found partial ingestion recovery. Classification coverage and completeness remain release gates; state/local correctly reports reference-only. |
 | UX-04 | High | Federal feed source switch visibly renders old SAM rows as blank USAspending awards. The response is not tied to the selected source and older requests can overwrite newer responses. | Stage-1 out-of-order and failed-switch regression passed in all 30 cases. |
 | UX-05 | High | Tasks and saved searches show blank content without loading/empty guidance. Task completion/deletion and saved-search deletion reject without user-facing errors. | States and mutation handling corrected; expanded interactive checks in stage 2. |
 | UX-06 | High | Pursuit stage movement updates the screen before saving; a rejected request leaves the card in the unsaved stage. | Server-confirmed stage change implemented; failed/successful transition test added in stage 3. |
@@ -73,7 +73,7 @@ UX-07 therefore remains partially verified until the second-stage evidence is re
   current-page CSV export and meaningful loading/error/empty states. Entrants are grouped over all
   available stored history *before* applying the first-observed date window. Coverage limitations
   explicitly prevent presenting first-observed relationships as proof of new market entrants.
-- Read-only production aggregates found 13,232 stored awards with zero NAICS, PSC or source update
+- Read-only production aggregates found stored awards with missing NAICS, PSC and source update
   values. The importer requested undocumented field names and defaulted to award-ID sorting. It now
   requests documented `NAICS`, `PSC`, `Last Modified Date` fields, extracts nested category codes,
   sorts by last modification, and preserves existing known values when a partial record omits them.
@@ -93,10 +93,9 @@ UX-07 therefore remains partially verified until the second-stage evidence is re
 
 ## Open release gates
 
-- Award ingestion has recently failed to reach USAspending, although connector probes succeeded.
-  A later read-only check found ingestion recovered to a partial 5,000-record / 50-page run
-  (run 37, completed 2026-10-22T16:53:36Z). All 13,232 stored awards still lack NAICS, PSC and
-  source-update values. Classification refresh and completeness remain separate release gates.
+- Award ingestion previously failed to reach USAspending, although connector probes succeeded.
+  A later read-only check found partial recovery bounded by the configured page limit. Stored
+  classification/source-update coverage and ingestion completeness remain separate release gates.
 - Forecast/state-local directories are not live notices. Forecast directory labels corrected in
   stage 4; continue verifying source availability independently of directory coverage.
 - Generic IDV/vehicle result interactions and large-result pagination still need follow-up.
