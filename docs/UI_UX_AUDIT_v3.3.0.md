@@ -225,3 +225,9 @@ experience tests; fatal-error lint and source audit passed. Production builds, l
 - Run 39850903020 passed all four jobs: 372 backend tests, 30 shared experience cases and
   four existing 21-case responsive suites. Dark room/dashboard, proposal editor and phone pricing
   screenshots were manually reviewed. These fixtures do not establish live external provider health.
+- Run 39853515981 passed the expanded full-stack room-task persistence/database checks;
+  artifact 12458833142 includes the room work board. Slow Ubuntu mirror downloads delayed browser
+  setup for many minutes. CI now uses the official Playwright Python image pinned to 1.57.0,
+  matching requirements-visual-qa.txt, with preinstalled browsers and OS libraries. The test package
+  is installed separately, following https://playwright.dev/python/docs/docker. All existing browser
+  matrices remain enabled; the responsive job has a bounded 35-minute timeout.

@@ -36,6 +36,11 @@ jobs:
 
   responsive-release-qa:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
+    # Match requirements-visual-qa.txt; browsers and OS libraries are preinstalled.
+    container:
+      image: mcr.microsoft.com/playwright/python:v1.57.0-noble
+      options: --ipc=host
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -49,7 +54,6 @@ jobs:
       - run: npm run build
         working-directory: frontend
       - run: pip install -r requirements-visual-qa.txt
-      - run: python -m playwright install --with-deps chromium firefox webkit
       - name: Start production frontend
         run: |
           cp -R frontend/.next/static frontend/.next/standalone/.next/static
@@ -149,8 +153,6 @@ jobs:
           python-version: "3.13"
       - name: Full-stack browser persistence checks
         run: |
-          pip install -r requirements-visual-qa.txt
-          python -m playwright install --with-deps chromium
           docker compose cp scripts/experience_qa_fixtures.py backend:/tmp/experience_qa_fixtures.py
           docker compose exec -T -e FORGEGOV_ISOLATED_QA=1 backend python /tmp/experience_qa_fixtures.py seed
           docker compose exec -d -e FORGEGOV_ISOLATED_QA=1 backend python /tmp/experience_qa_fixtures.py serve
@@ -158,7 +160,10 @@ jobs:
             if docker compose exec -T backend curl -fsS http://127.0.0.1:9001/api/v2/awards/last_updated/ >/dev/null; then break; fi
             sleep 1
           done
-          FORGEGOV_ISOLATED_QA=1 python scripts/e2e_experience.py
+          docker run --rm --init --network host --ipc=host \
+            -v "${GITHUB_WORKSPACE}:/work" -w /work -e FORGEGOV_ISOLATED_QA=1 \
+            mcr.microsoft.com/playwright/python:v1.57.0-noble \
+            bash -c 'pip install -r requirements-visual-qa.txt && python scripts/e2e_experience.py'
           docker compose exec -T -e FORGEGOV_ISOLATED_QA=1 backend python /tmp/experience_qa_fixtures.py verify
       - name: Preserve full-stack browser evidence
         if: always()
