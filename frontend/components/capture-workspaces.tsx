@@ -37,7 +37,7 @@ export function PursuitsWorkspace(){
  const load=useCallback(async()=>{try{setRows(normalizeList(await apiGet<Pursuit[]>("/pursuits/?page_size=250")));setError("")}catch(e){setError(e instanceof Error?e.message:"Unable to load pursuits")}},[]);
  useEffect(()=>{const timer=window.setTimeout(()=>void load(),0);return()=>window.clearTimeout(timer)},[load]);
  async function patch(id:number,payload:Record<string,unknown>){try{const updated=await apiPatch<Pursuit>(`/pursuits/${id}/`,payload);setRows(current=>current.map(row=>row.id===id?updated:row));if(selected?.id===id)setSelected(updated)}catch(e){setError(e instanceof Error?e.message:"Update failed")}}
- async function movePursuit(id:number,stage:string){setRows(current=>current.map(row=>row.id===id?{...row,stage}:row));setDragging(null);setDragStage("");await patch(id,{stage})}
+ async function movePursuit(id:number,stage:string){setDragging(null);setDragStage("");await patch(id,{stage})}
  const active=rows.filter(r=>!["awarded","lost","no_bid","archived"].includes(r.stage));
  const totalValue=active.reduce((sum,row)=>sum+Number(row.estimated_value??0),0);
  const weighted=active.reduce((sum,row)=>sum+(Number(row.estimated_value??0)*(Number(row.probability_of_win??0)/100)),0);
@@ -51,19 +51,73 @@ export function PursuitsWorkspace(){
 }
 
 export function TasksWorkspace(){
- const [rows,setRows]=useState<Task[]>([]);const [title,setTitle]=useState("");const [due,setDue]=useState("");const [error,setError]=useState("");
- const load=useCallback(async()=>{try{setRows(normalizeList(await apiGet<Task[]>("/tasks/?page_size=250")));setError("")}catch(e){setError(e instanceof Error?e.message:"Unable to load tasks")}},[]);
+ const [rows,setRows]=useState<Task[]>([]);
+ const [title,setTitle]=useState("");
+ const [due,setDue]=useState("");
+ const [error,setError]=useState("");
+ const [loading,setLoading]=useState(true);
+ const [busy,setBusy]=useState(false);
+ const load=useCallback(async()=>{
+   setLoading(true);
+   try { setRows(normalizeList(await apiGet<Task[]>("/tasks/?page_size=250")));setError(""); }
+   catch(e) { setError(e instanceof Error?e.message:"Unable to load tasks"); }
+   finally { setLoading(false); }
+ },[]);
  useEffect(()=>{const timer=window.setTimeout(()=>void load(),0);return()=>window.clearTimeout(timer)},[load]);
- async function create(e:FormEvent){e.preventDefault();try{await apiPost("/workflow/tasks/",{title,due_at:due||null});setTitle("");setDue("");await load()}catch(e){setError(e instanceof Error?e.message:"Could not create task")}}
- async function toggle(t:Task){await apiPatch(`/tasks/${t.id}/`,{completed:!t.completed});await load()}
- async function remove(id:number){await apiDelete(`/tasks/${id}/`);await load()}
- return <><header className="module-header"><div><span className="eyebrow">Execution management</span><h1>Tasks</h1><p>Create, complete, and track capture work with due dates and pipeline relationships.</p></div></header><section className="data-panel"><form className="quick-create-form" onSubmit={create}><input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Add a task…" required/><input type="datetime-local" value={due} onChange={e=>setDue(e.target.value)}/><button className="primary-button"><Plus size={16}/> Add task</button></form>{error&&<div className="form-error">{error}</div>}<div className="task-list">{rows.map(t=><article className={`task-row ${t.completed?"complete":""}`} key={t.id}><button className="icon-button" onClick={()=>void toggle(t)}>{t.completed?<CheckCircle2/>:<Circle/>}</button><div><strong>{t.title}</strong><span>{t.due_at?new Date(t.due_at).toLocaleString():"No due date"}</span></div><button className="icon-button" onClick={()=>void remove(t.id)}><Trash2 size={17}/></button></article>)}</div></section></>;
+ async function mutate(action:()=>Promise<unknown>){
+   if(busy)return;
+   setBusy(true);setError("");
+   try { await action();await load(); }
+   catch(e) { setError(e instanceof Error?e.message:"Task could not be saved. Try again."); }
+   finally { setBusy(false); }
+ }
+ async function create(event:FormEvent){
+   event.preventDefault();
+   if(!title.trim())return;
+   await mutate(async()=>{
+     await apiPost("/workflow/tasks/",{title:title.trim(),due_at:due?new Date(due).toISOString():null});
+     setTitle("");setDue("");
+   });
+ }
+ return <>
+   <header className="module-header"><div><span className="eyebrow">Execution management</span><h1>Tasks</h1><p>Create, complete, and track capture work with due dates and pipeline relationships.</p></div><button className="secondary-button" disabled={loading||busy} onClick={()=>void load()}><RefreshCw size={16}/>Refresh</button></header>
+   <section className="data-panel">
+     <form className="quick-create-form" onSubmit={create}>
+       <label><span>Task title</span><input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Add a task…" required disabled={busy}/></label>
+       <label><span>Due date (your local time)</span><input type="datetime-local" value={due} onChange={e=>setDue(e.target.value)} disabled={busy}/></label>
+       <button className="primary-button" disabled={busy||!title.trim()}><Plus size={16}/>{busy?"Saving…":"Add task"}</button>
+     </form>
+     {error&&<div className="form-error" role="alert">{error}</div>}
+     {loading?<div className="table-state compact-state" role="status"><RefreshCw className="spin"/><strong>Loading tasks…</strong></div>:!error&&!rows.length?<div className="table-state compact-state"><CheckCircle2/><strong>No tasks yet</strong><p>Add your next capture action above. Set a due date to keep it visible in your workspace deadlines.</p></div>:null}
+     <div className="task-list">{rows.map(task=><article className={`task-row ${task.completed?"complete":""}`} key={task.id}>
+       <button className="icon-button" aria-label={`${task.completed?"Mark incomplete":"Complete"}: ${task.title}`} aria-pressed={task.completed} disabled={busy||loading} onClick={()=>void mutate(()=>apiPatch(`/tasks/${task.id}/`,{completed:!task.completed}))}>{task.completed?<CheckCircle2/>:<Circle/>}</button>
+       <div><strong>{task.title}</strong><span>{task.due_at?new Date(task.due_at).toLocaleString():"No due date"}</span></div>
+       <button className="icon-button" aria-label={`Delete task: ${task.title}`} disabled={busy||loading} onClick={()=>void mutate(()=>apiDelete(`/tasks/${task.id}/`))}><Trash2 size={17}/></button>
+     </article>)}</div>
+   </section>
+ </>;
 }
 
 export function SavedSearchesWorkspace(){
- const [rows,setRows]=useState<SavedSearch[]>([]);const [error,setError]=useState("");
- const load=useCallback(async()=>{try{setRows(normalizeList(await apiGet<SavedSearch[]>("/saved-searches/?page_size=250")));setError("")}catch(e){setError(e instanceof Error?e.message:"Unable to load searches")}},[]);
+ const [rows,setRows]=useState<SavedSearch[]>([]);const [error,setError]=useState("");const [loading,setLoading]=useState(true);const [removing,setRemoving]=useState<number|null>(null);
+ const load=useCallback(async()=>{setLoading(true);try{setRows(normalizeList(await apiGet<SavedSearch[]>("/saved-searches/?page_size=250")));setError("")}catch(e){setError(e instanceof Error?e.message:"Unable to load searches")}finally{setLoading(false)}},[]);
  useEffect(()=>{const timer=window.setTimeout(()=>void load(),0);return()=>window.clearTimeout(timer)},[load]);
- async function remove(id:number){await apiDelete(`/saved-searches/${id}/`);await load()}
- return <><header className="module-header"><div><span className="eyebrow">Opportunity monitoring</span><h1>Saved Searches</h1><p>Reuse live SAM.gov filters and maintain searches that feed future alerts.</p></div><button className="secondary-button" onClick={load}><RefreshCw size={16}/> Refresh</button></header>{error&&<div className="system-banner warning">{error}</div>}<section className="data-panel"><div className="saved-search-grid">{rows.map(r=>{const {source,...searchFilters}=r.filters;const q=new URLSearchParams(searchFilters).toString();const route=source==="grants.gov"?"/opportunities/federal-grants":"/opportunities/federal-contracts";return <article className="saved-search-card" key={r.id}><div><Save size={18}/><span>{r.alert_frequency}</span></div><h3>{r.name}</h3><p>{Object.entries(r.filters).filter(([,v])=>v).map(([k,v])=>`${human(k)}: ${v}`).join(" · ")||"No filters"}</p><footer><a className="primary-button" href={`${route}?${q}`}>Run search</a><button className="icon-button" onClick={()=>void remove(r.id)}><Trash2 size={17}/></button></footer></article>})}</div></section></>;
+ async function remove(id:number){setRemoving(id);setError("");try{await apiDelete(`/saved-searches/${id}/`);await load()}catch(e){setError(e instanceof Error?e.message:"Saved search could not be deleted. Try again.")}finally{setRemoving(null)}}
+ return <>
+   <header className="module-header"><div><span className="eyebrow">Opportunity monitoring</span><h1>Saved Searches</h1><p>Reuse live SAM.gov filters and maintain searches that feed future alerts.</p></div><button className="secondary-button" onClick={load} disabled={loading||removing!==null}><RefreshCw size={16}/> Refresh</button></header>
+   {error&&<div className="system-banner warning" role="alert">{error}</div>}
+   <section className="data-panel">
+     {loading?<div className="table-state compact-state" role="status"><RefreshCw className="spin"/><strong>Loading saved searches…</strong></div>:!error&&!rows.length?<div className="table-state compact-state"><Save/><strong>No saved searches yet</strong><p>Save your filters from opportunity search to run them again and monitor new matches.</p><Link className="secondary-button" href="/opportunities/federal-contracts">Find opportunities</Link></div>:null}
+     <div className="saved-search-grid">{rows.map(row=>{
+       const {source,...searchFilters}=row.filters;
+       const query=new URLSearchParams(searchFilters).toString();
+       const route=source==="grants.gov"?"/opportunities/federal-grants":"/opportunities/federal-contracts";
+       return <article className="saved-search-card" key={row.id}>
+         <div><Save size={18}/><span>{row.alert_frequency}</span></div><h3>{row.name}</h3>
+         <p>{Object.entries(row.filters).filter(([,value])=>value).map(([key,value])=>`${human(key)}: ${value}`).join(" · ")||"No filters"}</p>
+         <footer><Link className="primary-button" href={`${route}?${query}`}>Run search</Link><button className="icon-button" aria-label={`Delete saved search: ${row.name}`} disabled={removing!==null||loading} onClick={()=>void remove(row.id)}><Trash2 size={17}/></button></footer>
+       </article>;
+     })}</div>
+   </section>
+ </>;
 }

@@ -66,6 +66,15 @@ jobs:
         run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python scripts/visual_qa_forgeai_platform.py
       - name: Cross-browser v3.3.0 billing responsive QA
         run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python scripts/visual_qa_billing.py
+      - name: Shared experience, themes, and source-switch regression
+        run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python scripts/visual_qa_experience.py
+      - name: Preserve browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: responsive-experience-evidence
+          path: artifacts/visual-qa
+          retention-days: 14
 
   docker-release-qa:
     runs-on: ubuntu-latest

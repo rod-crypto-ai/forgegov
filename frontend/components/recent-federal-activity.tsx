@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUpRight, BriefcaseBusiness, CalendarClock, Database, FileSearch, RefreshCw, Search } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
 
@@ -41,32 +41,39 @@ export function RecentFederalActivity() {
   const [psc, setPsc] = useState("");
   const [filters, setFilters] = useState({ query: "", agency: "", naics: "", psc: "" });
   const [page, setPage] = useState(1);
-  const [data, setData] = useState<FeedResponse | null>(null);
+  const [responseData, setData] = useState<FeedResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [adding, setAdding] = useState("");
+  const requestSequence = useRef(0);
 
   const load = useCallback(async () => {
+    const request = ++requestSequence.current;
     setLoading(true);
     setError("");
+    setData(null);
     const params = new URLSearchParams({ kind, page: String(page), page_size: "20" });
     if (filters.query) params.set("q", filters.query);
     if (filters.agency) params.set("agency", filters.agency);
     if (filters.naics) params.set("naics", filters.naics);
     if (filters.psc) params.set("psc", filters.psc);
     try {
-      setData(await apiGet<FeedResponse>(`/intelligence/recent-federal-activity/?${params}`));
+      const response = await apiGet<FeedResponse>(`/intelligence/recent-federal-activity/?${params}`);
+      if (request === requestSequence.current) setData(response);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Federal activity could not be loaded.");
+      if (request === requestSequence.current) setError(requestError instanceof Error ? requestError.message : "Federal activity could not be loaded.");
     } finally {
-      setLoading(false);
+      if (request === requestSequence.current) setLoading(false);
     }
   }, [filters, kind, page]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      requestSequence.current += 1;
+    };
   }, [load]);
 
   function submit(event: FormEvent) {
@@ -92,6 +99,8 @@ export function RecentFederalActivity() {
     }
   }
 
+  // A source switch renders before its effect runs. Never label the prior source as the new one.
+  const data = responseData?.kind === kind ? responseData : null;
   const syncStatus = data?.sync.status?.replaceAll("_", " ") || "not run";
   const syncNeedsAttention = ["failed", "partial", "stale", "not_run"].includes(data?.sync.status || "not_run");
 
