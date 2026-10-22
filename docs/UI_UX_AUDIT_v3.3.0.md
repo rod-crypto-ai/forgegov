@@ -112,7 +112,7 @@ Local browser binaries could not be downloaded (gateway/download errors); the cl
 cannot reach the local Next.js server. GitHub responsive QA will produce screenshots and
 JSON evidence for review. Production browser access remains available.
 
-## Stage 3 corrections — browser validation pending
+## Stage 3 corrections — CI verified (3c43e5a)
 
 - Pursuit board now retains Lost, No Bid and Archived lanes. A rejected stage save does not move
   the card; mutation controls disable while saving. Native modal dialogs provide keyboard focus
@@ -128,7 +128,7 @@ JSON evidence for review. Production browser access remains available.
   but remaining live authenticated workflow tests require reauthentication; do not infer results
   from fixtures or change customer preferences merely to test themes.
 
-## Stage 4 visual evidence follow-up — validation pending
+## Stage 4 visual evidence follow-up — CI verified (d6b9331)
 
 - Stage-2 screenshots exposed sticky pagination overlaying report metrics on phones. Pagination now
   stays in document flow; extra mobile bottom clearance keeps fixed feedback access off final content.
@@ -140,3 +140,28 @@ JSON evidence for review. Production browser access remains available.
   Searches are labelled, empty/loading states are explicit, and request sequencing rejects stale results.
 - Added browser assertions for in-flow pagination, dark company surfaces, invitation guidance and
   fallback directory labels/source details. Fixture snapshots are not proof of live forecast notices.
+
+Stage 3 run 39779226543 and stage 4 run 39780021931 passed all four CI jobs. Stage-4
+artifact 12428345144 contains 30 passing experience cases plus the existing release suites.
+Screenshots confirmed pagination in document flow and readable dark company cards. They also
+exposed remaining white room-summary/status surfaces, addressed below. Browser sign-in was
+renewed successfully as the existing workspace owner; no account/security policy was changed.
+
+## Stage 5 — source-aware navigation and award-result completion
+
+- Live global search for `maintenance` returned actual opportunity, pursuit, company, vendor and
+  award matches. Clicking the Keystone Job Corps SBA SUBNet result reproduced a wrong-source
+  failure: the result pointed to a SAM-only details route. The actual subcontract route loaded the
+  listing, dates, source provenance and all four research/capture/collaboration tabs correctly.
+- Search opportunity/document links and pipeline links now distinguish SAM, Grants.gov and SBA
+  SUBNet destinations. Backend tests check all three source routes and invalid search-limit handling.
+- Generic IDV/vehicle tables previously fetched only offset zero and offered no record detail.
+  They now expose source-reported total counts, Previous/Next offset pagination and expandable
+  normalized record details. Table/board/export views remain available. Filters/exports explicitly
+  apply to the loaded page; historical signing dates are not described as retrieval freshness.
+- Late responses are rejected and route-keyed workspaces reset page state. Spreadsheet-formula
+  prefixes are neutralized in generic CSV exports while numeric values remain numeric.
+- Dark room summaries, status pills and inline messages now use semantic theme surfaces/text.
+  Browser assertions cover those surfaces, IDV/vehicle pagination, route resets, details and CSV safety.
+- ForgeAI rendered its configured-provider/research controls; no generated-answer claim is made.
+  Live generation and pricing/proposal mutations still require controlled workflow validation.

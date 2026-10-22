@@ -4,12 +4,26 @@ from unittest.mock import Mock, patch
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .models import Award
+from .models import Award, Opportunity
 from .integrations import search_usaspending_awards, upsert_usaspending_award
 from .tests import AuthenticatedApiTestCase
 
 
 class ExperienceReportTests(AuthenticatedApiTestCase):
+    def test_search_routes_to_the_actual_source_workspace(self):
+        for source, source_id, expected in [
+            ("sam.gov", "qa-sam", "/opportunities/federal-contracts/qa-sam"),
+            ("grants.gov", "grants.gov:123", "/opportunities/federal-grants/123"),
+            ("sba-subnet", "sba-subnet:qa-listing", "/opportunities/subcontracting/sba-subnet%3Aqa-listing"),
+        ]:
+            Opportunity.objects.create(source=source, source_id=source_id, title="RoutingQA opportunity")
+            payload = self.client.get("/api/intelligence/search/?q=RoutingQA").json()
+            result = next(row for row in payload["results"] if row["id"] == source_id)
+            self.assertEqual(result["href"], expected)
+
+    def test_search_invalid_limit_returns_validation_error_not_server_error(self):
+        self.assertEqual(self.client.get("/api/intelligence/search/?q=RoutingQA&limit=invalid").status_code, 400)
+
     def setUp(self):
         super().setUp()
         today = timezone.localdate()

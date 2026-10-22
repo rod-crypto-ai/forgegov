@@ -132,6 +132,10 @@ def pursuit_rooms_and_audit(page, evidence_key):
     page.get_by_role("button", name="Create Project Room", exact=True).click()
     page.get_by_role("link", name="QA secure room", exact=True).wait_for()
     page.get_by_role("status").filter(has_text="Project Room created.").wait_for()
+    if page.locator("html").get_attribute("data-theme") == "dark":
+        for selector in (".release-four-summary > div", ".source-health-pill", ".inline-message"):
+            colors = page.locator(selector).evaluate_all("es=>es.map(e=>({background:getComputedStyle(e).backgroundColor,color:getComputedStyle(e).color}))")
+            assert colors and all(c["background"] != "rgb(255, 255, 255)" and c["background"] != c["color"] for c in colors), {selector: colors}
     if evidence_key:
         page.screenshot(path=str(OUT / f"{evidence_key}-rooms.png"), full_page=True)
     events = [{"id": i, "action": f"security.qa_event_{i}", "object_type": "workspace", "object_id": "1", "actor_name": "QA Owner", "created_at": "2026-10-22T00:00:00Z"} for i in range(26)]
@@ -145,6 +149,34 @@ def pursuit_rooms_and_audit(page, evidence_key):
     page.get_by_label("Filter loaded events", exact=True).fill("no-match")
     page.get_by_text("No matching audit events", exact=True).wait_for()
     assert geometry(page)["overflow"] <= 2
+
+
+def sam_award_pages(page, evidence_key):
+    requests = []
+    def awards(route):
+        params = parse_qs(urlparse(route.request.url).query)
+        offset = int(params.get("offset", ["0"])[0])
+        kind = params["record_type"][0]
+        requests.append((kind, offset))
+        fulfill(route, {"total_records": 101, "limit": 100, "offset": offset, "results": [{"title": f"QA {kind} {offset}", "recipient_name": "=1+1", "piid": f"PIID-{offset}", "award_type": "IDIQ", "awarding_agency": "QA Agency", "referenced_idv": "QA-PARENT", "date_signed": "2020-10-01", "dollars_obligated": 1000}]})
+    page.route("**/api/live/sam/contract-awards/**", awards)
+    for kind, path in [("idv", "/awards/federal-idv"), ("vehicles", "/awards/federal-vehicles")]:
+        page.goto(BASE_URL + path, wait_until="networkidle")
+        page.get_by_text(f"QA {kind} 0", exact=True).wait_for()
+        assert page.get_by_text("Page 1 · 101 source matches", exact=True).is_visible()
+        page.locator(".award-record-details summary").click()
+        page.get_by_text("QA-PARENT", exact=True).wait_for()
+        page.get_by_role("button", name="Next", exact=True).click()
+        page.get_by_text(f"QA {kind} 100", exact=True).wait_for()
+        page.get_by_text("Page 2 · 101 source matches", exact=True).wait_for()
+        assert not page.get_by_role("button", name="Next", exact=True).is_enabled()
+        with page.expect_download() as download:
+            page.get_by_role("button", name="Export", exact=True).click()
+        assert "'=1+1" in Path(download.value.path()).read_text(), "spreadsheet formulas must be neutralized"
+        assert geometry(page)["overflow"] <= 2
+        if evidence_key:
+            page.screenshot(path=str(OUT / f"{evidence_key}-{kind}-awards.png"), full_page=True)
+    assert ("idv", 100) in requests and ("vehicles", 0) in requests, requests
 
 
 def reports_and_company(page, evidence_key):
@@ -255,6 +287,7 @@ def run_case(browser, engine, name, width, height, theme):
         capture_workflows(page, evidence_key)
         reports_and_company(page, evidence_key)
         pursuit_rooms_and_audit(page, evidence_key)
+        sam_award_pages(page, evidence_key)
         assert not errors, errors
         return {"passed": True, "dashboard": dashboard, "feed": metrics}
     except Exception as error:

@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDownToLine, Columns3, LayoutList, Plus, RefreshCw, Search, X } from "lucide-react";
 import { apiGet, apiPost, normalizeList } from "@/lib/api";
 import type { NavItem } from "@/lib/navigation";
 
 type Row = Record<string, unknown>;
+type AwardPage = { results: Row[]; total_records: number; limit: number; offset: number };
 type Field = { name: string; label: string; type?: "text" | "number" | "date" | "textarea"; required?: boolean };
 
 const schemaByPath: Record<string, Field[]> = {
@@ -55,7 +56,11 @@ function display(value: unknown) {
 }
 
 function exportCsv(rows: Row[], columns: string[], name: string) {
-  const quote = (value: unknown) => `"${String(display(value)).replaceAll('"', '""')}"`;
+  const quote = (value: unknown) => {
+    const text = String(display(value));
+    const safe = typeof value === "string" && /^\s*[=+\-@]/.test(text) ? "'" + text : text;
+    return `"${safe.replaceAll('"', '""')}"`;
+  };
   const csv = [columns.map(quote).join(","), ...rows.map((row) => columns.map((column) => quote(row[column])).join(","))].join("\n");
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
   const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${name}.csv`; anchor.click(); URL.revokeObjectURL(url);
@@ -70,17 +75,29 @@ export function WorkspacePage({ feature }: { feature: NavItem }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const [awardPage, setAwardPage] = useState<AwardPage | null>(null);
+  const [retrieved, setRetrieved] = useState("");
+  const sequence = useRef(0);
+  const samAwards = Boolean(feature.apiPath?.startsWith("/live/sam/contract-awards/"));
   const fields = schemaByPath[feature.href] ?? [];
 
   const load = useCallback(async () => {
     if (!feature.apiPath) { setRows([]); setStatus("ready"); return; }
-    setStatus("loading"); setError("");
-    try { setRows(normalizeList(await apiGet<Row[]>(feature.apiPath)) as Row[]); setStatus("ready"); }
-    catch (err) { setError(err instanceof Error ? err.message : "Unable to load records"); setStatus("error"); }
-  }, [feature.apiPath]);
+    const request = ++sequence.current;
+    setStatus("loading"); setError(""); setRows([]); setAwardPage(null);
+    try {
+      const path = samAwards ? `${feature.apiPath}&offset=${offset}` : feature.apiPath;
+      const result = await apiGet<Row[] | AwardPage>(path);
+      if (request !== sequence.current) return;
+      setRows(normalizeList(result) as Row[]);
+      setAwardPage(samAwards && !Array.isArray(result) ? result : null);
+      setRetrieved(new Date().toISOString()); setStatus("ready");
+    } catch (err) { if (request !== sequence.current) return; setError(err instanceof Error ? err.message : "Unable to load records"); setStatus("error"); }
+  }, [feature.apiPath, offset, samAwards]);
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
+    return () => { window.clearTimeout(timer); sequence.current += 1; };
   }, [load]);
 
   const columns = useMemo(() => {
@@ -118,15 +135,15 @@ export function WorkspacePage({ feature }: { feature: NavItem }) {
     </header>
 
     <section className="workspace-summary">
-      <div><span>Total</span><strong>{status === "ready" ? rows.length : "—"}</strong><small>Stored records</small></div>
+      <div><span>{samAwards ? "Source matches" : "Loaded records"}</span><strong>{status === "ready" ? (awardPage?.total_records ?? rows.length).toLocaleString() : "—"}</strong><small>{samAwards ? "Reported by SAM.gov" : "Current API response"}</small></div>
       <div><span>Visible</span><strong>{status === "ready" ? filtered.length : "—"}</strong><small>Current result set</small></div>
-      <div><span>Source</span><strong>{feature.apiPath ? "ForgeGov API" : "Configuration"}</strong><small>Traceable data</small></div>
+      <div><span>Source</span><strong>{samAwards ? "SAM.gov awards" : feature.apiPath ? "ForgeGov API" : "Configuration"}</strong><small>{samAwards ? "Historical award records" : "Traceable data"}</small></div>
       <div><span>Workspace status</span><strong className={status === "error" ? "status-bad" : "status-good"}>{status === "error" ? "Unavailable" : status === "loading" ? "Checking" : rows.length ? "Data loaded" : "No records returned"}</strong><small>Current API response</small></div>
     </section>
 
     <section className="data-panel workspace-panel">
       <div className="data-toolbar upgraded-toolbar">
-        <div className="data-search"><Search size={17}/><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`Search ${feature.label.toLowerCase()}...`}/></div>
+        <div className="data-search"><Search size={17}/><input aria-label="Filter loaded records" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={samAwards ? "Filter this loaded page..." : `Search ${feature.label.toLowerCase()}...`}/></div>
         <div className="segmented-control"><button aria-label="Table view" aria-pressed={view === "table"} className={view === "table" ? "active" : ""} onClick={() => setView("table")}><LayoutList size={16}/></button><button aria-label="Board view" aria-pressed={view === "board"} className={view === "board" ? "active" : ""} onClick={() => setView("board")}><Columns3 size={16}/></button></div>
         <button className="toolbar-button" onClick={() => exportCsv(filtered, columns, feature.label.toLowerCase().replaceAll(" ", "-"))} disabled={!filtered.length}><ArrowDownToLine size={16}/> Export</button>
       </div>
@@ -134,10 +151,11 @@ export function WorkspacePage({ feature }: { feature: NavItem }) {
       {status === "loading" && <div className="table-state"><RefreshCw className="spin"/><strong>Loading workspace</strong><p>Retrieving the latest ForgeGov records.</p></div>}
       {status === "error" && <div className="table-state error-state"><strong>Workspace unavailable</strong><p>{error}</p><button className="secondary-button" onClick={() => void load()}>Try again</button></div>}
       {status === "ready" && !filtered.length && <div className="table-state"><strong>No records in this view</strong><p>Create your first record or adjust the search to find existing workspace records.</p>{fields.length > 0 && <button className="primary-button" onClick={() => setCreateOpen(true)}><Plus size={16}/> Create record</button>}</div>}
-      {status === "ready" && filtered.length > 0 && view === "table" && <div className="table-wrap"><table className="data-table"><thead><tr>{columns.map((column) => <th key={column}>{humanize(column)}</th>)}</tr></thead><tbody>{filtered.map((row, index) => <tr key={String(row.id ?? index)}>{columns.map((column, ci) => <td key={column} className={ci === 0 ? "primary-cell" : ""}>{display(row[column])}</td>)}</tr>)}</tbody></table></div>}
+      {status === "ready" && filtered.length > 0 && view === "table" && <div className="table-wrap"><table className="data-table"><thead><tr>{columns.map((column) => <th key={column}>{humanize(column)}</th>)}</tr></thead><tbody>{filtered.map((row, index) => <tr key={String(row.id ?? index)}>{columns.map((column, ci) => <td key={column} className={ci === 0 ? "primary-cell" : ""}>{ci === 0 && samAwards ? <details className="award-record-details"><summary>{display(row[column])}</summary><dl>{["piid","modification_number","referenced_idv","award_type","recipient_name","awarding_agency","date_signed","dollars_obligated","potential_amount"].map(key=><div key={key}><dt>{humanize(key)}</dt><dd>{display(row[key])}</dd></div>)}</dl></details> : display(row[column])}</td>)}</tr>)}</tbody></table></div>}
       {status === "ready" && filtered.length > 0 && view === "board" && <div className="kanban-board">{Object.entries(boardGroups).map(([group, items]) => <section className="kanban-column" key={group}><header><span>{humanize(group)}</span><b>{items.length}</b></header>{items.map((row, index) => <article className="kanban-card" key={String(row.id ?? index)}><strong>{String(row.title ?? row.name ?? row.full_name ?? "Untitled record")}</strong><p>{String(row.agency ?? row.agency_name ?? row.status ?? "ForgeGov record")}</p><footer><span>{display(row.estimated_value ?? row.due_at ?? row.updated_at)}</span></footer></article>)}</section>)}</div>}
     </section>
 
+    {samAwards && <section className="data-panel"><p className="report-coverage-note">SAM.gov Contract Awards API · {retrieved ? `Retrieved ${new Date(retrieved).toLocaleString()}.` : "Retrieval not yet completed."} Award signing dates describe historical records, not retrieval freshness. Filters and exports apply to the loaded page.</p><nav className="pagination-bar" aria-label="Award result pages"><button className="secondary-button" disabled={status==="loading"||offset<=0} onClick={()=>{setQuery("");setOffset(Math.max(0,offset-100))}}>Previous</button><span>Page {Math.floor(offset/100)+1}{awardPage ? ` · ${awardPage.total_records.toLocaleString()} source matches` : ""}</span><button className="secondary-button" disabled={status!=="ready"||!awardPage||!rows.length||offset+awardPage.limit>=awardPage.total_records} onClick={()=>{setQuery("");setOffset(offset+100)}}>Next</button></nav></section>}
     {createOpen && <div className="modal-backdrop" onMouseDown={() => setCreateOpen(false)}><form className="record-modal" onSubmit={createRecord} onMouseDown={(e) => e.stopPropagation()}><header><div><span className="eyebrow">Create record</span><h2>New {feature.recordLabel ?? "record"}</h2></div><button type="button" className="icon-button" onClick={() => setCreateOpen(false)}><X size={20}/></button></header>{error && <div className="form-error">{error}</div>}<div className="record-form">{fields.map((field) => <label key={field.name}><span>{field.label}{field.required ? " *" : ""}</span>{field.type === "textarea" ? <textarea required={field.required} value={form[field.name] ?? ""} onChange={(e) => setForm({...form, [field.name]: e.target.value})}/> : <input type={field.type ?? "text"} required={field.required} value={form[field.name] ?? ""} onChange={(e) => setForm({...form, [field.name]: e.target.value})}/>}</label>)}</div><footer><button type="button" className="secondary-button" onClick={() => setCreateOpen(false)}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? "Saving…" : "Create record"}</button></footer></form></div>}
   </>;
 }
