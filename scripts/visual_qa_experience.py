@@ -151,6 +151,53 @@ def pursuit_rooms_and_audit(page, evidence_key):
     assert geometry(page)["overflow"] <= 2
 
 
+def proposal_editing(page, evidence_key):
+    notice = "qa-proposal-workflow"
+    section = {"id": 1, "key": "technical", "title": "QA technical section", "section_type": "technical", "instructions": "Use evidence", "content": "Saved proposal baseline", "status": "drafting", "owner_id": None, "owner": "", "due_at": None, "sort_order": 1, "approved_at": None, "approved_by": "", "revision_count": 1, "restricted": False, "requirement_links": []}
+    second = {**section, "id": 2, "title": "QA management section", "content": "Saved management baseline"}
+    counts = {"volumes": 1, "sections": 2, "sections_approved": 0, "requirements": 0, "requirements_closed": 0, "reviews": 0, "reviews_passed": 0, "open_findings": 0}
+    payload = {"plan": {"id": 1, "status": "draft", "submission_ready": False, "readiness_score": 0}, "execution": {"members": [], "requirements": [], "counts": {"requirements_total": 0, "requirements_closed": 0, "reviews_total": 0, "reviews_passed": 0, "open_findings": 0}, "amendment_impact": {"changed": False, "changes": []}}, "volumes": [{"id": 1, "key": "technical", "title": "QA technical volume", "instructions": "", "status": "draft", "owner_id": None, "owner": "", "due_at": None, "page_limit": None, "sort_order": 1, "sections": [section, second]}], "library": [], "package_validation": {"ready": False, "blockers": ["Human review required"], "warnings": [], "counts": counts, "checked_at": "2026-10-22T00:00:00Z"}, "permissions": {"can_financial": True, "can_approve": True}, "warning": "QA controlled proposal evidence"}
+    detail = {"opportunity": {"title": "QA proposal opportunity", "fullParentPathName": "QA Agency", "solicitationNumber": "QA-PROPOSAL", "type": "Solicitation", "naicsCode": "541512"}, "description": "QA scope", "documents": [], "source_url": "https://sam.gov/"}
+    page.route(f"**/api/live/sam/opportunities/{notice}/", lambda route: fulfill(route, detail))
+    for pattern in ("**/api/workflow/opportunity-workspaces/**", "**/api/workflow/opportunities/*/command-summary/**", "**/api/intelligence/opportunities/**"):
+        page.route(pattern, lambda route: fulfill(route, {"detail": "No controlled supplemental evidence"}, 404))
+    def production(route):
+        if route.request.method == "POST":
+            fulfill(route, {"detail": "Controlled proposal structure rejection"}, 503)
+        else:
+            fulfill(route, payload)
+    page.route(f"**/api/ai/opportunities/{notice}/proposal-production/", production)
+    def save_section(route):
+        section.update(route.request.post_data_json)
+        section["revision_count"] += 1
+        fulfill(route, payload)
+    page.route(f"**/api/ai/opportunities/{notice}/proposal-sections/1/", save_section)
+    page.goto(BASE_URL + f"/opportunities/federal-contracts/{notice}", wait_until="networkidle")
+    page.get_by_role("tab", name="Proposal", exact=True).click()
+    editor = page.get_by_label("Section content", exact=True)
+    editor.wait_for()
+    page.wait_for_function("document.querySelector('.proposal-section-editor')?.value === 'Saved proposal baseline'")
+    editor.fill("Unsaved proposal work must survive")
+    page.once("dialog", lambda dialog: dialog.dismiss())
+    page.get_by_role("button").filter(has_text="QA management section").click()
+    assert editor.input_value() == "Unsaved proposal work must survive"
+    page.once("dialog", lambda dialog: dialog.dismiss())
+    page.get_by_role("tab", name="Overview", exact=True).click()
+    assert editor.is_visible() and editor.input_value() == "Unsaved proposal work must survive"
+    page.get_by_role("button", name="Save section", exact=True).click()
+    page.get_by_role("status").filter(has_text="Section saved and revision recorded.").wait_for()
+    assert section["content"] == "Unsaved proposal work must survive"
+    page.get_by_role("button").filter(has_text="QA management section").click()
+    page.wait_for_function("document.querySelector('.proposal-section-editor')?.value === 'Saved management baseline'")
+    page.once("dialog", lambda dialog: dialog.accept("QA additional volume"))
+    page.get_by_role("button", name="Add volume", exact=True).click()
+    page.get_by_role("status").filter(has_text="Controlled proposal structure rejection").wait_for()
+    assert editor.input_value() == "Saved management baseline"
+    assert geometry(page)["overflow"] <= 2
+    if evidence_key:
+        page.screenshot(path=str(OUT / f"{evidence_key}-proposal.png"), full_page=True)
+
+
 def sam_award_pages(page, evidence_key):
     requests = []
     def awards(route):
@@ -288,6 +335,8 @@ def run_case(browser, engine, name, width, height, theme):
         reports_and_company(page, evidence_key)
         pursuit_rooms_and_audit(page, evidence_key)
         sam_award_pages(page, evidence_key)
+        if name in ("phone", "desktop"):
+            proposal_editing(page, evidence_key)
         assert not errors, errors
         return {"passed": True, "dashboard": dashboard, "feed": metrics}
     except Exception as error:

@@ -16,7 +16,7 @@ class ExperienceReportTests(AuthenticatedApiTestCase):
             ("grants.gov", "grants.gov:123", "/opportunities/federal-grants/123"),
             ("sba-subnet", "sba-subnet:qa-listing", "/opportunities/subcontracting/sba-subnet%3Aqa-listing"),
         ]:
-            Opportunity.objects.create(source=source, source_id=source_id, title="RoutingQA opportunity")
+            Opportunity.objects.create(source=source, source_id=source_id, title=f"RoutingQA {source} opportunity")
             payload = self.client.get("/api/intelligence/search/?q=RoutingQA").json()
             result = next(row for row in payload["results"] if row["id"] == source_id)
             self.assertEqual(result["href"], expected)

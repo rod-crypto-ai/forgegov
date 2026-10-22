@@ -165,3 +165,17 @@ renewed successfully as the existing workspace owner; no account/security policy
   Browser assertions cover those surfaces, IDV/vehicle pagination, route resets, details and CSV safety.
 - ForgeAI rendered its configured-provider/research controls; no generated-answer claim is made.
   Live generation and pricing/proposal mutations still require controlled workflow validation.
+
+## Stage 6 — proposal editing protection
+
+- Proposal edits were discarded when selecting another section, refreshing, generating a replacement
+  draft, or leaving the Proposal tab. The editor now indicates unsaved edits and confirms discard
+  before those actions; browser navigation also warns while drafts are unsaved.
+- Proposal volume/section creation and library saves now surface rejected requests and prevent
+  overlapping actions. Saving library content updates only the library so the current section draft
+  survives. Existing financial restrictions, approval states and revision endpoints are unchanged.
+- Isolated browser workflows exercise cancelled section/tab navigation, saved revisions, subsequent
+  section selection and a rejected volume creation at phone/desktop sizes across all three engines
+  and both themes. These checks do not establish live model quality or production proposal readiness.
+- Stage-5 CI exposed a test-fixture collision: identical SAM/SBA titles were intentionally deduplicated
+  by search, hiding a synthetic test result. Source-specific titles now isolate routing behavior.
