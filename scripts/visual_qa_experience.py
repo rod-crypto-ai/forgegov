@@ -195,7 +195,7 @@ def proposal_editing(page, evidence_key):
     page.get_by_role("status").filter(has_text="Controlled proposal structure rejection").wait_for()
     assert editor.input_value() == "Saved management baseline"
     page.once("dialog", lambda dialog: dialog.accept("QA additional section"))
-    page.get_by_role("button", name="Add section", exact=True).click()
+    page.get_by_role("button", name="Add section to QA technical volume", exact=True).click()
     page.get_by_role("status").filter(has_text="Controlled proposal structure rejection").wait_for()
     assert editor.input_value() == "Saved management baseline"
     assert geometry(page)["overflow"] <= 2
