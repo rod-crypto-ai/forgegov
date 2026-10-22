@@ -196,3 +196,15 @@ experience tests; fatal-error lint and source audit passed. Production builds, l
 - One WebKit case exposed a rejected background route prefetch for a newly created Project Room
   during subsequent navigation. Room-card links now fetch their protected workspace when opened,
   avoiding speculative room-page requests while retaining normal navigation.
+
+## Stage 8 — full-stack persistence verification
+
+- Docker release CI now exercises browser sign-in, task creation/completion, room creation,
+  proposal revisions and pricing cost items against real Django endpoints and PostgreSQL.
+  Reload checks and database assertions verify persistence; screenshots and a JSON report are
+  retained as a separate CI artifact. This stage awaits its first CI result.
+- The seed helper refuses execution unless the explicit isolated-QA flag, DEBUG mode and
+  Docker database hostname all match. It creates only a synthetic tenant and identity.
+  Browser mutations are restricted to the loopback frontend URL.
+- Government HTTP responses are controlled local fixtures. No live AI generation, payment
+  transaction or production mutation is performed; external provider quality remains a release gate.
