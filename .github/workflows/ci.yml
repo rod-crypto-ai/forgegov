@@ -53,7 +53,7 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
-      - run: pip install -r requirements-visual-qa.txt
+      - run: python -m pip install -r requirements-visual-qa.txt
       - name: Start production frontend
         run: |
           cp -R frontend/.next/static frontend/.next/standalone/.next/static
@@ -163,7 +163,7 @@ jobs:
           docker run --rm --init --network host --ipc=host \
             -v "${GITHUB_WORKSPACE}:/work" -w /work -e FORGEGOV_ISOLATED_QA=1 \
             mcr.microsoft.com/playwright/python:v1.57.0-noble \
-            bash -c 'pip install -r requirements-visual-qa.txt && python scripts/e2e_experience.py'
+            bash -c 'python -m pip install -r requirements-visual-qa.txt && python scripts/e2e_experience.py'
           docker compose exec -T -e FORGEGOV_ISOLATED_QA=1 backend python /tmp/experience_qa_fixtures.py verify
       - name: Preserve full-stack browser evidence
         if: always()
