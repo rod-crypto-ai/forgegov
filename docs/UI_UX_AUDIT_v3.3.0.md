@@ -208,3 +208,6 @@ experience tests; fatal-error lint and source audit passed. Production builds, l
   Browser mutations are restricted to the loopback frontend URL.
 - Government HTTP responses are controlled local fixtures. No live AI generation, payment
   transaction or production mutation is performed; external provider quality remains a release gate.
+- Follow-up inspection found section creation still bypassed the shared structure-mutation handler.
+  It now uses the same busy state, discard confirmation and visible error handling as volume creation;
+  controlled browser rejection coverage checks that the existing section content survives.
