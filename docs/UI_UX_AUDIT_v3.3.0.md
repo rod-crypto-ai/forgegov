@@ -241,3 +241,23 @@ experience tests; fatal-error lint and source audit passed. Production builds, l
   matching requirements-visual-qa.txt, with preinstalled browsers and OS libraries. The test package
   is installed separately, following https://playwright.dev/python/docs/docker. All existing browser
   matrices remain enabled; the responsive job has a bounded 35-minute timeout.
+
+## Stage 9 — runtime dependency security gate
+
+- An independent `npm audit --omit=dev` identified Next.js 16.4.0 as affected by
+  GHSA-2464-fhr4-w9xw, GHSA-673q-mjm6-r5xr and GHSA-p3m5-59mp-jv5r. Maintainer
+  advisories identify patched versions. Next.js and its matching ESLint configuration
+  are pinned to the maintenance release 16.4.2; the application version remains 3.3.0.
+- Sources: https://github.com/vercel/next.js/security/advisories/GHSA-2464-fhr4-w9xw,
+  https://github.com/vercel/next.js/security/advisories/GHSA-673q-mjm6-r5xr,
+  https://github.com/vercel/next.js/security/advisories/GHSA-p3m5-59mp-jv5r,
+  https://github.com/vercel/next.js/releases/tag/v16.4.2.
+- Frontend CI now audits production dependencies and blocks high/critical findings.
+  Local validation of the patch passed lint, typecheck and the production build;
+  the post-patch production dependency audit reported zero vulnerabilities.
+  This change does not establish that any deployed instance was exploited; production
+  has not been modified. Patch validation and the expanded source-link browser checks
+  must pass before review approval.
+- Run 39856815373 passed all four jobs at cb6b79c: 372 backend tests, the complete
+  responsive matrix and real database-backed workspace persistence. The following
+  source-link correction and dependency patch require their own CI results.
