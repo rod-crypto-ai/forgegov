@@ -24,6 +24,19 @@ def fulfill(route, payload, status=200):
     route.fulfill(status=status, content_type="application/json", body=json.dumps(payload))
 
 
+def navigate(page, url, **kwargs):
+    """Settle the current document before intentionally replacing it.
+
+    Next link prefetches can start after a UI assertion resolves. A hard goto
+    during that fetch makes WebKit report the cancellation as a page error.
+    Keep the strict error guard and await the old document's network instead.
+    """
+    if page.url != "about:blank":
+        page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+        page.wait_for_load_state("networkidle")
+    return page.goto(url, **kwargs)
+
+
 def feed(kind):
     row = {"id": 1, "source_id": "qa-opportunity", "title": "SAM controlled opportunity", "agency": "QA Agency", "posted_date": "2026-10-22", "naics_code": "541512"}
     if kind == "awards":
@@ -79,7 +92,7 @@ def settings_and_billing_layout(page, evidence_key, theme):
     page.route("**/api/billing/summary/", lambda r: fulfill(r, summary))
     for density in ("comfortable", "compact"):
         page.route("**/api/settings/preferences/**", lambda r, request=None, *, density=density: fulfill(r, {"theme": theme, "density": density}))
-        page.goto(BASE_URL + "/settings#integrations", wait_until="networkidle")
+        navigate(page, BASE_URL + "/settings#integrations", wait_until="networkidle")
         save = page.get_by_role("button", name="Save destination", exact=True)
         save.wait_for()
         page.get_by_label("Default Microsoft Team", exact=True).select_option("qa-team")
@@ -103,7 +116,7 @@ def settings_and_billing_layout(page, evidence_key, theme):
         if evidence_key:
             page.evaluate("window.scrollTo(0, 0)")
             page.screenshot(path=str(OUT / f"{evidence_key}-{density}-microsoft.png"), full_page=True)
-        page.goto(BASE_URL + "/billing", wait_until="networkidle")
+        navigate(page, BASE_URL + "/billing", wait_until="networkidle")
         page.get_by_text("Grandfathered ForgeGov Access", exact=True).wait_for()
         insets = page.locator(".billing-summary-grid > article, .billing-provider").evaluate_all("""es=>es.map(e=>{
           const s=getComputedStyle(e), r=e.getBoundingClientRect();
@@ -132,7 +145,7 @@ def capture_workflows(page, evidence_key):
         tasks.append({"id": 1, "title": body["title"], "due_at": body["due_at"], "completed": False})
         fulfill(route, tasks[0], 201)
     page.route("**/api/workflow/tasks/", create_task)
-    page.goto(BASE_URL + "/capture/tasks", wait_until="networkidle")
+    navigate(page, BASE_URL + "/capture/tasks", wait_until="networkidle")
     page.get_by_text("No tasks yet", exact=True).wait_for()
     page.get_by_label("Task title", exact=True).fill("QA capture action")
     page.get_by_label("Due date (your local time)", exact=True).fill("2026-11-02T09:00")
@@ -147,7 +160,7 @@ def capture_workflows(page, evidence_key):
     if evidence_key:
         page.screenshot(path=str(OUT / f"{evidence_key}-task-error.png"), full_page=True)
     page.route("**/api/saved-searches/?*", lambda route: fulfill(route, {"results": []}))
-    page.goto(BASE_URL + "/capture/saved-searches", wait_until="networkidle")
+    navigate(page, BASE_URL + "/capture/saved-searches", wait_until="networkidle")
     page.get_by_text("No saved searches yet", exact=True).wait_for()
     assert page.get_by_role("link", name="Find opportunities", exact=True).is_visible()
 
@@ -162,7 +175,7 @@ def pursuit_rooms_and_audit(page, evidence_key):
             pursuits[0].update(route.request.post_data_json)
             fulfill(route, pursuits[0])
     page.route("**/api/pursuits/7/", update_pursuit)
-    page.goto(BASE_URL + "/capture/pursuits", wait_until="networkidle")
+    navigate(page, BASE_URL + "/capture/pursuits", wait_until="networkidle")
     opener = page.get_by_role("button", name="Open pursuit: QA retained pursuit", exact=True)
     opener.wait_for()
     stage = page.get_by_label("Stage: QA retained pursuit", exact=True)
@@ -191,7 +204,7 @@ def pursuit_rooms_and_audit(page, evidence_key):
         rooms.append({"id": 9, **route.request.post_data_json, "owner_organization_name": "QA Company", "partners": []})
         fulfill(route, rooms[0], 201)
     page.route("**/api/project-rooms/", create_room)
-    page.goto(BASE_URL + "/project-rooms", wait_until="networkidle")
+    navigate(page, BASE_URL + "/project-rooms", wait_until="networkidle")
     page.get_by_text("No Project Rooms yet", exact=True).wait_for()
     page.get_by_label("Room name", exact=True).fill("QA secure room")
     page.get_by_role("button", name="Create Project Room", exact=True).click()
@@ -205,7 +218,7 @@ def pursuit_rooms_and_audit(page, evidence_key):
         page.screenshot(path=str(OUT / f"{evidence_key}-rooms.png"), full_page=True)
     events = [{"id": i, "action": f"security.qa_event_{i}", "object_type": "workspace", "object_id": "1", "actor_name": "QA Owner", "created_at": "2026-10-22T00:00:00Z"} for i in range(26)]
     page.route("**/api/audit-logs/**", lambda route: fulfill(route, events))
-    page.goto(BASE_URL + "/audit-log", wait_until="networkidle")
+    navigate(page, BASE_URL + "/audit-log", wait_until="networkidle")
     page.get_by_text("Page 1 of 2 · 26 loaded events", exact=True).wait_for()
     assert page.locator(".simple-row").count() == 25
     page.get_by_role("button", name="Next", exact=True).click()
@@ -237,7 +250,7 @@ def proposal_editing(page, evidence_key):
         section["revision_count"] += 1
         fulfill(route, payload)
     page.route(f"**/api/ai/opportunities/{notice}/proposal-sections/1/", save_section)
-    page.goto(BASE_URL + f"/opportunities/federal-contracts/{notice}", wait_until="networkidle")
+    navigate(page, BASE_URL + f"/opportunities/federal-contracts/{notice}", wait_until="networkidle")
     page.get_by_role("tab", name="Proposal", exact=True).click()
     editor = page.get_by_label("Section content", exact=True)
     editor.wait_for()
@@ -308,7 +321,7 @@ def room_detail_failures(page, evidence_key):
             fulfill(route, tasks[0], 201)
     page.route("**/api/project-rooms/9/tasks/", task_list)
     page.route("**/api/project-rooms/9/tasks/1/", lambda route: fulfill(route, {"detail": "Controlled room stage rejection"}, 503))
-    page.goto(BASE_URL + "/project-rooms/9", wait_until="networkidle")
+    navigate(page, BASE_URL + "/project-rooms/9", wait_until="networkidle")
     page.get_by_role("heading", name="QA secure room", exact=True).wait_for()
     assert page.get_by_role("link", name="Open opportunity", exact=True).get_attribute("href") == "/opportunities/subcontracting/sba-subnet%3Aqa-room"
     page.get_by_role("button", name="Work & files", exact=True).click()
@@ -343,7 +356,7 @@ def room_detail_failures(page, evidence_key):
     page.route("**/api/live/grants/opportunities/123/", lambda route: fulfill(route, grant))
     page.route("**/api/workflow/opportunity-workspaces/**", lambda route: fulfill(route, {"id": 1, "notes": "", "capture_summary": "", "risks": [], "compliance_items": [], "decision": "undecided"}))
     room["opportunity_detail"] = {"source_id": "grants.gov:123", "source": "grants.gov", "title": "QA grant room context"}
-    page.goto(BASE_URL + "/project-rooms/9", wait_until="networkidle")
+    navigate(page, BASE_URL + "/project-rooms/9", wait_until="networkidle")
     page.get_by_role("heading", name="QA secure room", exact=True).wait_for()
     assert page.get_by_role("link", name="Open opportunity", exact=True).get_attribute("href") == "/opportunities/federal-grants/123"
     page.get_by_role("link", name="ForgeAI", exact=True).click()
@@ -351,7 +364,7 @@ def room_detail_failures(page, evidence_key):
     assert page.locator("#grant-ai").is_visible()
 
     room["opportunity_detail"] = {"source_id": "qa-proposal-workflow", "source": "sam.gov", "title": "QA SAM room context"}
-    page.goto(BASE_URL + "/project-rooms/9", wait_until="networkidle")
+    navigate(page, BASE_URL + "/project-rooms/9", wait_until="networkidle")
     page.get_by_role("heading", name="QA secure room", exact=True).wait_for()
     assert page.get_by_role("link", name="Open opportunity", exact=True).get_attribute("href") == "/opportunities/federal-contracts/qa-proposal-workflow"
     page.get_by_role("link", name="ForgeAI", exact=True).click()
@@ -369,7 +382,7 @@ def sam_award_pages(page, evidence_key):
         fulfill(route, {"total_records": 101, "limit": 100, "offset": offset, "results": [{"title": f"QA {kind} {offset}", "recipient_name": "=1+1", "piid": f"PIID-{offset}", "award_type": "IDIQ", "awarding_agency": "QA Agency", "referenced_idv": "QA-PARENT", "date_signed": "2020-10-01", "dollars_obligated": 1000}]})
     page.route("**/api/live/sam/contract-awards/**", awards)
     for kind, path in [("idv", "/awards/federal-idv"), ("vehicles", "/awards/federal-vehicles")]:
-        page.goto(BASE_URL + path, wait_until="networkidle")
+        navigate(page, BASE_URL + path, wait_until="networkidle")
         page.get_by_text(f"QA {kind} 0", exact=True).wait_for()
         assert page.get_by_text("Page 1 · 101 source matches", exact=True).is_visible()
         page.locator(".award-record-details summary").click()
@@ -396,7 +409,7 @@ def reports_and_company(page, evidence_key):
         fulfill(route, {"kind": kind, "source": "USAspending.gov", "generated_at": "2026-10-22T00:00:00Z", "coverage_note": "Stored federal award history only, not a live market total.", "count": 26, "page": current_page, "total_pages": 2, "results": rows, "totals": {"records": 2, "obligated": 1000000, "latest_source_update": None}, "sync": {"status": "failed", "last_completed_at": "2026-10-22T00:00:00Z"}})
     page.route("**/api/reports/market/**", report_response)
     for kind, heading in [("funding", "Agency funding distribution"), ("new-entrants", "First observed recipient–agency relationships")]:
-        page.goto(BASE_URL + "/reports/" + kind, wait_until="networkidle")
+        navigate(page, BASE_URL + "/reports/" + kind, wait_until="networkidle")
         page.get_by_role("heading", name=heading, exact=True).wait_for()
         page.locator(".data-table tbody tr").wait_for()
         assert geometry(page)["overflow"] <= 2
@@ -415,7 +428,7 @@ def reports_and_company(page, evidence_key):
     page.route("**/api/network/profile/**", lambda route: fulfill(route, profile))
     for pattern in ("**/api/team/members/**", "**/api/team/invitations/**", "**/api/network/connections/**", "**/api/company/join-requests/**"):
         page.route(pattern, lambda route: fulfill(route, []))
-    page.goto(BASE_URL + "/company", wait_until="networkidle")
+    navigate(page, BASE_URL + "/company", wait_until="networkidle")
     page.locator(".company-hub-form").wait_for()
     inputs = page.locator('.invite-company-form input').evaluate_all("es => es.map(e=>({height:e.getBoundingClientRect().height,radius:parseFloat(getComputedStyle(e).borderRadius)}))")
     assert inputs and all(value["height"] >= 40 and value["radius"] >= 8 for value in inputs), inputs
@@ -426,7 +439,7 @@ def reports_and_company(page, evidence_key):
     if evidence_key:
         page.screenshot(path=str(OUT / f"{evidence_key}-company.png"), full_page=True)
     page.route("**/api/intelligence/forecasts/sources/**", lambda route: fulfill(route, {"status": "fallback", "reachable": False, "results": [{"agency": "QA Agency", "forecast_url": "https://www.acquisition.gov/procurement-forecasts", "description": "Official directory reference"}], "warning": "Directory snapshot; source refresh unavailable."}))
-    page.goto(BASE_URL + "/opportunities/federal-forecasts", wait_until="networkidle")
+    navigate(page, BASE_URL + "/opportunities/federal-forecasts", wait_until="networkidle")
     page.get_by_text("Directory reference", exact=True).wait_for()
     assert page.get_by_text("Active", exact=True).count() == 0
     page.get_by_role("button", name="View source details", exact=False).click()
@@ -443,7 +456,7 @@ def run_case(browser, engine, name, width, height, theme):
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     try:
-        page.goto(BASE_URL + "/", wait_until="networkidle")
+        navigate(page, BASE_URL + "/", wait_until="networkidle")
         page.locator(".dashboard-federal-preview").wait_for()
         dashboard = geometry(page)
         assert dashboard["overflow"] <= 2, dashboard
@@ -455,7 +468,7 @@ def run_case(browser, engine, name, width, height, theme):
             backgrounds = page.locator('.workspace-launch-grid > a').evaluate_all("es=>es.map(e=>getComputedStyle(e).backgroundColor)")
             assert "rgb(255, 255, 255)" not in backgrounds, backgrounds
         page.screenshot(path=str(OUT / f"{engine}-{name}-{theme}-dashboard.png"), full_page=True)
-        page.goto(BASE_URL + "/opportunities/recent-federal-activity", wait_until="networkidle")
+        navigate(page, BASE_URL + "/opportunities/recent-federal-activity", wait_until="networkidle")
         page.get_by_role("heading", name="SAM controlled opportunity", exact=True).wait_for()
         metrics = geometry(page)
         assert metrics["overflow"] <= 2, metrics
