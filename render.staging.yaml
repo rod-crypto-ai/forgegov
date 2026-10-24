@@ -164,15 +164,9 @@ services:
   - key: CELERY_WORKER_CONCURRENCY
     value: '1'
   - key: SAM_GOV_API_KEY
-    fromService:
-      type: web
-      name: forgegov-staging-api
-      envVarKey: SAM_GOV_API_KEY
+    sync: false
   - key: OPENAI_API_KEY
-    fromService:
-      type: web
-      name: forgegov-staging-api
-      envVarKey: OPENAI_API_KEY
+    sync: false
   - key: SEARXNG_HOSTPORT
     fromService:
       type: pserv
@@ -220,10 +214,7 @@ services:
   - key: DJANGO_DEBUG
     value: 'false'
   - key: SAM_GOV_API_KEY
-    fromService:
-      type: web
-      name: forgegov-staging-api
-      envVarKey: SAM_GOV_API_KEY
+    sync: false
   - key: SAM_SYNC_ENABLED
     value: 'false'
   - key: SAM_SYNC_INTERVAL_HOURS

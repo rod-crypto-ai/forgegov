@@ -42,8 +42,11 @@ key and a new signed webhook endpoint for this staging API. Never use a live
 Stripe key. The sandbox annual price is preselected, but billing stays disabled
 until the test credentials and webhook secret are installed and verified.
 
-The four `sync: false` secret fields are supplied at creation or configured
+The `sync: false` secret fields are supplied at creation or configured
 afterward; Blueprint resyncs must not overwrite them with blank literal values.
+Render omits blank secret inputs. API and worker provider-key inputs are
+therefore independent rather than referencing possibly absent variables. Set
+dedicated staging provider credentials on each service that requires them.
 Create only synthetic test organizations and users using an authorized staging
 administration path; do not open unrestricted registration to bootstrap access.
 Do not output passwords, keys, webhook secrets, or reset tokens into logs.
