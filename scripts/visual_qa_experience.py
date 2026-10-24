@@ -111,6 +111,8 @@ def settings_and_billing_layout(page, evidence_key, theme):
             inside:[...e.children].every(c=>{const x=c.getBoundingClientRect();return x.left>=r.left+12 && x.right<=r.right-12 && x.top>=r.top+12 && x.bottom<=r.bottom-12})};
         })""")
         assert all(x["padding"] >= 18 and x["inside"] for x in insets), insets
+        assert page.locator(".billing-provider > div:first-child > svg").evaluate("e=>e.getBoundingClientRect().width") >= 20
+        assert all(page.locator(".billing-section .panel-title-row").evaluate_all("es=>es.map(e=>e.querySelector('svg').getBoundingClientRect().top<=e.getBoundingClientRect().top+4)"))
         assert page.get_by_role("button", name="Start 30-day trial", exact=True).count() == 0
         assert geometry(page)["overflow"] <= 2
         assert page.locator(".beta-feedback-trigger").evaluate("e=>getComputedStyle(e).position") == "static"
