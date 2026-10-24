@@ -20,7 +20,7 @@
 
 body { line-height: 1.5; }
 .data-panel, html[data-density] .data-panel { padding: var(--panel-inset); }
-.data-panel > .panel-title-row { padding: 0 0 18px; }
+.data-panel > .panel-title-row, html[data-density] .data-panel > .panel-title-row { padding: 0 0 18px; }
 .data-panel > .panel-title-row p { margin: 6px 0 0; color: var(--muted); line-height: 1.5; }
 .data-panel > .advanced-filter-grid { padding: 0; }
 .data-panel > .inline-message { margin-top: 18px; padding: 12px 0 0; }
