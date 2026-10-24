@@ -1,4 +1,13 @@
 from django.contrib import admin
+from .models import PublicInquiry
+
+
+@admin.register(PublicInquiry)
+class PublicInquiryAdmin(admin.ModelAdmin):
+    list_display = ("company", "name", "email", "purpose", "status", "created_at")
+    list_filter = ("purpose", "status")
+    search_fields = ("company", "name", "email", "reference")
+    readonly_fields = ("reference", "created_at", "updated_at")
 
 from .models import (
     Agency,

@@ -56,7 +56,9 @@ def verify():
     assert ProjectRoomTask.objects.filter(project_room__owner_organization=organization, title="Full-stack room task", status="done").exists()
     assert ProposalSection.objects.filter(volume__plan__organization=organization, content="Full-stack QA revision").exists()
     assert PricingCostItem.objects.filter(plan__organization=organization, name="Full-stack QA labor", labor_hours=2, labor_rate=50).exists()
-    print("Verified task completion, room creation, proposal revision and pricing item in PostgreSQL.")
+    from core.models import PublicInquiry
+    assert PublicInquiry.objects.filter(company="Isolated Release QA", purpose="access").exists()
+    print("Verified public inquiry, task completion, room creation, proposal revision and pricing item in PostgreSQL.")
 
 
 class ProviderFixture(BaseHTTPRequestHandler):

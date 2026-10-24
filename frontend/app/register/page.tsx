@@ -76,7 +76,7 @@ function RegisterForm() {
         <span><LockKeyhole size={16}/> Role-based workspace access</span>
       </div>
       <Link className="primary-button auth-link-button" href="/sign-in">Sign in</Link>
-      <p className="auth-switch">Need access? Ask your company owner or ForgeGov administrator for an invitation.</p>
+      <p className="auth-switch">Need company access? <Link href="/request-access">Submit an access request</Link>, or ask your company owner for an invitation.</p>
     </section></main>
   }
 

@@ -1,5 +1,6 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
+from .public_views import public_inquiry
 
 from .auth_views import (
     audit_logs,
@@ -215,6 +216,7 @@ urlpatterns = [
     path("settings/preferences/", user_preferences),
     path("auth/csrf/", csrf_token),
     path("auth/registration-config/", registration_config),
+    path("public/inquiries/", public_inquiry),
     path("auth/register/", register),
     path("auth/verify-email/", verify_email),
     path("auth/resend-verification/", resend_verification),

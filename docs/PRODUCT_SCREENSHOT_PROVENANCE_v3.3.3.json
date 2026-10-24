@@ -1,0 +1,28 @@
+{
+  "release": "3.3.3",
+  "capture": "Authenticated application with real isolated Django/SQLite persistence; no browser API fixtures",
+  "records": "Demonstration records, not live listings or customer evidence",
+  "generated_ai_answers": false,
+  "images": {
+    "capture.webp": {
+      "sha256": "59d65808a8804160de83a81732f4388ccc15f77c5a098535ac4e379be0c050c2",
+      "bytes": 89856
+    },
+    "market.webp": {
+      "sha256": "7be69a33ec6b220812cff158460439c2e113230b5f68cc739c20cefbc7cfcad9",
+      "bytes": 72140
+    },
+    "forgeai.webp": {
+      "sha256": "f43b2a643a0f81afa91f2c21ea2b72f4d17a0e09159e954c84ae1d6920f5256f",
+      "bytes": 96052
+    },
+    "discovery.webp": {
+      "sha256": "f4117780230be70b97e2da8be47f088f39576c8f1a44e73017d1602120185630",
+      "bytes": 88374
+    },
+    "rooms.webp": {
+      "sha256": "e29d08bd7368ab423b3da9638c631da78604ac0c2aa5fd36b8ad801a5e37d64e",
+      "bytes": 81780
+    }
+  }
+}

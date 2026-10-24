@@ -33,6 +33,24 @@ class Organization(TimeStampedModel):
         return self.name
 
 
+class PublicInquiry(TimeStampedModel):
+    """Explicitly submitted commercial/support inquiries, visible only to authorized staff."""
+
+    reference = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    name = models.CharField(max_length=120)
+    email = models.EmailField()
+    company = models.CharField(max_length=255)
+    purpose = models.CharField(max_length=20, choices=[("access", "Access and pricing"), ("support", "Product support")], default="access")
+    message = models.TextField(blank=True, max_length=2000)
+    status = models.CharField(max_length=20, choices=[("new", "New"), ("contacted", "Contacted"), ("resolved", "Resolved")], default="new")
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.company} — {self.get_purpose_display()}"
+
+
 class SubscriptionPlan(TimeStampedModel):
     """Provider-neutral commercial terms and server-owned access rules."""
 

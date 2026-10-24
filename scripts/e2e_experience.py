@@ -19,6 +19,14 @@ OUT.mkdir(parents=True, exist_ok=True)
 
 
 def run(page):
+    # Fresh public context -> CSRF-protected Django inquiry -> database.
+    page.goto(BASE + "/request-access")
+    page.get_by_label("Your name", exact=True).fill("Isolated Release QA")
+    page.get_by_label("Work email", exact=True).fill("release.qa@example.invalid")
+    page.get_by_label("Company", exact=True).fill("Isolated Release QA")
+    page.get_by_role("checkbox").check()
+    page.get_by_role("button", name="Submit access request", exact=True).click()
+    expect(page.get_by_role("heading", name="Request received.")).to_be_visible()
     page.goto(BASE + "/sign-in")
     page.get_by_label("Email", exact=True).fill(EMAIL)
     page.get_by_label("Password", exact=True).fill(PASSWORD)

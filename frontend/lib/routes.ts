@@ -6,6 +6,8 @@ const PUBLIC_ROUTE_PREFIXES = [
   "/verify-email",
   "/terms",
   "/privacy",
+  "/request-access",
+  "/support",
 ] as const;
 
 export function isPublicRoute(pathname: string) {
