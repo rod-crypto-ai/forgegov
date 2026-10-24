@@ -16,6 +16,8 @@ production screenshots.
 - Billing separates the plan description from its access metrics, aligns icons,
   keeps content inside card insets, and removes oversized empty measurement
   states. Exempt workspaces retain their existing payment restrictions.
+- Feedback remains available at the end of the page instead of floating over
+  card text and controls.
 - The prior audit's dashboard, feed, report, room, proposal, pricing, source-link,
   theme and error-state corrections are included. Next.js remains at 16.4.2.
 

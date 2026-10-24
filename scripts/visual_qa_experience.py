@@ -101,7 +101,8 @@ def settings_and_billing_layout(page, evidence_key, theme):
         page.get_by_text("Default Teams destination saved.", exact=True).wait_for()
         assert writes[-1]["default_team_id"] == "qa-team" and writes[-1]["default_channel_id"] == "qa-channel"
         if evidence_key:
-            page.locator(".connected-app-card").screenshot(path=str(OUT / f"{evidence_key}-{density}-microsoft.png"))
+            page.evaluate("window.scrollTo(0, 0)")
+            page.screenshot(path=str(OUT / f"{evidence_key}-{density}-microsoft.png"), full_page=True)
         page.goto(BASE_URL + "/billing", wait_until="networkidle")
         page.get_by_text("Grandfathered ForgeGov Access", exact=True).wait_for()
         insets = page.locator(".billing-summary-grid > article, .billing-provider").evaluate_all("""es=>es.map(e=>{
@@ -112,6 +113,7 @@ def settings_and_billing_layout(page, evidence_key, theme):
         assert all(x["padding"] >= 18 and x["inside"] for x in insets), insets
         assert page.get_by_role("button", name="Start 30-day trial", exact=True).count() == 0
         assert geometry(page)["overflow"] <= 2
+        assert page.locator(".beta-feedback-trigger").evaluate("e=>getComputedStyle(e).position") == "static"
         if evidence_key:
             page.screenshot(path=str(OUT / f"{evidence_key}-{density}-billing-exempt.png"), full_page=True)
 
