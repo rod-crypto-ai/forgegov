@@ -27,7 +27,7 @@ body { line-height: 1.5; }
 /* Full-bleed frames already give their header, rows, and controls an inset. */
 .data-panel:has(> .data-toolbar, > .workspace-section-header, > .capture-command-bar, > .market-table),
 html[data-density] .data-panel:has(> .data-toolbar, > .workspace-section-header, > .capture-command-bar, > .market-table) { padding: 0; }
-.data-panel.context-ai { padding: 0; }
+.data-panel.context-ai, .data-panel.settings-section, html[data-density] .data-panel.settings-section { padding: 0; }
 .data-panel > :first-child { margin-top: 0; }
 .data-panel > :last-child { margin-bottom: 0; }
 .panel-title-row, .panel-heading { align-items: flex-start; }
@@ -44,7 +44,7 @@ html[data-density] .data-panel:has(> .data-toolbar, > .workspace-section-header,
 :is(.feature-hero, .module-header, .page-header, .executive-head) > div:first-child { min-width: 0; }
 .head-actions { flex-wrap: wrap; flex-shrink: 0; }
 .head-actions .button { min-height: var(--control-height); height: auto; padding-block: 10px; white-space: nowrap; }
-.primary-button, .secondary-button, .toolbar-button { min-height: var(--control-height); line-height: 1.35; }
+.primary-button, .secondary-button, .toolbar-button { overflow-wrap: normal; word-break: normal; min-height: var(--control-height); line-height: 1.35; }
 .advanced-filter-grid { align-items: end; }
 .room-task-board > form { margin-bottom: 20px; }
 .room-task-card { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 10px; }
@@ -174,4 +174,22 @@ html[data-theme="dark"] :is(.pricing-form input, .pricing-form select, .pricing-
   .simple-row { flex-direction: column; gap: 8px; }
   .pagination-bar { position: static; flex-wrap: wrap; }
   .forge-content { padding-bottom: 88px; }
+}
+
+/* Settings frames own row insets; connected application cards remain inset. */
+.settings-content { display: grid; gap: 20px; align-content: start; }
+.settings-content > .settings-section { margin: 0; }
+.settings-section > .connected-app-card { margin: 20px 22px; }
+.settings-row > div, .settings-toggle > div, .connected-app-heading > div { min-width: 0; }
+.settings-row p, .settings-toggle p, .connected-app-heading p { overflow-wrap: break-word; }
+.connected-app-card .settings-footer { padding: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
+.connected-app-card .settings-footer > span { flex: 1 1 240px; line-height: 1.5; color: var(--muted); }
+.connected-app-card .settings-footer > button { flex: 0 0 auto; }
+@media (max-width: 760px) {
+  .settings-section > .connected-app-card { margin: 18px; }
+  .settings-row:not(.microsoft-default-row), .settings-toggle { flex-wrap: wrap; gap: 12px; }
+  .settings-row:not(.microsoft-default-row) > select { width: 100%; min-width: 0; }
+  .connected-app-heading { align-items: start; }
+  .connected-app-state { grid-column: 1 / -1; justify-self: start; }
+  .microsoft-destination-controls > button { width: 100%; }
 }

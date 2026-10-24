@@ -56,6 +56,66 @@ def geometry(page):
     }""")
 
 
+def settings_and_billing_layout(page, evidence_key, theme):
+    """Reproduce connected Microsoft controls and long exempt billing copy."""
+    from copy import deepcopy
+    from visual_qa_billing import SESSION, SUMMARY
+    page.route("**/api/auth/me/", lambda r: fulfill(r, SESSION))
+    connection = {"provider": "microsoft", "configured": True, "connected": True, "verified": True,
+                  "status": "connected", "account_email": "layout.qa@example.invalid", "scopes": [],
+                  "default_team_id": "qa-team", "default_channel_id": "qa-channel"}
+    page.route("**/api/integrations/microsoft/status/", lambda r: fulfill(r, connection))
+    page.route("**/api/integrations/microsoft/teams/", lambda r: fulfill(r, {"results": [{"id": "qa-team", "name": "Pursuit Management and Federal Capture Operations"}]}))
+    page.route("**/api/integrations/microsoft/channels/**", lambda r: fulfill(r, {"results": [{"id": "qa-channel", "name": "Pursuits and Cross-Company Capture Coordination"}]}))
+    page.route("**/api/auth/csrf/", lambda r: fulfill(r, {"csrfToken": "isolated-layout-qa"}))
+    writes = []
+    def save_destination(route):
+        writes.append(route.request.post_data_json)
+        fulfill(route, connection)
+    page.route("**/api/integrations/microsoft/defaults/", save_destination)
+    summary = deepcopy(SUMMARY)
+    summary["subscription"].update(grandfathered=True, access_state="grandfathered")
+    summary["billing"].update(checkout_available=False, portal_available=False, checkout_enabled=False, portal_enabled=False)
+    page.route("**/api/billing/summary/", lambda r: fulfill(r, summary))
+    for density in ("comfortable", "compact"):
+        page.route("**/api/settings/preferences/**", lambda r, density=density: fulfill(r, {"theme": theme, "density": density}))
+        page.goto(BASE_URL + "/settings#integrations", wait_until="networkidle")
+        save = page.get_by_role("button", name="Save destination", exact=True)
+        save.wait_for()
+        page.get_by_label("Default Microsoft Team", exact=True).select_option("qa-team")
+        page.get_by_label("Default Microsoft channel", exact=True).select_option("qa-channel")
+        assert save.is_enabled()
+        metrics = page.locator(".microsoft-destination-controls").evaluate("""e=>{
+          const b=e.querySelector('button'), r=b.getBoundingClientRect(), s=getComputedStyle(b);
+          const range=document.createRange(); range.selectNodeContents(b);
+          return {buttonLines:range.getClientRects().length, buttonHeight:r.height,
+            buttonWidth:r.width, wordWrap:s.overflowWrap,
+            selects:[...e.querySelectorAll('select')].map(x=>({width:x.getBoundingClientRect().width,height:x.getBoundingClientRect().height})),
+            controlsTop:e.getBoundingClientRect().top, descriptionBottom:e.parentElement.firstElementChild.getBoundingClientRect().bottom};
+        }""")
+        assert metrics["buttonLines"] == 1 and metrics["wordWrap"] != "anywhere", metrics
+        assert metrics["buttonHeight"] >= 42 and all(x["height"] >= 42 and x["width"] >= 130 for x in metrics["selects"]), metrics
+        assert metrics["controlsTop"] - metrics["descriptionBottom"] >= 12, metrics
+        assert geometry(page)["overflow"] <= 2
+        save.click()
+        page.get_by_text("Default Teams destination saved.", exact=True).wait_for()
+        assert writes[-1]["default_team_id"] == "qa-team" and writes[-1]["default_channel_id"] == "qa-channel"
+        if evidence_key:
+            page.locator(".connected-app-card").screenshot(path=str(OUT / f"{evidence_key}-{density}-microsoft.png"))
+        page.goto(BASE_URL + "/billing", wait_until="networkidle")
+        page.get_by_text("Grandfathered ForgeGov Access", exact=True).wait_for()
+        insets = page.locator(".billing-summary-grid > article, .billing-provider").evaluate_all("""es=>es.map(e=>{
+          const s=getComputedStyle(e), r=e.getBoundingClientRect();
+          return {padding:Math.min(parseFloat(s.paddingTop),parseFloat(s.paddingRight),parseFloat(s.paddingBottom),parseFloat(s.paddingLeft)),
+            inside:[...e.children].every(c=>{const x=c.getBoundingClientRect();return x.left>=r.left+12 && x.right<=r.right-12 && x.top>=r.top+12 && x.bottom<=r.bottom-12})};
+        })""")
+        assert all(x["padding"] >= 18 and x["inside"] for x in insets), insets
+        assert page.get_by_role("button", name="Start 30-day trial", exact=True).count() == 0
+        assert geometry(page)["overflow"] <= 2
+        if evidence_key:
+            page.screenshot(path=str(OUT / f"{evidence_key}-{density}-billing-exempt.png"), full_page=True)
+
+
 def capture_workflows(page, evidence_key):
     """Check actual rendered mutations against disposable HTTP fixtures."""
     tasks = []
@@ -435,6 +495,7 @@ def run_case(browser, engine, name, width, height, theme):
         if name in ("phone", "desktop"):
             proposal_editing(page, evidence_key)
             room_detail_failures(page, evidence_key)
+        settings_and_billing_layout(page, evidence_key, theme)
         assert not errors, errors
         return {"passed": True, "dashboard": dashboard, "feed": metrics}
     except Exception as error:
