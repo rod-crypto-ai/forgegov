@@ -126,6 +126,7 @@ def settings_and_billing_layout(page, evidence_key, theme):
         assert all(x["padding"] >= 18 and x["inside"] for x in insets), insets
         assert page.locator(".billing-provider > div:first-child > svg").evaluate("e=>e.getBoundingClientRect().width") >= 20
         assert all(page.locator(".billing-section .panel-title-row").evaluate_all("es=>es.map(e=>e.querySelector('svg').getBoundingClientRect().top<=e.getBoundingClientRect().top+4)"))
+        assert page.locator(".billing-hero .source-health-pill > span").evaluate("e=>e.getBoundingClientRect().width") >= 9
         assert page.get_by_role("button", name="Start 30-day trial", exact=True).count() == 0
         assert geometry(page)["overflow"] <= 2
         assert page.locator(".beta-feedback-trigger").evaluate("e=>getComputedStyle(e).position") == "static"
