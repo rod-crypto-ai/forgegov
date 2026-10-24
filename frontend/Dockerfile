@@ -15,7 +15,9 @@ FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api
+ARG API_PROXY_TARGET
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+ENV API_PROXY_TARGET=$API_PROXY_TARGET
 RUN npm run build
 
 FROM node:22-bookworm-slim AS runner

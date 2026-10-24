@@ -1,0 +1,277 @@
+# Isolated, disposable staging only. Never apply the production render.yaml for this environment.
+# Select this file explicitly in a NEW Blueprint on the audit branch.
+# Free database expires; keep only synthetic accounts and public-source test records.
+databases:
+- name: forgegov-staging-db
+  databaseName: forgegov_staging
+  user: forgegov_staging
+  region: ohio
+  plan: free
+  postgresMajorVersion: '18'
+  ipAllowList: []
+services:
+- type: keyvalue
+  name: forgegov-staging-redis
+  ipAllowList: []
+  maxmemoryPolicy: noeviction
+  region: ohio
+  plan: free
+- type: pserv
+  name: forgegov-staging-searxng
+  runtime: docker
+  rootDir: searxng
+  dockerfilePath: ./Dockerfile
+  plan: 0.5c-512mb
+  envVars:
+  - key: SEARXNG_SECRET
+    generateValue: true
+  - key: SEARXNG_LIMITER
+    value: 'false'
+  - key: SEARXNG_PUBLIC_INSTANCE
+    value: 'false'
+  region: ohio
+  branch: stabilization/v3.3.0-experience-audit
+  autoDeployTrigger: 'off'
+- type: web
+  name: forgegov-staging-api
+  runtime: docker
+  rootDir: backend
+  dockerfilePath: ./Dockerfile
+  healthCheckPath: /api/health/
+  maxShutdownDelaySeconds: 60
+  envVars:
+  - key: SERVICE_ROLE
+    value: web
+  - key: RUN_MIGRATIONS
+    value: 'true'
+  - key: COLLECTSTATIC
+    value: 'true'
+  - key: MIGRATION_MAX_ATTEMPTS
+    value: '12'
+  - key: DATABASE_URL
+    fromDatabase:
+      name: forgegov-staging-db
+      property: connectionString
+  - key: REDIS_URL
+    fromService:
+      type: keyvalue
+      name: forgegov-staging-redis
+      property: connectionString
+  - key: DJANGO_SECRET_KEY
+    generateValue: true
+  - key: DJANGO_DEBUG
+    value: 'false'
+  - key: FRONTEND_URL
+    fromService:
+      type: web
+      name: forgegov-staging
+      envVarKey: RENDER_EXTERNAL_URL
+  - key: CORS_ALLOWED_ORIGINS
+    fromService:
+      type: web
+      name: forgegov-staging
+      envVarKey: RENDER_EXTERNAL_URL
+  - key: CSRF_TRUSTED_ORIGINS
+    fromService:
+      type: web
+      name: forgegov-staging
+      envVarKey: RENDER_EXTERNAL_URL
+  - key: PUBLIC_REGISTRATION_ENABLED
+    value: 'false'
+  - key: REGISTRATION_MODE
+    value: closed
+  - key: EMAIL_BACKEND
+    value: django.core.mail.backends.dummy.EmailBackend
+  - key: BILLING_PROVIDER
+    value: disabled
+  - key: BILLING_CHECKOUT_ENABLED
+    value: 'false'
+  - key: BILLING_PORTAL_ENABLED
+    value: 'false'
+  - key: STRIPE_SECRET_KEY
+    sync: false
+  - key: STRIPE_WEBHOOK_SECRET
+    sync: false
+  - key: STRIPE_PRICE_ID
+    value: price_1USxAFDbYez1CZ2uKhF6zPQw
+  - key: STRIPE_TRIAL_PAYMENT_METHOD_MODE
+    value: required
+  - key: BILLING_GRACE_DAYS
+    value: '0'
+  - key: SECURE_SSL_REDIRECT
+    value: 'true'
+  - key: SECURE_HSTS_SECONDS
+    value: '31536000'
+  - key: SAM_GOV_API_KEY
+    sync: false
+  - key: OPENAI_API_KEY
+    sync: false
+  - key: ALERTS_ENABLED
+    value: 'false'
+  - key: NOTIFICATION_DIGESTS_ENABLED
+    value: 'false'
+  - key: DAILY_DIGEST_UTC_HOUR
+    value: '13'
+  - key: WEEKLY_DIGEST_DAY
+    value: mon
+  - key: WEEKLY_DIGEST_UTC_HOUR
+    value: '13'
+  - key: AI_PROVIDER
+    value: openai
+  - key: SEARXNG_HOSTPORT
+    fromService:
+      type: pserv
+      name: forgegov-staging-searxng
+      property: hostport
+  - key: AI_WEB_SEARCH_ENABLED
+    value: 'true'
+  - key: LIVE_WEB_CACHE_SECONDS
+    value: '600'
+  - key: AUTH_COOKIE_SAMESITE
+    value: Lax
+  region: ohio
+  plan: free
+  branch: stabilization/v3.3.0-experience-audit
+  autoDeployTrigger: 'off'
+- type: worker
+  name: forgegov-staging-worker
+  runtime: docker
+  rootDir: backend
+  dockerfilePath: ./Dockerfile
+  maxShutdownDelaySeconds: 120
+  envVars:
+  - key: SERVICE_ROLE
+    value: worker
+  - key: RUN_MIGRATIONS
+    value: 'false'
+  - key: COLLECTSTATIC
+    value: 'false'
+  - key: DATABASE_URL
+    fromDatabase:
+      name: forgegov-staging-db
+      property: connectionString
+  - key: REDIS_URL
+    fromService:
+      type: keyvalue
+      name: forgegov-staging-redis
+      property: connectionString
+  - key: DJANGO_SECRET_KEY
+    fromService:
+      type: web
+      name: forgegov-staging-api
+      envVarKey: DJANGO_SECRET_KEY
+  - key: DJANGO_DEBUG
+    value: 'false'
+  - key: CELERY_WORKER_CONCURRENCY
+    value: '1'
+  - key: SAM_GOV_API_KEY
+    fromService:
+      type: web
+      name: forgegov-staging-api
+      envVarKey: SAM_GOV_API_KEY
+  - key: OPENAI_API_KEY
+    fromService:
+      type: web
+      name: forgegov-staging-api
+      envVarKey: OPENAI_API_KEY
+  - key: SEARXNG_HOSTPORT
+    fromService:
+      type: pserv
+      name: forgegov-staging-searxng
+      property: hostport
+  - key: AI_WEB_SEARCH_ENABLED
+    value: 'true'
+  - key: LIVE_WEB_CACHE_SECONDS
+    value: '600'
+  - key: EMAIL_BACKEND
+    value: django.core.mail.backends.dummy.EmailBackend
+  - key: ALERTS_ENABLED
+    value: 'false'
+  region: ohio
+  plan: 0.5c-512mb
+  branch: stabilization/v3.3.0-experience-audit
+  autoDeployTrigger: 'off'
+- type: worker
+  name: forgegov-staging-beat
+  runtime: docker
+  rootDir: backend
+  dockerfilePath: ./Dockerfile
+  maxShutdownDelaySeconds: 60
+  envVars:
+  - key: SERVICE_ROLE
+    value: beat
+  - key: RUN_MIGRATIONS
+    value: 'false'
+  - key: COLLECTSTATIC
+    value: 'false'
+  - key: DATABASE_URL
+    fromDatabase:
+      name: forgegov-staging-db
+      property: connectionString
+  - key: REDIS_URL
+    fromService:
+      type: keyvalue
+      name: forgegov-staging-redis
+      property: connectionString
+  - key: DJANGO_SECRET_KEY
+    fromService:
+      type: web
+      name: forgegov-staging-api
+      envVarKey: DJANGO_SECRET_KEY
+  - key: DJANGO_DEBUG
+    value: 'false'
+  - key: SAM_GOV_API_KEY
+    fromService:
+      type: web
+      name: forgegov-staging-api
+      envVarKey: SAM_GOV_API_KEY
+  - key: SAM_SYNC_ENABLED
+    value: 'false'
+  - key: SAM_SYNC_INTERVAL_HOURS
+    value: '6'
+  - key: SAM_SYNC_OVERLAP_DAYS
+    value: '2'
+  - key: SAM_DAILY_SYNC_LIMIT
+    value: '10000'
+  - key: USASPENDING_SYNC_ENABLED
+    value: 'false'
+  - key: USASPENDING_SYNC_INTERVAL_HOURS
+    value: '6'
+  - key: USASPENDING_SYNC_OVERLAP_DAYS
+    value: '7'
+  - key: USASPENDING_SYNC_PAGES
+    value: '50'
+  - key: USASPENDING_SYNC_PAGE_SIZE
+    value: '100'
+  - key: ALERTS_ENABLED
+    value: 'false'
+  - key: NOTIFICATION_DIGESTS_ENABLED
+    value: 'false'
+  - key: DAILY_DIGEST_UTC_HOUR
+    value: '13'
+  - key: WEEKLY_DIGEST_DAY
+    value: mon
+  - key: WEEKLY_DIGEST_UTC_HOUR
+    value: '13'
+  region: ohio
+  plan: 0.5c-512mb
+  branch: stabilization/v3.3.0-experience-audit
+  autoDeployTrigger: 'off'
+- type: web
+  name: forgegov-staging
+  runtime: docker
+  rootDir: frontend
+  dockerfilePath: ./Dockerfile
+  dockerCommand: node server.js
+  envVars:
+  - key: NEXT_PUBLIC_API_BASE_URL
+    value: /api
+  - key: API_PROXY_TARGET
+    fromService:
+      type: web
+      name: forgegov-staging-api
+      envVarKey: RENDER_EXTERNAL_URL
+  region: ohio
+  plan: free
+  branch: stabilization/v3.3.0-experience-audit
+  autoDeployTrigger: 'off'

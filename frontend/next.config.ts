@@ -1,7 +1,22 @@
 import type { NextConfig } from "next";
 
+// Staging can keep authenticated API traffic on the frontend origin without
+// relaxing SameSite cookies for unrelated onrender.com subdomains.
+const apiProxyTarget = process.env.API_PROXY_TARGET?.replace(/\/$/, "");
+if (apiProxyTarget) {
+  const target = new URL(apiProxyTarget);
+  if (target.protocol !== "https:" || target.username || target.password || target.pathname !== "/" || target.search || target.hash) {
+    throw new Error("API_PROXY_TARGET must be an HTTPS origin without credentials, path, query, or fragment.");
+  }
+}
+
 const nextConfig: NextConfig = {
   output: "standalone",
+  async rewrites() {
+    return apiProxyTarget
+      ? [{ source: "/api/:path*", destination: `${apiProxyTarget}/api/:path*` }]
+      : [];
+  },
   async headers() {
     return [{
       source: "/(.*)",
