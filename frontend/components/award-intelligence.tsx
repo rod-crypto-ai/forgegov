@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpRight, Building2, Database, Download, Eye, RefreshCw, Search, Users, X } from "lucide-react";
 import Link from "next/link";
-import { API_BASE_URL, apiGet } from "@/lib/api";
+import { apiGet } from "@/lib/api";
 
 type UsaAward = {
   "Award ID"?: string;
@@ -83,11 +83,11 @@ export function AwardIntelligence() {
     <div className="intelligence-page">
       <section className="intel-hero">
         <div>
-          <span className="eyebrow">LIVE FEDERAL AWARD INTELLIGENCE</span>
+          <span className="eyebrow">FEDERAL AWARD INTELLIGENCE</span>
           <h1>USAspending Awards</h1>
-          <p>Search live federal contract awards and review agency and vendor intelligence from official records.</p>
+          <p>Research historical federal contract awards from the official USAspending API. Award dates describe the contract history, not when ForgeGov retrieved it.</p>
         </div>
-        <div className="live-pill"><span /> Live public API</div>
+        <div className="live-pill"><span /> Official award history</div>
       </section>
 
       <section className="search-console">
@@ -130,7 +130,7 @@ export function AwardIntelligence() {
           </tbody></table></div>}
       </section>
       {data && <div className="pagination-bar"><button className="secondary-button" disabled={loading || page <= 1} onClick={() => search(page - 1)}>Previous</button><span>Page <strong>{page}</strong>{data.page_metadata?.total ? ` · ${Number(data.page_metadata.total).toLocaleString()} total awards` : ""}</span><button className="secondary-button" disabled={loading || !data.page_metadata?.hasNext} onClick={() => search(page + 1)}>Next</button></div>}
-      <p className="source-note">Live endpoint: <code>{API_BASE_URL}/live/usaspending/awards/</code></p>
+      <p className="source-note">Source: USAspending.gov · Historical federal award records.</p>
       {selected && <div className="document-viewer-backdrop" role="dialog" aria-modal="true" aria-label={`Award intelligence for ${String(selected["Award ID"] || "federal award")}`}><div className="document-viewer"><header><div><Database/><strong>{selected["Award ID"] || "Federal award"}</strong></div><button className="icon-button" aria-label="Close award intelligence" onClick={()=>setSelected(null)}><X size={19}/></button></header><div className="document-viewer-empty"><div><Database size={44}/><h2>{selected["Description"] || "Federal contract award"}</h2><div className="intelligence-drawer-grid"><div><span>Recipient</span><strong>{selected["Recipient Name"] || "Unknown"}</strong></div><div><span>Awarding agency</span><strong>{selected["Awarding Agency"] || "Unknown"}</strong></div><div><span>Obligated</span><strong>{money.format(Number(selected["Award Amount"] ?? 0))}</strong></div><div><span>Period</span><strong>{selected["Start Date"] || "—"} to {selected["End Date"] || "—"}</strong></div></div><div className="vehicle-card-actions">{selected["Recipient Name"]&&<Link className="primary-button" href={`/participants/vendors/profile?name=${encodeURIComponent(selected["Recipient Name"])}`}>Company profile</Link>}{(selected.generated_internal_id||selected.generated_unique_award_id)&&<a className="secondary-button" href={`https://www.usaspending.gov/award/${selected.generated_internal_id||selected.generated_unique_award_id}/`} target="_blank" rel="noreferrer">Official award <ArrowUpRight size={14}/></a>}</div></div></div></div></div>}
     </div>
   );

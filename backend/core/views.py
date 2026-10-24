@@ -1,5 +1,6 @@
 from datetime import timedelta
 from decimal import Decimal
+from urllib.parse import quote
 from django.conf import settings
 from django.core.paginator import Paginator
 from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
@@ -170,6 +171,7 @@ from .market_intelligence import (
     vehicle_analysis,
     vendor_dossier,
 )
+from .market_reports import market_report
 from .capture_copilot import COPILOT_MODES, build_capture_copilot_brief, run_capture_copilot
 from .proposal_workspace import build_proposal_workspace
 from .proposal_execution import proposal_execution_payload, ensure_proposal_execution, update_plan, update_requirement, update_review, update_finding
@@ -1480,13 +1482,26 @@ def live_sba_subnet_search(request):
         return Response({"results": [], "status": "unavailable", "reachable": False, "warning": str(exc), "page": 0, "has_next": False})
 
 
+def _opportunity_workspace_href(opportunity):
+    source_id = str(opportunity.source_id or "")
+    if opportunity.source == "grants.gov" or source_id.startswith("grants.gov:"):
+        grant_id = source_id.removeprefix("grants.gov:")
+        return f"/opportunities/federal-grants/{quote(grant_id, safe='')}" if grant_id else "/opportunities/federal-grants"
+    if opportunity.source == "sba-subnet" or source_id.startswith("sba-subnet:"):
+        return f"/opportunities/subcontracting/{quote(source_id, safe='')}" if source_id else "/opportunities/subcontracting"
+    return f"/opportunities/federal-contracts/{quote(source_id, safe='')}" if source_id else "/opportunities/federal-contracts"
+
+
 @api_view(["GET"])
 def global_search(request):
     """Unified organization-aware search across ForgeGov intelligence and workspaces."""
     query = str(request.query_params.get("q") or "").strip()
     if len(query) < 2:
         return Response({"query": query, "results": [], "groups": {}})
-    limit = min(max(int(request.query_params.get("limit", 10)), 1), 30)
+    try:
+        limit = min(max(int(request.query_params.get("limit", 10)), 1), 30)
+    except (TypeError, ValueError):
+        return Response({"detail": "limit must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
     quick = _truthy(request.query_params.get("quick"))
     organization = _request_organization(request)
     results = []
@@ -1507,10 +1522,9 @@ def global_search(request):
         opportunity_lookup |= Q(description__icontains=query)
     for item in Opportunity.objects.filter(opportunity_lookup).order_by("-posted_date")[:limit]:
         if item.source == "grants.gov" or str(item.source_id).startswith("grants.gov:"):
-            grant_id = str(item.source_id).replace("grants.gov:", "", 1)
-            add("grant", item.source_id or item.id, item.title, item.solicitation_number or item.agency, f"/opportunities/federal-grants/{grant_id}" if grant_id else "/opportunities/federal-grants", group="Opportunities")
+            add("grant", item.source_id or item.id, item.title, item.solicitation_number or item.agency, _opportunity_workspace_href(item), group="Opportunities")
         else:
-            add("opportunity", item.source_id or item.id, item.title, item.solicitation_number or item.agency, f"/opportunities/federal-contracts/{item.source_id}" if item.source_id else "/opportunities/federal-contracts", group="Opportunities")
+            add("opportunity", item.source_id or item.id, item.title, item.solicitation_number or item.agency, _opportunity_workspace_href(item), group="Opportunities")
 
     for item in PipelineItem.objects.filter(organization=organization).filter(
         Q(opportunity__title__icontains=query) | Q(opportunity__solicitation_number__icontains=query) | Q(notes__icontains=query) | Q(next_action__icontains=query)
@@ -1530,7 +1544,7 @@ def global_search(request):
     if not quick:
         document_lookup |= Q(chunks__text__icontains=query)
     for item in OpportunityDocument.objects.filter(organization=organization).filter(document_lookup).distinct()[:limit]:
-        add("document", item.id, item.file_name, item.opportunity.title, f"/opportunities/federal-contracts/{item.opportunity.source_id}", group="Documents")
+        add("document", item.id, item.file_name, item.opportunity.title, _opportunity_workspace_href(item.opportunity), group="Documents")
 
     for item in OrganizationProfile.objects.filter(is_public=True).filter(
         Q(organization__name__icontains=query) | Q(tagline__icontains=query) | Q(description__icontains=query) | Q(capabilities__icontains=query)
@@ -1882,6 +1896,25 @@ def market_map_view(request):
     if category_type not in {"naics", "psc"}:
         return Response({"detail": "type must be naics or psc."}, status=status.HTTP_400_BAD_REQUEST)
     return Response(market_map(category_type=category_type, code=str(request.query_params.get("code") or "")[:12]))
+
+
+@api_view(["GET"])
+def market_report_view(request):
+    try:
+        _request_organization(request)
+    except Organization.DoesNotExist:
+        return Response({"detail": "A valid workspace membership is required."}, status=status.HTTP_403_FORBIDDEN)
+    kind = str(request.query_params.get("kind") or "funding")
+    if kind not in {"funding", "new-entrants"}:
+        return Response({"detail": "kind must be funding or new-entrants."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        days = int(request.query_params.get("days", "90"))
+        page = int(request.query_params.get("page", "1"))
+        if not 1 <= days <= 3650 or not 1 <= page <= 10000:
+            raise ValueError
+    except (TypeError, ValueError):
+        return Response({"detail": "days must be 1–3650 and page must be 1–10000."}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(market_report(kind=kind, days=days, page=page, agency=str(request.query_params.get("agency") or "").strip()[:255], naics=str(request.query_params.get("naics") or "").strip()[:12]))
 
 
 @api_view(["GET"])

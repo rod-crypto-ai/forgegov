@@ -407,9 +407,11 @@ def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None =
     amount = _decimal(_usa_value(record, "Award Amount", "generated_current_total_value", "obligated_amount", default=0))
     potential = _decimal(_usa_value(record, "Potential Award Amount", "generated_potential_total_value", default=0))
     description = _safe_text(_usa_value(record, "Description", "description"))
-    naics = _safe_text(_usa_value(record, "NAICS Code", "naics_code"), max_length=12)
-    psc = _safe_text(_usa_value(record, "PSC Code", "product_or_service_code"), max_length=12)
-    pop = _safe_text(_usa_value(record, "Place of Performance", "place_of_performance"), max_length=500)
+    naics_value = record.get("NAICS")
+    psc_value = record.get("PSC")
+    naics = _safe_text((naics_value.get("code") if isinstance(naics_value, dict) else naics_value) or _usa_value(record, "NAICS Code", "naics_code"), max_length=12)
+    psc = _safe_text((psc_value.get("code") if isinstance(psc_value, dict) else psc_value) or _usa_value(record, "PSC Code", "product_or_service_code"), max_length=12)
+    pop = _safe_text(_usa_value(record, "Place of Performance", "place_of_performance", "Place of Performance State Code"), max_length=500)
 
     # Re-key records stored while USAspending omitted its generated identifier.
     # This preserves the existing row and its relationships instead of creating
@@ -427,7 +429,7 @@ def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None =
     incoming_modified = _grant_date(
         _usa_value(record, "last_modified_date", "Last Modified Date", "last_modified", "source_updated_at")
     )
-    existing = Award.objects.filter(source_id=source_id).only("source_updated_at").first()
+    existing = Award.objects.filter(source_id=source_id).only("source_updated_at", "naics_code", "psc_code", "place_of_performance").first()
     if (
         existing and incoming_modified and existing.source_updated_at
         and incoming_modified < existing.source_updated_at
@@ -444,7 +446,7 @@ def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None =
         "set_aside_code": _safe_text(_usa_value(record, "set_aside_code", "Set Aside"), max_length=40),
         "jurisdiction_level": "federal",
         "jurisdiction_code": "US",
-        "source_updated_at": incoming_modified,
+        "source_updated_at": incoming_modified or (existing.source_updated_at if existing else None),
         "award_type": award_type or Award.AwardType.CONTRACT,
         "description": description,
         "recipient_name": recipient,
@@ -455,9 +457,9 @@ def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None =
         "potential_amount": potential,
         "start_date": _usa_date(_usa_value(record, "Start Date", "period_of_performance_start_date")),
         "end_date": _usa_date(_usa_value(record, "End Date", "period_of_performance_current_end_date")),
-        "naics_code": naics,
-        "psc_code": psc,
-        "place_of_performance": pop,
+        "naics_code": naics or (existing.naics_code if existing else ""),
+        "psc_code": psc or (existing.psc_code if existing else ""),
+        "place_of_performance": pop or (existing.place_of_performance if existing else ""),
         "source_url": f"https://www.usaspending.gov/award/{source_id}/",
         "raw_data": record,
     }
@@ -529,11 +531,13 @@ def search_usaspending_awards(
         "fields": [
             "Award ID", "Recipient Name", "Recipient UEI", "Award Amount", "Potential Award Amount", "Total Outlays", "Description",
             "Start Date", "End Date", "Awarding Agency", "Funding Agency", "Awarding Sub Agency", "Funding Sub Agency",
-            "Contract Award Type", "NAICS Code", "PSC Code", "Place of Performance", "generated_internal_id",
+            "Contract Award Type", "NAICS", "PSC", "Last Modified Date", "Place of Performance State Code", "generated_internal_id",
         ],
         "page": max(1, page),
         "limit": max(1, min(limit, 100)),
         "subawards": False,
+        "sort": "Last Modified Date",
+        "order": "desc",
     }
     url = f"{settings.USASPENDING_BASE_URL.rstrip('/')}/api/v2/search/spending_by_award/"
     try:

@@ -39,3 +39,4 @@ backups/
 .venv-visual-qa/
 artifacts/visual-qa/
 artifacts/visual-qa-production/
+artifacts/fullstack-qa/

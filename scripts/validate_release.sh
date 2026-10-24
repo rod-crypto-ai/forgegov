@@ -2,23 +2,23 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-EXPECTED_VERSION="3.3.0"
+EXPECTED_VERSION="3.3.1"
 
 echo "[1/25] Source + release identity"
 python3 -m compileall -q backend
 python3 - <<'PY2'
 import json, pathlib
 root=pathlib.Path('.')
-assert (root/'VERSION').read_text().strip() == '3.3.0'
+assert (root/'VERSION').read_text().strip() == '3.3.1'
 package=json.loads((root/'frontend/package.json').read_text())
-assert package['version'] == '3.3.0'
-assert package['dependencies']['next'] == '16.4.0'
-assert 'VERSION = "3.3.0"' in (root/'backend/core/version.py').read_text()
+assert package['version'] == '3.3.1'
+assert package['dependencies']['next'] == '16.4.2'
+assert 'VERSION = "3.3.1"' in (root/'backend/core/version.py').read_text()
 lock=json.loads((root/'frontend/package-lock.json').read_text())
-assert lock['packages']['']['version'] == '3.3.0', 'frontend package-lock root version is not 3.3.0'
-assert lock['packages']['']['dependencies']['next'] == '16.4.0', 'secure Next.js lockfile baseline is missing'
-assert lock['packages']['node_modules/next']['version'] == '16.4.0', 'installed Next.js lock entry is not the validated secure baseline'
-print('Release identity: 3.3.0')
+assert lock['packages']['']['version'] == '3.3.1', 'frontend package-lock root version is not 3.3.1'
+assert lock['packages']['']['dependencies']['next'] == '16.4.2', 'secure Next.js lockfile baseline is missing'
+assert lock['packages']['node_modules/next']['version'] == '16.4.2', 'installed Next.js lock entry is not the validated secure baseline'
+print('Release identity: 3.3.1')
 PY2
 
 echo "[2/25] Release source + production architecture audit"
@@ -91,7 +91,7 @@ docker compose exec backend python manage.py test core.test_v326_forgeai_platfor
 echo "[17g/25] v3.2.6 subscription-readiness stabilization tests"
 docker compose exec backend python manage.py test core.test_v326_subscription_readiness --verbosity 2
 
-echo "[17h/25] v3.3.0 commercial subscription foundation tests"
+echo "[17h/25] v3.3.1 commercial subscription foundation tests"
 docker compose exec backend python manage.py test core.test_v330_commercial_readiness --verbosity 2
 
 echo "[18/25] Live Web runtime connectivity"
@@ -152,4 +152,4 @@ echo "[25/25] Health + readiness + container status"
 EXPECTED_VERSION="$EXPECTED_VERSION" ./scripts/release_smoke.sh
 docker compose ps
 
-echo "ForgeGov v3.3.0 validation completed successfully."
+echo "ForgeGov v3.3.1 validation completed successfully."

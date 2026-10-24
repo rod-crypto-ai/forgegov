@@ -39,5 +39,5 @@ export default function DynamicFeaturePage() {
   if (pathname.startsWith("/opportunities/")) {
     return <Suspense fallback={<div className="table-state"><strong>Loading opportunity search…</strong></div>}><OpportunityExplorer mode={pathname.split("/").at(-1) as OpportunityMode} /></Suspense>;
   }
-  return <WorkspacePage feature={feature} />;
+  return <WorkspacePage key={pathname} feature={feature} />;
 }

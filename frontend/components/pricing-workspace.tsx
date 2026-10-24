@@ -168,7 +168,7 @@ export function PricingWorkspace({noticeId}:{noticeId:string}) {
 
   return <section className="pricing-shell">
     <header className="pricing-hero">
-      <div><span className="eyebrow">V3.0 PRICING & ECONOMICS</span><h2>Pricing Workspace</h2><p>Build auditable delivery cost, indirects, profit, CLIN pricing, and bid scenarios. ForgeGov calculates the math; AI can explain it later.</p></div>
+      <div><span className="eyebrow">PRICING & ECONOMICS</span><h2>Pricing Workspace</h2><p>Build auditable delivery cost, indirects, profit, CLIN pricing, and bid scenarios. Review the source and assumptions behind each cost before approving a bid.</p></div>
       <div className="pricing-hero-actions">
         <span className={`pricing-status ${data.plan.status}`}>{data.plan.status.replaceAll("_"," ")}</span>
         <span>Revision {data.plan.revision}</span>
