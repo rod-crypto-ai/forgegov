@@ -15,7 +15,7 @@ services:
   ipAllowList: []
   maxmemoryPolicy: noeviction
   region: ohio
-  plan: free
+  plan: 256mb
 - type: pserv
   name: forgegov-staging-searxng
   runtime: docker

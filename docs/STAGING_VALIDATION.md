@@ -17,6 +17,11 @@ associate staging with existing production services.
 - Application autodeploys are disabled. Review future Blueprint syncs separately.
 - Free web services sleep and have usage limits. The free database expires;
   this environment is disposable and is not a production recovery target.
+- The workspace already uses its single free Key Value instance. Staging needs
+  a separate `256mb` managed queue; never reuse the production queue.
+- Disable Blueprint Auto Sync in its Dashboard settings so repository changes
+  require a deliberate infrastructure review before application. Service-level
+  `autoDeployTrigger: off` alone does not disable Blueprint sync.
 - Review Render's quoted compute charges before deploying. Provider usage and
   hosting extras must be considered separately.
 
