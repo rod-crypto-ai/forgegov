@@ -186,3 +186,30 @@ jobs:
         run: |
           docker rm -f forgegov-release-frontend || true
           docker compose down -v
+
+  release-tags:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [backend, frontend, responsive-release-qa, docker-release-qa]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Preserve rollback and validated v3.3.1 release tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat VERSION)" = "3.3.1" || exit 0
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          baseline=669fac6274b1ff9b6bc3b2b9c248e0fcecc56e7c
+          if ! git show-ref --verify --quiet refs/tags/rollback/pre-v3.3.1; then
+            git tag -a rollback/pre-v3.3.1 "$baseline" -m 'Production rollback point before ForgeGov v3.3.1'
+            git push origin refs/tags/rollback/pre-v3.3.1
+          fi
+          if ! git show-ref --verify --quiet refs/tags/v3.3.1; then
+            git tag -a v3.3.1 "$GITHUB_SHA" -m 'ForgeGov v3.3.1: validated layout and workflow corrections'
+            git push origin refs/tags/v3.3.1
+          fi

@@ -63,7 +63,7 @@ def settings_and_billing_layout(page, evidence_key, theme):
     page.route("**/api/auth/me/", lambda r: fulfill(r, SESSION))
     connection = {"provider": "microsoft", "configured": True, "connected": True, "verified": True,
                   "status": "connected", "account_email": "layout.qa@example.invalid", "scopes": [],
-                  "default_team_id": "qa-team", "default_channel_id": "qa-channel"}
+                  "default_team_id": "", "default_channel_id": ""}
     page.route("**/api/integrations/microsoft/status/", lambda r: fulfill(r, connection))
     page.route("**/api/integrations/microsoft/teams/", lambda r: fulfill(r, {"results": [{"id": "qa-team", "name": "Pursuit Management and Federal Capture Operations"}]}))
     page.route("**/api/integrations/microsoft/channels/**", lambda r: fulfill(r, {"results": [{"id": "qa-channel", "name": "Pursuits and Cross-Company Capture Coordination"}]}))
@@ -78,7 +78,7 @@ def settings_and_billing_layout(page, evidence_key, theme):
     summary["billing"].update(checkout_available=False, portal_available=False, checkout_enabled=False, portal_enabled=False)
     page.route("**/api/billing/summary/", lambda r: fulfill(r, summary))
     for density in ("comfortable", "compact"):
-        page.route("**/api/settings/preferences/**", lambda r, density=density: fulfill(r, {"theme": theme, "density": density}))
+        page.route("**/api/settings/preferences/**", lambda r, request=None, *, density=density: fulfill(r, {"theme": theme, "density": density}))
         page.goto(BASE_URL + "/settings#integrations", wait_until="networkidle")
         save = page.get_by_role("button", name="Save destination", exact=True)
         save.wait_for()
