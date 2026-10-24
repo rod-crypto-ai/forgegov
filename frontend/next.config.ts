@@ -12,9 +12,12 @@ if (apiProxyTarget) {
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Django API routes require their trailing slash. Stripping it here causes
+  // an endless redirect between Next.js and Django's APPEND_SLASH handling.
+  skipTrailingSlashRedirect: Boolean(apiProxyTarget),
   async rewrites() {
     return apiProxyTarget
-      ? [{ source: "/api/:path*", destination: `${apiProxyTarget}/api/:path*` }]
+      ? [{ source: "/api/:path*", destination: `${apiProxyTarget}/api/:path*/` }]
       : [];
   },
   async headers() {
