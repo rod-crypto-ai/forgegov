@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED = "3.3.1"
-FRONTEND_EXPECTED = "3.3.1"
+EXPECTED = "3.3.2"
+FRONTEND_EXPECTED = "3.3.2"
 errors: list[str] = []
 
 
@@ -15,12 +15,12 @@ def require(condition: bool, message: str):
         errors.append(message)
 
 
-require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.3.1")
+require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.3.2")
 require(not (ROOT / "INSTALL.command").exists(), "obsolete root INSTALL.command must be removed")
 require(not (ROOT / "VERIFY.command").exists(), "obsolete root VERIFY.command must be removed")
 package = json.loads((ROOT / "frontend/package.json").read_text())
-require(package.get("version") == FRONTEND_EXPECTED, "frontend package version is not 3.3.1")
-require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.3.1")
+require(package.get("version") == FRONTEND_EXPECTED, "frontend package version is not 3.3.2")
+require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.3.2")
 
 # Historical migrations must never depend on a moving target.
 for migration in ROOT.glob("backend/*/migrations/*.py"):
@@ -129,7 +129,7 @@ admin_page = (ROOT / "frontend/app/platform-admin/page.tsx").read_text()
 require("Send test to me" in admin_page, "Creator notification test control is missing")
 require("Pause notifications" in admin_page, "Creator notification pause control is missing")
 
-# v3.3.1 commercial subscription foundation must preserve access and fail closed.
+# v3.3.2 commercial subscription foundation must preserve access and fail closed.
 for model_name in ("SubscriptionPlan", "OrganizationSubscription", "SubscriptionUsageCounter", "BillingEvent"):
     require(f"class {model_name}" in models, f"commercial subscription model missing: {model_name}")
 require('path("billing/summary/", billing_summary)' in urls, "workspace billing summary route is missing")
