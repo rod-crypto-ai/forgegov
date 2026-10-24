@@ -38,7 +38,6 @@ services:
   rootDir: backend
   dockerfilePath: ./Dockerfile
   healthCheckPath: /api/health/
-  maxShutdownDelaySeconds: 60
   envVars:
   - key: SERVICE_ROLE
     value: web
