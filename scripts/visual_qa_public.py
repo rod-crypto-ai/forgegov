@@ -56,7 +56,8 @@ with sync_playwright() as p:
             assert page.url.endswith('#pricing')
             page.evaluate('scrollTo(0,0)')
             if w in (390,768,1440):page.screenshot(path=str(OUT/f'{name}-{w}.png'),full_page=True)
-            page.get_by_role('link',name='Request access',exact=True).first.click()
+            expect(page.get_by_role('link',name='Get started',exact=True)).to_have_attribute('href','/request-access')
+            page.get_by_role('link',name='Get started',exact=True).click()
             page.get_by_label('Your name',exact=True).fill('Isolated QA')
             page.get_by_label('Work email',exact=True).fill('qa@example.invalid')
             page.get_by_label('Company',exact=True).fill('Isolated QA Company')
@@ -81,6 +82,7 @@ with sync_playwright() as p:
                     api(route)
             page.route('**/api/**',public_api)
             navigate(page, BASE,wait_until='networkidle')
+            expect(page.get_by_role('link',name='Get started',exact=True)).to_have_attribute('href','/register')
             account=page.get_by_role('link',name='Create your account',exact=True).first
             try:
                 expect(account).to_have_attribute('href','/register')
