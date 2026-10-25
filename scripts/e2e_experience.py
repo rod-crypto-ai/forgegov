@@ -70,6 +70,14 @@ def run(page):
     expect(room_task).to_be_in_viewport()
     assert page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth") <= 2
     page.screenshot(path=str(OUT / "room-work-phone.png"), full_page=True)
+    page.get_by_role("button", name="People & access", exact=True).click()
+    for width in (320, 390, 768):
+        page.set_viewport_size({"width": width, "height": 900})
+        page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+        control_sizes = page.locator(".access-add-row select").evaluate_all("rows => rows.map(e => e.getBoundingClientRect().height)")
+        assert control_sizes and all(32 <= height <= 64 for height in control_sizes), control_sizes
+        assert page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth") <= 2
+    page.screenshot(path=str(OUT / "room-access-tablet.png"), full_page=True)
     page.set_viewport_size({"width": 1440, "height": 900})
 
     page.goto(BASE + f"/opportunities/federal-contracts/{NOTICE}")
