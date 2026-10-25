@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.middleware.csrf import CsrfViewMiddleware
+from rest_framework.authentication import SessionAuthentication
 from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
@@ -64,6 +65,7 @@ class CookieJWTAuthentication(JWTAuthentication):
             raw_org = request.headers.get("X-ForgeGov-Organization") or request.COOKIES.get("forgegov_workspace")
             if raw_org and str(raw_org).isdigit():
                 user._forgegov_organization_id = int(raw_org)
+            enforce_subscription(request, user)
             return user, token
 
         raw_token = request.COOKIES.get(settings.AUTH_ACCESS_COOKIE_NAME)
@@ -80,4 +82,49 @@ class CookieJWTAuthentication(JWTAuthentication):
         raw_org = request.headers.get("X-ForgeGov-Organization") or request.COOKIES.get("forgegov_workspace")
         if raw_org and str(raw_org).isdigit():
             user._forgegov_organization_id = int(raw_org)
+        enforce_subscription(request, user)
         return user, validated_token
+
+
+# Exact recovery endpoints: never exempt the whole auth or billing namespace.
+SUBSCRIPTION_RECOVERY_PATHS = frozenset({
+    "/api/auth/me/", "/api/auth/workspaces/", "/api/auth/logout/",
+    "/api/auth/csrf/", "/api/auth/refresh/", "/api/auth/login/",
+    "/api/auth/register/", "/api/auth/registration-config/",
+    "/api/auth/verify-email/", "/api/auth/resend-verification/",
+    "/api/billing/summary/", "/api/billing/checkout/", "/api/billing/portal/",
+    "/api/health/", "/api/ready/", "/api/public/inquiries/",
+})
+
+
+def enforce_subscription(request, user):
+    from .permissions import active_membership
+    from .subscriptions import ensure_organization_subscription
+    # Account security remains available to locked workspaces.
+    if (request.path in SUBSCRIPTION_RECOVERY_PATHS
+            or request.path.startswith("/api/auth/security/")
+            or request.path.startswith("/api/auth/mfa/")
+            or request.path.startswith("/api/auth/invitations/")):
+        return
+    if request.path.startswith("/api/platform-admin/"):
+        from platform_admin.permissions import active_platform_grant
+        if active_platform_grant(user):
+            return
+    membership = active_membership(user)
+    if not membership or not ensure_organization_subscription(membership.organization).permits_access:
+        raise PermissionDenied({
+            "detail": "An active subscription is required. Open Billing or contact your workspace administrator.",
+            "code": "subscription_required",
+        })
+
+
+class SubscriptionSessionAuthentication(SessionAuthentication):
+    def authenticate(self, request):
+        result = super().authenticate(request)
+        if result:
+            user, token = result
+            raw_org = request.headers.get("X-ForgeGov-Organization") or request.COOKIES.get("forgegov_workspace")
+            if raw_org and str(raw_org).isdigit():
+                user._forgegov_organization_id = int(raw_org)
+            enforce_subscription(request, user)
+        return result

@@ -61,7 +61,7 @@ def ensure_organization_subscription(
     subscription, _ = OrganizationSubscription.objects.get_or_create(
         organization=organization,
         defaults={
-            "plan": legacy_plan(),
+            "plan": professional_annual_plan(),
             "status": OrganizationSubscription.Status.LEGACY,
             "provider": OrganizationSubscription.Provider.DISABLED,
             "seat_quantity": max(
@@ -94,7 +94,7 @@ def billing_configuration() -> dict[str, object]:
         "detail": (
             "Automated billing is configured."
             if checkout_enabled
-            else "Automated billing is not fully configured. Existing workspace access is preserved."
+            else "Automated billing is not fully configured. Contact support to arrange subscription access."
         ),
     }
 

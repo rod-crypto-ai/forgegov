@@ -101,7 +101,9 @@ SUMMARY = {
 }
 
 
-def install_fixtures(page: Page) -> None:
+def install_fixtures(page: Page, session=None, summary=None) -> None:
+    session = SESSION if session is None else session
+    summary = SUMMARY if summary is None else summary
     def handler(route: Route) -> None:
         path = urlparse(route.request.url).path
         if "/api/" not in path:
@@ -109,7 +111,7 @@ def install_fixtures(page: Page) -> None:
             return
         payload: object = {"results": []}
         if path == "/api/auth/me/":
-            payload = SESSION
+            payload = session
         elif path == "/api/auth/workspaces/":
             payload = {
                 "workspaces": [
@@ -119,7 +121,7 @@ def install_fixtures(page: Page) -> None:
         elif path == "/api/platform-admin/me/":
             payload = {"platform_admin": False}
         elif path == "/api/billing/summary/":
-            payload = SUMMARY
+            payload = summary
         elif path == "/api/auth/csrf/":
             payload = {"csrfToken": "billing-qa"}
         route.fulfill(
@@ -166,6 +168,18 @@ def run_case(
         page.screenshot(
             path=str(OUT / f"v330-{browser_name}-{name}-billing.png"), full_page=True
         )
+        # A fresh unpaid session must be sent to billing before product content mounts.
+        unpaid_context = browser.new_context(viewport={"width": width, "height": height})
+        unpaid_page = unpaid_context.new_page()
+        install_fixtures(unpaid_page,
+            session={**SESSION, "subscription": {"permits_access": False}},
+            summary={**SUMMARY, "subscription": {**SUMMARY["subscription"], "permits_access": False}})
+        unpaid_page.goto(f"{BASE_URL}/capture/tasks", wait_until="domcontentloaded")
+        unpaid_page.wait_for_url(f"{BASE_URL}/billing", timeout=15000)
+        unpaid_page.get_by_role("alert").filter(has_text="Subscription required").wait_for(timeout=15000)
+        unpaid_page.goto(BASE_URL + "/", wait_until="domcontentloaded")
+        unpaid_page.wait_for_url(f"{BASE_URL}/billing", timeout=15000)
+        unpaid_context.close()
     finally:
         context.close()
         browser.close()

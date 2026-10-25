@@ -33,6 +33,15 @@ def seed():
     from core.models import Membership, Organization, UserSecurityProfile
     from core.subscriptions import ensure_organization_subscription
     organization, _ = Organization.objects.get_or_create(slug=SLUG, defaults={"name": "Synthetic Full-stack QA"})
+    # Disposable QA workspace has a bounded entitlement; never bypass production checks.
+    from core.subscriptions import ensure_organization_subscription
+    from django.utils import timezone
+    from datetime import timedelta
+    subscription = ensure_organization_subscription(organization)
+    subscription.status = "active"
+    subscription.provider = "manual"
+    subscription.current_period_ends_at = timezone.now() + timedelta(days=1)
+    subscription.save()
     user, _ = get_user_model().objects.get_or_create(username=EMAIL, defaults={"email": EMAIL})
     user.set_password(PASSWORD)
     user.save()
