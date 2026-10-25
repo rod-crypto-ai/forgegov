@@ -18,6 +18,9 @@
   --control-height: 42px;
 }
 
+/* Let summary cards respond to their container, including narrow room panels. */
+.compact-summary { grid-template-columns: repeat(auto-fit, minmax(min(100%, 125px), 1fr)); }
+
 body { line-height: 1.5; }
 .data-panel, html[data-density] .data-panel { padding: var(--panel-inset); }
 .data-panel > .panel-title-row, html[data-density] .data-panel > .panel-title-row { padding: 0 0 18px; }
@@ -195,3 +198,16 @@ html[data-theme="dark"] :is(.pricing-form input, .pricing-form select, .pricing-
   .connected-app-state { grid-column: 1 / -1; justify-self: start; }
   .microsoft-destination-controls > button { width: 100%; }
 }
+/* Empty states keep their own vertical flow inside capture review lists. */
+.capture-review-list > .table-state.compact-state { display:grid; grid-template-columns:minmax(0,1fr); justify-items:start; gap:10px; }
+/* Partner permissions reserve a full row for company identity and usable controls. */
+.partner-permission-card { grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; gap:14px; padding:20px 0; }
+.partner-permission-card > header { grid-column:1/-1; gap:5px; min-width:0; }
+.partner-permission-card > header .company-identity-name { overflow-wrap:normal; word-break:normal; }
+.partner-permission-card > label { display:flex; align-items:flex-start; gap:8px; min-width:0; font-size:14px; line-height:1.6; }
+.partner-permission-card > label > input[type=checkbox] { flex-shrink:0; margin-top:4px; }
+.partner-permission-card > label:has(input[type=date]) { display:grid; grid-column:1/-1; max-width:240px; }
+.partner-permission-card input[type=date] { min-width:0; width:100%; min-height:42px; }
+.access-add-row { flex-wrap:wrap; }
+.access-add-row select { flex:1 1 auto; min-width:min(100%,160px); }
+@media(max-width:430px) { .partner-permission-card { grid-template-columns:minmax(0,1fr); } }

@@ -52,3 +52,7 @@ excluded from subscription checkout and payment-provider state changes.
 ## Milestone 5 — Production hardening
 
 - Security review, penetration testing, data-quality monitoring, backup restoration tests, accessibility, performance, and incident response.
+
+## v3.3.3 — Product-led public experience
+
+Public landing redesign, verified-interface product tour, runtime-aware conversion, $2,000 annual offering, persisted onboarding/support inquiries, SEO, and responsive/accessibility validation. This completes a public-experience increment within the existing commercial-readiness initiative; billing/provider/legal gates remain separate.

@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED = "3.3.2"
-FRONTEND_EXPECTED = "3.3.2"
+EXPECTED = "3.3.3"
+FRONTEND_EXPECTED = "3.3.3"
 errors: list[str] = []
 
 
@@ -15,12 +15,12 @@ def require(condition: bool, message: str):
         errors.append(message)
 
 
-require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.3.2")
+require((ROOT / "VERSION").read_text().strip() == EXPECTED, "VERSION is not 3.3.3")
 require(not (ROOT / "INSTALL.command").exists(), "obsolete root INSTALL.command must be removed")
 require(not (ROOT / "VERIFY.command").exists(), "obsolete root VERIFY.command must be removed")
 package = json.loads((ROOT / "frontend/package.json").read_text())
-require(package.get("version") == FRONTEND_EXPECTED, "frontend package version is not 3.3.2")
-require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.3.2")
+require(package.get("version") == FRONTEND_EXPECTED, "frontend package version is not 3.3.3")
+require(f'VERSION = "{EXPECTED}"' in (ROOT / "backend/core/version.py").read_text(), "backend version is not 3.3.3")
 
 # Historical migrations must never depend on a moving target.
 for migration in ROOT.glob("backend/*/migrations/*.py"):
@@ -71,8 +71,8 @@ require("0026_mfa_sessions_passkeys" in platform_migration, "platform_admin hist
 
 # v3.1.1 beta stabilization and public landing requirements.
 landing = (ROOT / "frontend/components/public-landing.tsx").read_text()
-require("Find the work. Understand the market. Run the capture." in landing, "public landing page hero is missing")
-require("/auth/registration-config/" in landing, "landing page does not reflect runtime registration state")
+require("Find the opportunity." in landing and "ProductTour" in landing, "public landing hero or genuine product tour is missing")
+require("/auth/registration-config/" in (ROOT / "frontend/app/register/page.tsx").read_text() and "/auth/registration-config/" in (ROOT / "frontend/components/enrollment-action.tsx").read_text(), "public enrollment must respect runtime registration state")
 auth_provider = (ROOT / "frontend/components/auth-provider.tsx").read_text()
 routes_source = (ROOT / "frontend/lib/routes.ts").read_text()
 require('pathname === "/"' in routes_source, "root landing route is not public")
@@ -129,7 +129,7 @@ admin_page = (ROOT / "frontend/app/platform-admin/page.tsx").read_text()
 require("Send test to me" in admin_page, "Creator notification test control is missing")
 require("Pause notifications" in admin_page, "Creator notification pause control is missing")
 
-# v3.3.2 commercial subscription foundation must preserve access and fail closed.
+# v3.3.3 commercial subscription foundation must preserve access and fail closed.
 for model_name in ("SubscriptionPlan", "OrganizationSubscription", "SubscriptionUsageCounter", "BillingEvent"):
     require(f"class {model_name}" in models, f"commercial subscription model missing: {model_name}")
 require('path("billing/summary/", billing_summary)' in urls, "workspace billing summary route is missing")
