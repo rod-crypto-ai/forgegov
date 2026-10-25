@@ -103,6 +103,9 @@ async function requestJson<T>(path: string, options: RequestInit = {}, allowRefr
     return requestJson<T>(path, options, allowRefresh, false);
   }
 
+  if (response.status === 403 && body && typeof body === "object" && "code" in body && body.code === "subscription_required" && typeof window !== "undefined" && window.location.pathname !== "/billing") {
+    window.dispatchEvent(new Event("forgegov:subscription-required"));
+  }
   if (!response.ok) throw new Error(message);
   return body as T;
 }

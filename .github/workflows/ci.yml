@@ -199,19 +199,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Preserve rollback and validated v3.3.3 release tags
+      - name: Preserve rollback and validated v3.3.4 release tags
         shell: bash
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = "3.3.3" || exit 0
+          test "$(cat VERSION)" = "3.3.4" || exit 0
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          baseline=8e127571b2c3aa2d2b578aeedb899afb9154e644
-          if ! git show-ref --verify --quiet refs/tags/rollback/pre-v3.3.3; then
-            git tag -a rollback/pre-v3.3.3 "$baseline" -m 'Production rollback point before ForgeGov v3.3.3'
-            git push origin refs/tags/rollback/pre-v3.3.3
+          baseline=73a14014c1d4f356f3abdb6bba5aa6536ddf49f7
+          if ! git show-ref --verify --quiet refs/tags/rollback/pre-v3.3.4; then
+            git tag -a rollback/pre-v3.3.4 "$baseline" -m 'Production rollback point before ForgeGov v3.3.4'
+            git push origin refs/tags/rollback/pre-v3.3.4
           fi
-          if ! git show-ref --verify --quiet refs/tags/v3.3.3; then
-            git tag -a v3.3.3 "$GITHUB_SHA" -m 'ForgeGov v3.3.3: verified product landing page and access inquiries'
-            git push origin refs/tags/v3.3.3
+          if ! git show-ref --verify --quiet refs/tags/v3.3.4; then
+            git tag -a v3.3.4 "$GITHUB_SHA" -m 'ForgeGov v3.3.4: server-enforced subscription access'
+            git push origin refs/tags/v3.3.4
           fi

@@ -785,6 +785,7 @@ def me(request):
             "status": membership.organization.status,
         },
         "role": membership.role,
+        "subscription": {"permits_access": ensure_organization_subscription(membership.organization).permits_access},
         "capabilities": membership_capabilities(membership),
     })
 

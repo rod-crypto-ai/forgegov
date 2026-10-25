@@ -57,7 +57,7 @@ class CommercialReadinessApiTests(AuthenticatedApiTestCase):
         self.assertEqual(
             body["subscription"]["status"], OrganizationSubscription.Status.LEGACY
         )
-        self.assertTrue(body["subscription"]["permits_access"])
+        self.assertFalse(body["subscription"]["permits_access"])
         self.assertNotEqual(body["subscription"]["seat_quantity"], 99)
         self.assertFalse(body["billing"]["checkout_enabled"])
         self.assertFalse(body["billing"]["portal_enabled"])
@@ -183,8 +183,8 @@ class SubscriptionDomainTests(TestCase):
         first = ensure_organization_subscription(self.organization)
         second = ensure_organization_subscription(self.organization)
         self.assertEqual(first.pk, second.pk)
-        self.assertEqual(first.plan.code, "legacy-full-access")
-        self.assertTrue(first.permits_access)
+        self.assertEqual(first.plan.code, "professional-annual")
+        self.assertFalse(first.permits_access)
 
     def test_company_name_alone_cannot_grant_grandfathered_access(self):
         named_after_launch = Organization.objects.create(
@@ -260,11 +260,12 @@ class SubscriptionDomainTests(TestCase):
         self.assertEqual(subscription.status, OrganizationSubscription.Status.TRIALING)
 
     def test_past_due_access_requires_an_explicit_unexpired_grace_period(self):
-        plan = SubscriptionPlan.objects.create(code="paid", name="Paid")
+        plan = SubscriptionPlan.objects.create(code="paid", name="Paid", entitlements={"platform": True})
         subscription = OrganizationSubscription.objects.create(
             organization=self.organization,
             plan=plan,
             status=OrganizationSubscription.Status.PAST_DUE,
+            provider=OrganizationSubscription.Provider.MANUAL,
         )
         self.assertEqual(
             subscription.access_state, OrganizationSubscription.Status.EXPIRED

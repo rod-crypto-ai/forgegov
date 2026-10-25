@@ -151,6 +151,9 @@ class OrganizationSubscription(TimeStampedModel):
         if self.grandfathered:
             return self.Status.GRANDFATHERED
         now = timezone.now()
+        if self.status == self.Status.ACTIVE:
+            if not self.current_period_ends_at or self.current_period_ends_at <= now:
+                return self.Status.EXPIRED
         if self.status == self.Status.TRIALING:
             if not self.trial_ends_at or self.trial_ends_at <= now:
                 return self.Status.EXPIRED
@@ -161,13 +164,16 @@ class OrganizationSubscription(TimeStampedModel):
 
     @property
     def permits_access(self):
-        return self.access_state in {
-            self.Status.GRANDFATHERED,
-            self.Status.LEGACY,
-            self.Status.TRIALING,
-            self.Status.ACTIVE,
-            self.Status.PAST_DUE,
-        }
+        if self.grandfathered:
+            return True
+        if not self.plan.active or not self.plan.entitlements.get("platform"):
+            return False
+        if self.provider not in {self.Provider.STRIPE, self.Provider.MANUAL}:
+            return False
+        state = self.access_state
+        if state == self.Status.ACTIVE:
+            return bool(self.current_period_ends_at and self.current_period_ends_at > timezone.now())
+        return state in {self.Status.TRIALING, self.Status.PAST_DUE}
 
 
 class SubscriptionUsageCounter(TimeStampedModel):

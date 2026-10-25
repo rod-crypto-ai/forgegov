@@ -9,6 +9,7 @@ type Session = {
   user: { id: number; email: string; first_name: string; last_name: string };
   organization: { id: number; name: string; slug: string };
   role: string;
+  subscription?: {permits_access:boolean};
   capabilities?: {
     company_admin:boolean;
     billing_admin:boolean;
@@ -70,11 +71,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!loading && !session && !isPublicRoute(pathname)) {
       router.replace(`/sign-in?next=${encodeURIComponent(pathname)}`);
     }
+    if (!loading && session?.subscription?.permits_access === false && (!isPublicRoute(pathname) || pathname === "/") && pathname !== "/billing") {
+      router.replace("/billing");
+    }
     if (!loading && session && (pathname === "/sign-in" || pathname === "/register")) {
       router.replace("/");
     }
   }, [loading, session, pathname, router]);
 
+
+  useEffect(() => {
+    const restrict = () => {
+      setSession(current => current ? {...current, subscription:{permits_access:false}} : current);
+      router.replace("/billing");
+    };
+    window.addEventListener("forgegov:subscription-required", restrict);
+    return () => window.removeEventListener("forgegov:subscription-required", restrict);
+  }, [router]);
 
   const switchWorkspace = useCallback(async (organizationId:number) => {
     await authFetch("/auth/workspaces/", { method: "POST", body: JSON.stringify({ organization: organizationId }) });
@@ -94,6 +107,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return <div className="auth-loading"><div className="auth-spinner" /><p>Securing your ForgeGov workspace…</p></div>;
   }
   if (!session && !isPublicRoute(pathname)) return null;
+  if (session?.subscription?.permits_access === false && (!isPublicRoute(pathname) || pathname === "/") && pathname !== "/billing") {
+    return <AuthContext.Provider value={value}><div className="auth-loading"><p>Subscription required. Opening billing…</p></div></AuthContext.Provider>;
+  }
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
