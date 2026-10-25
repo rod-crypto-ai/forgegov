@@ -78,3 +78,6 @@
 @media(prefers-reduced-motion:no-preference) { .landing a,.tourTabs button { transition:background-color .15s,color .15s; } }
 
 .footer .brand em { color:#1769d8; }
+/* Reserve the longest enrollment label before runtime registration resolves. */
+.navActions .primary { width:212px; min-height:48px; height:48px; }
+@media(max-width:620px) { .navActions .primary { width:134px; min-height:52px; height:52px; } }

@@ -25,6 +25,7 @@ with sync_playwright() as p:
         browser=getattr(p,name).launch(**options)
         for w,h in [(320,800),(390,844),(768,1024),(1024,768),(1440,1000),(1920,1080)]:
             context=browser.new_context(viewport={'width':w,'height':h},color_scheme='dark' if w==1024 else 'light')
+            context.add_init_script("window.__publicCLS=0;if(PerformanceObserver.supportedEntryTypes.includes('layout-shift'))new PerformanceObserver(list=>{for(const e of list.getEntries()){if(!e.hadRecentInput)window.__publicCLS+=e.value;}}).observe({type:'layout-shift',buffered:true});")
             page=context.new_page(); errors=[]
             page.on('pageerror',lambda e:errors.append(str(e)))
             def api(route):
@@ -39,6 +40,8 @@ with sync_playwright() as p:
             navigate(page, BASE,wait_until='networkidle')
             expect(page.get_by_role('heading',level=1)).to_contain_text('Find the opportunity.')
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'),f'{name} {w} overflow'
+            if name=='chromium':
+                assert page.evaluate('window.__publicCLS') < 0.1, f'{name} {w} initial layout shift'
             assert page.locator('#tour-panel img').evaluate('(i)=>i.complete&&i.naturalWidth>0'), 'tour image missing'
             for tab in ['Discover','Qualify','Capture','Project Rooms','ForgeAI']:
                 page.get_by_role('tab',name=tab,exact=True).click()
