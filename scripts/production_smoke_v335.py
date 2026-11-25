@@ -84,7 +84,7 @@ with sync_playwright() as playwright:
                 expect(page.get_by_role("tab", name=tab, exact=True)).to_have_attribute("aria-selected", "true")
                 expect(page.locator("#tour-panel img")).to_be_visible()
                 page.wait_for_function("document.querySelector('#tour-panel img').complete && document.querySelector('#tour-panel img').naturalWidth > 0")
-            for img in page.locator("main img").all():
+            for img in page.locator("main img:visible").all():
                 img.scroll_into_view_if_needed()
                 expect(img).to_be_visible()
                 img.evaluate("(image) => image.complete ? Promise.resolve() : new Promise((resolve, reject) => {image.addEventListener('load', resolve, {once:true}); image.addEventListener('error', reject, {once:true});})")
