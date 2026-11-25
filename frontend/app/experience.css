@@ -64,7 +64,7 @@ html[data-density] .data-panel:has(> .data-toolbar, > .workspace-section-header,
 .quick-create-form { align-items: end; }
 .quick-create-form > label { display: grid; gap: 6px; min-width: 0; }
 .quick-create-form > label > span { color: var(--muted); font-size: 12px; font-weight: 700; }
-.advanced-filter-grid label > span { font-size: 11px; line-height: 1.4; }
+.advanced-filter-grid label > span { font-size: 12px; line-height: 1.4; }
 input, select, textarea { max-width: 100%; }
 .forge-content :where(input:not([type="checkbox"], [type="radio"], [type="file"], [type="range"], [type="color"], [type="hidden"]), select, textarea) {
   min-width: 0; min-height: var(--control-height); padding: 10px 12px;

@@ -56,3 +56,7 @@ excluded from subscription checkout and payment-provider state changes.
 ## v3.3.3 — Product-led public experience
 
 Public landing redesign, verified-interface product tour, runtime-aware conversion, $2,000 annual offering, persisted onboarding/support inquiries, SEO, and responsive/accessibility validation. This completes a public-experience increment within the existing commercial-readiness initiative; billing/provider/legal gates remain separate.
+
+## v3.3.5 — Platform quality and operational recovery
+
+Stabilization within commercial readiness covers shared navigation accessibility, mobile legibility, public-page request isolation, consistent theme hydration, ForgeAI provider failure responses, frontend security updates, and USAspending repeat-ingestion efficiency and timeout recovery. Existing roadmap features retain their sequence. Release evidence must distinguish synthetic workflow validation from live-provider and payment validation.

@@ -116,7 +116,7 @@ def sync_recent_sam_opportunities(self, days: int = 1, limit: int = 1000):
         raise
 
 
-@shared_task(bind=True, autoretry_for=(IntegrationError,), retry_backoff=True, retry_kwargs={"max_retries": 3})
+@shared_task(bind=True, soft_time_limit=25 * 60, autoretry_for=(IntegrationError,), retry_backoff=True, retry_kwargs={"max_retries": 3})
 def sync_usaspending_awards(self, days: int = 7, pages: int = 10, limit: int = 100):
     """Incrementally refresh USAspending awards through the canonical ingestion service."""
     from .intelligence.services.award_ingestion import sync_usaspending_awards as ingest_usaspending_awards

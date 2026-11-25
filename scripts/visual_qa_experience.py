@@ -455,10 +455,22 @@ def run_case(browser, engine, name, width, height, theme):
     page = context.new_page()
     install(page, theme)
     errors = []
-    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.on("pageerror", lambda error: errors.append(f"{page.url}: {error}"))
     try:
         navigate(page, BASE_URL + "/", wait_until="networkidle")
         page.locator(".dashboard-federal-preview").wait_for()
+        if width <= 900:
+            trigger = page.get_by_role("button", name="Open navigation", exact=True)
+            trigger.click()
+            drawer = page.get_by_role("dialog", name="Workspace navigation", exact=True)
+            assert drawer.is_visible()
+            assert page.locator(".forge-main").evaluate("element => element.inert")
+            page.keyboard.press("Shift+Tab")
+            assert page.evaluate("document.querySelector('#workspace-navigation').contains(document.activeElement)")
+            page.keyboard.press("Escape")
+            assert page.get_by_role("dialog", name="Workspace navigation", exact=True).count() == 0
+            assert trigger.evaluate("element => element === document.activeElement")
+            assert not page.locator(".forge-main").evaluate("element => element.inert")
         dashboard = geometry(page)
         assert dashboard["overflow"] <= 2, dashboard
         assert dashboard["heading"] <= 36, dashboard

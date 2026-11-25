@@ -391,9 +391,8 @@ def usaspending_source_id(record: dict[str, Any]) -> str:
     )
 
 
-def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None = None):
-    from django.db import models
-    from .models import Agency, Award, Vendor
+def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None = None, deferred_agencies: set[str] | None = None):
+    from .models import Award, Vendor
 
     source_id = usaspending_source_id(record)
     if not source_id:
@@ -429,12 +428,25 @@ def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None =
     incoming_modified = _grant_date(
         _usa_value(record, "last_modified_date", "Last Modified Date", "last_modified", "source_updated_at")
     )
-    existing = Award.objects.filter(source_id=source_id).only("source_updated_at", "naics_code", "psc_code", "place_of_performance").first()
+    existing = Award.objects.filter(source_id=source_id).only("source", "award_type", "raw_data", "source_updated_at", "naics_code", "psc_code", "place_of_performance").first()
     if (
         existing and incoming_modified and existing.source_updated_at
         and incoming_modified < existing.source_updated_at
     ):
         raise IntegrationError("USAspending returned an older award version than the one already stored.")
+
+    history_type = "award.usaspending.vehicle" if award_type == Award.AwardType.VEHICLE else "award.usaspending"
+    if existing and existing.source == "usaspending.gov" and existing.raw_data == record and existing.award_type == (award_type or Award.AwardType.CONTRACT):
+        _, version_created = record_source_version(
+            source="usaspending.gov", record_type=history_type, source_id=source_id,
+            payload=record, source_url=f"https://www.usaspending.gov/award/{source_id}/",
+            source_modified_at=incoming_modified,
+            provenance={"transport": "api", "award_type": existing.award_type},
+        )
+        existing._forgegov_source_version_created = version_created
+        if deferred_agencies is not None:
+            deferred_agencies.update({awarding_agency, funding_agency} - {""})
+        return existing, False
 
     defaults = {
         "source": "usaspending.gov",
@@ -464,7 +476,6 @@ def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None =
         "raw_data": record,
     }
     award, created = Award.objects.update_or_create(source_id=source_id, defaults=defaults)
-    history_type = "award.usaspending.vehicle" if award_type == Award.AwardType.VEHICLE else "award.usaspending"
     _, version_created = record_source_version(
         source="usaspending.gov", record_type=history_type, source_id=source_id, payload=record,
         source_url=defaults["source_url"], source_modified_at=incoming_modified, provenance={"transport": "api", "award_type": defaults["award_type"]},
@@ -481,7 +492,20 @@ def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None =
                 "raw_data": {"latest_award": source_id},
             },
         )
-    for agency_name in {awarding_agency, funding_agency} - {""}:
+    agency_names = {awarding_agency, funding_agency} - {""}
+    if deferred_agencies is not None:
+        deferred_agencies.update(agency_names)
+    else:
+        refresh_award_agencies(agency_names)
+    return award, created
+
+
+def refresh_award_agencies(agency_names: set[str]) -> None:
+    """Refresh each touched agency once after a batch of award writes."""
+    from django.db import models
+    from .models import Agency, Award
+
+    for agency_name in agency_names:
         Agency.objects.update_or_create(
             name=agency_name,
             defaults={
@@ -494,7 +518,6 @@ def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None =
                 "raw_data": {"source": "usaspending.gov"},
             },
         )
-    return award, created
 
 
 def search_usaspending_awards(

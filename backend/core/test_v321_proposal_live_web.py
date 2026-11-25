@@ -5,10 +5,12 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from .ai import OpenAIIntegrationError
 from .live_web import search as live_web_search, status as live_web_status
 from .models import (
     Membership,
     Opportunity,
+    OpportunityAnalysis,
     PipelineItem,
     OpportunityDocument,
     OpportunityDocumentChunk,
@@ -58,6 +60,22 @@ class ProposalAutomationLiveWebV321Tests(TestCase):
         client = APIClient()
         client.force_authenticate(user or self.user)
         return client
+
+    @patch("core.views.ask_ai")
+    def test_briefing_provider_failure_is_retryable_without_saving_an_analysis(self, mocked_ai):
+        url = f"/api/ai/opportunities/{self.opportunity.source_id}/briefing/"
+        for code in (429, 502, 503):
+            with self.subTest(status=code):
+                mocked_ai.side_effect = OpenAIIntegrationError("Research provider unavailable. Try again shortly.", status_code=code)
+                response = self.api_client().post(url, {"analysis_type": "executive_summary"}, format="json")
+                self.assertEqual(response.status_code, code)
+                self.assertEqual(response.json()["detail"], "Research provider unavailable. Try again shortly.")
+                self.assertFalse(OpportunityAnalysis.objects.filter(organization=self.org).exists())
+        mocked_ai.side_effect = None
+        mocked_ai.return_value = {"answer": "Program support services [OPP-1].", "model": "test-model"}
+        response = self.api_client().post(url, {"analysis_type": "executive_summary"}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(OpportunityAnalysis.objects.filter(organization=self.org).count(), 1)
 
     def test_production_workspace_seeds_volumes_sections_and_traceability(self):
         response = self.api_client().get(f"/api/ai/opportunities/{self.opportunity.source_id}/proposal-production/")

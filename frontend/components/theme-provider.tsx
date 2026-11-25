@@ -69,8 +69,10 @@ function applyToDocument(preferences: UserPreferences) {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth();
-  const [preferences, setPreferences] = useState<UserPreferences>(() => readLocal());
-  const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(() => resolveTheme(readLocal().theme));
+  // Hydrate with the server's defaults, then restore saved preferences below.
+  // The layout's early script applies saved colors before the first paint.
+  const [preferences, setPreferences] = useState<UserPreferences>(defaults);
+  const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">("light");
   const [loaded, setLoaded] = useState(false);
 
   const apply = useCallback((next: UserPreferences) => {

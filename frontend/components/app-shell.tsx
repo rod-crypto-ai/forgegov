@@ -13,6 +13,7 @@ import { BetaFeedbackButton } from "@/components/beta-feedback";
 import { useThemePreferences } from "@/components/theme-provider";
 import { isPublicRoute } from "@/lib/routes";
 import { ForgeGovMark } from "@/components/forgegov-logo";
+import { useHydrated } from "@/lib/use-hydrated";
 
 type SearchHit={type:string;id:string|number;title:string;subtitle?:string;href:string};
 
@@ -27,9 +28,52 @@ function navHrefActive(pathname:string,queryString:string,href:string){
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const { session } = useAuth();
+  const hydrated = useHydrated();
+  if (isPublicRoute(pathname) && (!hydrated || !session || pathname !== "/")) {
+    return <>{children}</>;
+  }
+  return <WorkspaceShell key={session?.organization.id}>{children}</WorkspaceShell>;
+}
+
+function WorkspaceShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname(); const searchParams=useSearchParams(); const queryString=searchParams.toString(); const { session, workspaces, switchWorkspace, logout } = useAuth(); const { preferences, updatePreferences } = useThemePreferences(); const router = useRouter();
   const [query,setQuery]=useState(""); const [menuOpen,setMenuOpen]=useState(false); const [workspaceOpen,setWorkspaceOpen]=useState(false); const [responsiveCompact,setResponsiveCompact]=useState(false); const [hits,setHits]=useState<SearchHit[]>([]); const [searching,setSearching]=useState(false); const [searchOpen,setSearchOpen]=useState(false); const [unreadAlerts,setUnreadAlerts]=useState(0); const [unreadCollaboration,setUnreadCollaboration]=useState(0);
   const searchRequest=useRef(0);
+  const navigationRef = useRef<HTMLElement>(null);
+  const navigationTrigger = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const trigger = navigationTrigger.current;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    navigationRef.current?.querySelector<HTMLButtonElement>('button[aria-label="Close navigation"]')?.focus();
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMenuOpen(false);
+      }
+      if (event.key !== "Tab") return;
+      const controls = Array.from(navigationRef.current?.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled])') ?? []).filter(element => element.getClientRects().length > 0);
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKey);
+      trigger?.focus();
+    };
+  }, [menuOpen]);
   const collapsed=preferences.sidebar_collapsed;
   const effectiveCollapsed=collapsed||responsiveCompact;
   // v3.2.1.3 responsive shell state: tablets/smaller laptops use an icon rail, not the mobile drawer.
@@ -81,17 +125,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   function submit(event:React.FormEvent){event.preventDefault();const value=query.trim();setSearchOpen(false);router.push(value?`/search?q=${encodeURIComponent(value)}`:"/search")}
   function liveSearch(source:"contracts"|"grants"){const value=query.trim();setSearchOpen(false);router.push(`/${source==="grants"?"opportunities/federal-grants":"opportunities/federal-contracts"}${value?`?q=${encodeURIComponent(value)}&auto=1`:""}`)}
   function choose(hit:SearchHit){setSearchOpen(false);setQuery("");router.push(hit.href)}
-  if(isPublicRoute(pathname)&&(!session||pathname!=="/"))return <>{children}</>;
   const initials=`${session?.user.first_name?.[0]??""}${session?.user.last_name?.[0]??""}`||session?.user.email?.[0]?.toUpperCase()||"U";
   const displayName=`${session?.user.first_name??""} ${session?.user.last_name??""}`.trim()||session?.user.email||"ForgeGov user";
   return <div className={`forge-shell ${effectiveCollapsed?"sidebar-collapsed":""}`}>
-    <aside className={`forge-sidebar ${menuOpen?"open":""} ${effectiveCollapsed?"collapsed":""}`}><div className="forge-brandbar"><Link href="/" className="forge-brand" onClick={()=>setMenuOpen(false)} aria-label="ForgeGov home"><ForgeGovMark/><span><b>FORGE</b>GOV<small>GovCon Intelligence</small></span></Link><button className="shell-icon mobile-only" onClick={()=>setMenuOpen(false)} aria-label="Close navigation"><X size={20}/></button></div>
+    <aside ref={navigationRef} id="workspace-navigation" role={menuOpen ? "dialog" : undefined} aria-modal={menuOpen ? true : undefined} aria-label="Workspace navigation" className={`forge-sidebar ${menuOpen?"open":""} ${effectiveCollapsed?"collapsed":""}`}><div className="forge-brandbar"><Link href="/" className="forge-brand" onClick={()=>setMenuOpen(false)} aria-label="ForgeGov home"><ForgeGovMark/><span><b>FORGE</b>GOV<small>GovCon Intelligence</small></span></Link><button className="shell-icon mobile-only" onClick={()=>setMenuOpen(false)} aria-label="Close navigation"><X size={20}/></button></div>
       <div className="workspace-switcher-wrap"><button className="workspace-switcher" onClick={()=>setWorkspaceOpen(value=>!value)} aria-expanded={workspaceOpen}><span className="workspace-avatar workspace-logo-avatar"><CompanyIdentity name={session?.organization.name ?? "Company"} organizationId={session?.organization.id} compact showName={false}/></span><span><b>{session?.organization.name}</b><small>{workspaces.length>1?`${workspaces.length} authorized workspaces`:"Company workspace"}</small></span><ChevronDown size={16}/></button>{workspaceOpen&&<div className="workspace-menu"><strong className="workspace-menu-label">Switch workspace</strong>{workspaces.map(row=><button key={row.organization.id} className={row.organization.id===session?.organization.id?"active":""} onClick={()=>{setWorkspaceOpen(false);void switchWorkspace(row.organization.id)}}><span className="workspace-menu-company"><CompanyIdentity name={row.organization.name} organizationId={row.organization.id} compact/></span><small>{row.role}</small></button>)}<hr/><Link href="/company" onClick={()=>setWorkspaceOpen(false)}>Company Hub</Link><Link href="/account" onClick={()=>setWorkspaceOpen(false)}>Personal profile</Link><Link href="/settings" onClick={()=>setWorkspaceOpen(false)}>Workspace settings</Link></div>}</div>
       <Link href="/assistant" className={`ai-launch ${pathname==="/assistant"?"active":""}`} onClick={()=>setMenuOpen(false)}><Sparkles size={18}/><span><b>ForgeGov AI</b><small>Research & capture copilot</small></span><ChevronRight size={16}/></Link>
-      <nav className="forge-nav">{visibleNavigationGroups.map(group=>{const Icon=group.icon;const isActive=activeGroup?.label===group.label;const isExpanded=expanded[group.label]||isActive;return <section className={`forge-nav-group ${isActive?"active-group":""}`} key={group.label}><button onClick={()=>toggleGroup(group.label,isExpanded)}><span><Icon size={18}/><span className="forge-nav-label">{group.label}</span></span>{isExpanded?<ChevronDown size={15}/>:<ChevronRight size={15}/>}</button>{isExpanded&&<div>{group.items.map(item=><Link key={item.href} href={item.href} onClick={()=>setMenuOpen(false)} className={navHrefActive(pathname,queryString,item.href)?"active":""}>{item.label}</Link>)}</div>}</section>})}</nav>
+      <nav className="forge-nav" aria-label="Workspace">{visibleNavigationGroups.map(group=>{const Icon=group.icon;const isActive=activeGroup?.label===group.label;const isExpanded=expanded[group.label]||isActive;return <section className={`forge-nav-group ${isActive?"active-group":""}`} key={group.label}><button aria-expanded={isExpanded} aria-controls={`nav-${group.label.toLowerCase()}`} onClick={()=>toggleGroup(group.label,isExpanded)}><span><Icon size={18}/><span className="forge-nav-label">{group.label}</span></span>{isExpanded?<ChevronDown size={15}/>:<ChevronRight size={15}/>}</button>{isExpanded&&<div id={`nav-${group.label.toLowerCase()}`}>{group.items.map(item=><Link key={item.href} href={item.href} onClick={()=>setMenuOpen(false)} aria-current={navHrefActive(pathname,queryString,item.href)?"page":undefined} className={navHrefActive(pathname,queryString,item.href)?"active":""}>{item.label}</Link>)}</div>}</section>})}</nav>
       <div className="forge-sidebar-footer">
         <PlatformAdminNav /><Link href="/reference/naics" className={navHrefActive(pathname,queryString,"/reference/naics")?"active":""}><BookOpenText size={17}/><span className="forge-footer-label">NAICS Reference</span></Link>{utilityItems.map(item=>{const Icon=item.icon;return <Link href={item.href} key={item.href} className={navHrefActive(pathname,queryString,item.href)?"active":""}>{Icon&&<Icon size={17}/>}<span className="forge-footer-label">{item.label}</span></Link>})}</div>
     </aside>{menuOpen&&<button className="shell-backdrop" onClick={()=>setMenuOpen(false)} aria-label="Close navigation"/>}
-    <main className="forge-main"><header className="forge-topbar"><div className="topbar-left"><button className="shell-icon mobile-only" onClick={()=>setMenuOpen(true)} aria-label="Open navigation"><Menu size={21}/></button><button className="shell-icon desktop-sidebar-toggle" onClick={toggleSidebar} aria-label={effectiveCollapsed?"Expand sidebar":"Collapse sidebar"}>{effectiveCollapsed?<PanelLeftOpen size={20}/>:<PanelLeftClose size={20}/>}</button><div className="global-search-wrap"><form className="command-search" onSubmit={submit}><Search size={18}/><input id="forge-global-search" aria-label="Search ForgeGov" value={query} onFocus={()=>setSearchOpen(true)} onChange={e=>setQuery(e.target.value)} placeholder="Search opportunities, pursuits, rooms, documents, companies..."/><kbd><Command size={12}/> K</kbd></form>{searchOpen&&query.trim().length>=2&&<div className="global-search-results">{searching?<p>Searching ForgeGov…</p>:<>{hits.length?hits.map(hit=><button className={`global-search-hit hit-${hit.type}`} key={`${hit.type}-${hit.id}`} onClick={()=>choose(hit)}><span>{hit.type}</span><strong>{hit.title}</strong><small>{hit.subtitle||"Open in ForgeGov"}</small></button>):<p>No indexed ForgeGov matches yet.</p>}<div className="global-live-search-actions"><button type="button" onClick={()=>liveSearch("contracts")}><span>LIVE SAM.GOV</span><strong>Search contract opportunities</strong></button><button type="button" onClick={()=>liveSearch("grants")}><span>LIVE GRANTS.GOV</span><strong>Search federal grants</strong></button></div></>}</div>}</div></div><div className="topbar-actions"><span className="live-source"><i/> Federal data workspace</span><button className="shell-icon notification-button" onClick={()=>router.push("/notifications")} aria-label={`${unreadAlerts+unreadCollaboration} unread notifications`}><Bell size={19}/>{unreadAlerts+unreadCollaboration>0&&<span className="notification-count">{unreadAlerts+unreadCollaboration>99?"99+":unreadAlerts+unreadCollaboration}</span>}</button><button className="user-chip" onClick={()=>router.push("/account")}><span>{initials}</span><div><b>{displayName}</b><small>{session?.role}</small></div><ChevronDown size={14}/></button><button className="toolbar-button" onClick={()=>void logout()}>Sign out</button></div></header><div className="forge-content" onClick={()=>setSearchOpen(false)}>{children}</div><BetaFeedbackButton/></main>
+    <main className="forge-main" inert={menuOpen}><header className="forge-topbar"><div className="topbar-left"><button ref={navigationTrigger} className="shell-icon mobile-only" onClick={()=>setMenuOpen(true)} aria-expanded={menuOpen} aria-controls="workspace-navigation" aria-label="Open navigation"><Menu size={21}/></button><button className="shell-icon desktop-sidebar-toggle" onClick={toggleSidebar} aria-label={effectiveCollapsed?"Expand sidebar":"Collapse sidebar"}>{effectiveCollapsed?<PanelLeftOpen size={20}/>:<PanelLeftClose size={20}/>}</button><div className="global-search-wrap"><form className="command-search" onSubmit={submit}><Search size={18}/><input id="forge-global-search" aria-label="Search ForgeGov" value={query} onFocus={()=>setSearchOpen(true)} onChange={e=>setQuery(e.target.value)} placeholder="Search opportunities, pursuits, rooms, documents, companies..."/><kbd><Command size={12}/> K</kbd></form>{searchOpen&&query.trim().length>=2&&<div className="global-search-results">{searching?<p>Searching ForgeGov…</p>:<>{hits.length?hits.map(hit=><button className={`global-search-hit hit-${hit.type}`} key={`${hit.type}-${hit.id}`} onClick={()=>choose(hit)}><span>{hit.type}</span><strong>{hit.title}</strong><small>{hit.subtitle||"Open in ForgeGov"}</small></button>):<p>No indexed ForgeGov matches yet.</p>}<div className="global-live-search-actions"><button type="button" onClick={()=>liveSearch("contracts")}><span>LIVE SAM.GOV</span><strong>Search contract opportunities</strong></button><button type="button" onClick={()=>liveSearch("grants")}><span>LIVE GRANTS.GOV</span><strong>Search federal grants</strong></button></div></>}</div>}</div></div><div className="topbar-actions"><span className="live-source"><i/> Federal data workspace</span><button className="shell-icon notification-button" onClick={()=>router.push("/notifications")} aria-label={`${unreadAlerts+unreadCollaboration} unread notifications`}><Bell size={19}/>{unreadAlerts+unreadCollaboration>0&&<span className="notification-count">{unreadAlerts+unreadCollaboration>99?"99+":unreadAlerts+unreadCollaboration}</span>}</button><button className="user-chip" onClick={()=>router.push("/account")}><span>{initials}</span><div><b>{displayName}</b><small>{session?.role}</small></div><ChevronDown size={14}/></button><button className="toolbar-button" onClick={()=>void logout()}>Sign out</button></div></header><div className="forge-content" onClick={()=>setSearchOpen(false)}>{children}</div><BetaFeedbackButton/></main>
   </div>;
 }
