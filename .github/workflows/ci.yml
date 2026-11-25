@@ -80,6 +80,8 @@ jobs:
         run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python3 scripts/visual_qa_experience.py
       - name: Public landing page and conversion checks
         run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python3 scripts/visual_qa_public.py
+      - name: Workspace accessibility in light and dark themes
+        run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python3 scripts/visual_qa_accessibility.py
       - name: Preserve browser evidence
         if: always()
         uses: actions/upload-artifact@v4

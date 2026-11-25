@@ -4,6 +4,7 @@
 
 - Mount the workspace shell only on workspace pages. Public pages avoid private notification and invitation polling. Switching organizations remounts the shell and its page state.
 - Keep mobile navigation keyboard focus inside the open drawer, dismiss it with Escape, restore focus to its trigger, and expose expanded navigation sections and current links to assistive technology.
+- Correct shared light/dark text contrast with theme-aware muted, link, success, and action-text tokens. Label the density and AI response-depth controls for assistive technology.
 - Increase mobile public-navigation, source-disclosure, caption, and product-tour text sizes and navigation touch targets at their source styles.
 - Initialize theme state consistently between server rendering and client hydration, then restore local and account preferences. Hydrate the public homepage before switching it to an authenticated dashboard, including when session loading wins the initial-render race.
 - Return structured API errors for ForgeAI provider failures, including briefing generation. Failed generations do not create empty analyses and can be retried.
