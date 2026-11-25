@@ -3,6 +3,9 @@ from unittest.mock import patch
 
 from django.test import TestCase, override_settings
 from django.utils import timezone
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
+from billiard.exceptions import SoftTimeLimitExceeded
 
 from .models import Award, AwardSyncRun, ConnectorSource, DataSyncRun, IntelligenceAlert, Opportunity, PipelineItem, Pursuit, SavedSearch
 from .tests import AuthenticatedApiTestCase
@@ -59,6 +62,66 @@ class SamSyncCompletenessTests(TestCase):
 
 
 class UsaSpendingSyncCompletenessTests(TestCase):
+    def test_repeated_awards_preserve_observation_history_without_rebuilding_summaries(self):
+        from .integrations import upsert_usaspending_award
+        from .models import SourceRecordVersion
+
+        record = {"generated_internal_id": "unchanged-award", "Award ID": "QA-001", "Recipient Name": "QA Vendor", "Awarding Agency": "QA Agency", "Award Amount": 500}
+        original, created = upsert_usaspending_award(record)
+        self.assertTrue(created)
+        observed = SourceRecordVersion.objects.get(source_id=original.source_id).last_seen_at
+        with CaptureQueriesContext(connection) as queries:
+            repeated, created = upsert_usaspending_award(dict(record))
+        self.assertFalse(created)
+        self.assertEqual(repeated.pk, original.pk)
+        self.assertFalse(repeated._forgegov_source_version_created)
+        self.assertEqual(SourceRecordVersion.objects.filter(source_id=original.source_id).count(), 1)
+        self.assertGreater(SourceRecordVersion.objects.get(source_id=original.source_id).last_seen_at, observed)
+        sql = " ".join(row["sql"] for row in queries)
+        self.assertNotIn('UPDATE "core_award"', sql)
+        self.assertNotIn('"core_agency"', sql)
+        self.assertNotIn('"core_vendor"', sql)
+        updated, created = upsert_usaspending_award({**record, "Award Amount": 750})
+        self.assertFalse(created)
+        self.assertEqual(updated.obligated_amount, 750)
+        self.assertTrue(updated._forgegov_source_version_created)
+
+    @patch("core.intelligence.services.award_ingestion.get_connector")
+    def test_time_budget_records_committed_progress_as_partial(self, get_connector):
+        from .intelligence.services.award_ingestion import sync_usaspending_awards
+
+        class InterruptedConnector:
+            descriptor = type("Descriptor", (), {"key": "usaspending-awards", "name": "USAspending Federal Awards"})()
+            last_pages_processed = 1
+            def iter_awards(self, **filters):
+                yield {"generated_internal_id": "committed-before-timeout", "Award ID": "QA-002"}
+                raise SoftTimeLimitExceeded()
+
+        get_connector.return_value = InterruptedConnector()
+        run = sync_usaspending_awards()
+        self.assertEqual(run.status, AwardSyncRun.Status.PARTIAL)
+        self.assertEqual(run.records_created, 1)
+        self.assertIsNotNone(run.completed_at)
+        self.assertTrue(Award.objects.filter(source_id="committed-before-timeout").exists())
+        self.assertIn("time budget", run.errors[0])
+
+    @patch("core.intelligence.services.award_ingestion.upsert_usaspending_award", side_effect=SoftTimeLimitExceeded())
+    @patch("core.intelligence.services.award_ingestion.get_connector")
+    def test_interruption_during_record_write_rolls_back_and_finishes_the_run(self, get_connector, upsert):
+        from .intelligence.services.award_ingestion import sync_usaspending_awards
+        from .models import SyncQuarantine
+
+        connector = get_connector.return_value
+        connector.descriptor.key = "usaspending-awards"
+        connector.descriptor.name = "USAspending Federal Awards"
+        connector.last_pages_processed = 1
+        connector.iter_awards.return_value = iter([{"generated_internal_id": "interrupted-award"}])
+        run = sync_usaspending_awards()
+        self.assertEqual(run.status, AwardSyncRun.Status.FAILED)
+        self.assertEqual(run.records_created, 0)
+        self.assertIsNotNone(run.completed_at)
+        self.assertFalse(SyncQuarantine.objects.exists())
+
     @patch("core.intelligence.services.award_ingestion.upsert_usaspending_award")
     @patch("core.intelligence.services.award_ingestion.get_connector")
     def test_ingestion_marks_remaining_pages_as_partial(self, get_connector, upsert):

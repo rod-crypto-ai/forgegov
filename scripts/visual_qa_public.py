@@ -26,10 +26,12 @@ with sync_playwright() as p:
         for w,h in [(320,800),(390,844),(768,1024),(1024,768),(1440,1000),(1920,1080)]:
             context=browser.new_context(viewport={'width':w,'height':h},color_scheme='dark' if w==1024 else 'light')
             context.add_init_script("window.__publicCLS=0;if(PerformanceObserver.supportedEntryTypes.includes('layout-shift'))new PerformanceObserver(list=>{for(const e of list.getEntries()){if(!e.hadRecentInput)window.__publicCLS+=e.value;}}).observe({type:'layout-shift',buffered:true});")
-            page=context.new_page(); errors=[]
+            page=context.new_page(); errors=[]; private_requests=[]
             page.on('pageerror',lambda e:errors.append(str(e)))
             def api(route):
                 path=route.request.url
+                if any(endpoint in path for endpoint in ('/alerts/', '/collaboration/notifications/', '/auth/invitations/pending/')):
+                    private_requests.append(path)
                 if '/registration-config/' in path:
                     payload={'mode':'private_beta','public_registration':False};status=200
                 elif '/csrf/' in path:payload={'csrfToken':'isolated-public-qa'};status=200
@@ -93,6 +95,7 @@ with sync_playwright() as p:
             account.click()
             expect(page.get_by_role('heading',name='Create your ForgeGov account')).to_be_visible()
             assert not errors,errors
+            assert not private_requests, f'Public pages requested private workspace data: {private_requests}'
             results.append({'browser':name,'width':w,'passed':True})
             context.close()
         browser.close()

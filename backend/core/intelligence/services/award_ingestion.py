@@ -5,6 +5,7 @@ from typing import Any
 
 from django.db import transaction
 from django.utils import timezone
+from billiard.exceptions import SoftTimeLimitExceeded
 
 from ...integrations import IntegrationError, upsert_usaspending_award, usaspending_source_id
 from ...integration_resilience import quarantine_record
@@ -116,6 +117,8 @@ def sync_usaspending_awards(*, start_date: str | None = None, end_date: str | No
                     award, was_created = upsert_usaspending_award(record)
                 created += int(was_created)
                 updated += int((not was_created) and bool(getattr(award, "_forgegov_source_version_created", True)))
+            except SoftTimeLimitExceeded:
+                raise
             except Exception as exc:
                 errors.append(str(exc))
                 quarantine_record(
@@ -129,6 +132,9 @@ def sync_usaspending_awards(*, start_date: str | None = None, end_date: str | No
                 "Increase USASPENDING_SYNC_PAGES or shorten the sync window."
             )
         run.status = AwardSyncRun.Status.PARTIAL if errors else AwardSyncRun.Status.SUCCEEDED
+    except SoftTimeLimitExceeded:
+        errors.append("The synchronization time budget was reached. Committed records are retained; retry to continue refreshing this window.")
+        run.status = AwardSyncRun.Status.PARTIAL if created or updated else AwardSyncRun.Status.FAILED
     except Exception as exc:
         errors.append(str(exc))
         run.status = AwardSyncRun.Status.FAILED

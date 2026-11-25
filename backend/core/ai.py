@@ -6,6 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 import requests
+from rest_framework.exceptions import APIException
 from django.conf import settings
 from django.db.models import F
 
@@ -28,9 +29,12 @@ from .models import (
 )
 
 
-class OpenAIIntegrationError(RuntimeError):
+class OpenAIIntegrationError(APIException):
+    status_code = 502
+    default_code = "ai_provider_error"
+
     def __init__(self, message: str, *, status_code: int = 502):
-        super().__init__(message)
+        super().__init__(detail=message)
         self.status_code = status_code
 
 
