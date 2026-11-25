@@ -7,7 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 from billiard.exceptions import SoftTimeLimitExceeded
 
-from ...integrations import IntegrationError, upsert_usaspending_award, usaspending_source_id
+from ...integrations import IntegrationError, refresh_award_agencies, upsert_usaspending_award, usaspending_source_id
 from ...integration_resilience import quarantine_record
 from ...models import Award, AwardSyncRun, ConnectorSource, Opportunity
 from ..connectors import connector_registry, get_connector
@@ -109,12 +109,13 @@ def sync_usaspending_awards(*, start_date: str | None = None, end_date: str | No
     )
     errors: list[str] = []
     created = updated = seen = 0
+    deferred_agencies: set[str] = set()
     try:
         for record in connector.iter_awards(start_date=start_date, end_date=end_date, pages=pages, limit=limit, keyword=keyword, agency=agency, naics=naics):
             seen += 1
             try:
                 with transaction.atomic():
-                    award, was_created = upsert_usaspending_award(record)
+                    award, was_created = upsert_usaspending_award(record, deferred_agencies=deferred_agencies)
                 created += int(was_created)
                 updated += int((not was_created) and bool(getattr(award, "_forgegov_source_version_created", True)))
             except SoftTimeLimitExceeded:
@@ -126,6 +127,7 @@ def sync_usaspending_awards(*, start_date: str | None = None, end_date: str | No
                     source_id=usaspending_source_id(record),
                     reason="award_sync_error", error=exc, award_sync_run=run,
                 )
+        refresh_award_agencies(deferred_agencies)
         if bool(getattr(connector, "last_has_next", False)):
             errors.append(
                 f"USAspending has additional pages after the configured {pages}-page limit. "

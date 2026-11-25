@@ -13,6 +13,7 @@ import { BetaFeedbackButton } from "@/components/beta-feedback";
 import { useThemePreferences } from "@/components/theme-provider";
 import { isPublicRoute } from "@/lib/routes";
 import { ForgeGovMark } from "@/components/forgegov-logo";
+import { useHydrated } from "@/lib/use-hydrated";
 
 type SearchHit={type:string;id:string|number;title:string;subtitle?:string;href:string};
 
@@ -29,7 +30,8 @@ function navHrefActive(pathname:string,queryString:string,href:string){
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { session } = useAuth();
-  if (isPublicRoute(pathname) && (!session || pathname !== "/")) {
+  const hydrated = useHydrated();
+  if (isPublicRoute(pathname) && (!hydrated || !session || pathname !== "/")) {
     return <>{children}</>;
   }
   return <WorkspaceShell key={session?.organization.id}>{children}</WorkspaceShell>;
@@ -44,6 +46,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!menuOpen) return;
+    const trigger = navigationTrigger.current;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     navigationRef.current?.querySelector<HTMLButtonElement>('button[aria-label="Close navigation"]')?.focus();
@@ -68,7 +71,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
     return () => {
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKey);
-      navigationTrigger.current?.focus();
+      trigger?.focus();
     };
   }, [menuOpen]);
   const collapsed=preferences.sidebar_collapsed;

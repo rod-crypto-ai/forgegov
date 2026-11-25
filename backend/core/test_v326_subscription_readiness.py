@@ -62,6 +62,29 @@ class SamSyncCompletenessTests(TestCase):
 
 
 class UsaSpendingSyncCompletenessTests(TestCase):
+    @patch("core.intelligence.services.award_ingestion.get_connector")
+    def test_batch_refreshes_agency_totals_once_after_all_awards_are_committed(self, get_connector):
+        from .integrations import refresh_award_agencies
+        from .intelligence.services.award_ingestion import sync_usaspending_awards
+        from .models import Agency
+
+        class BatchConnector:
+            descriptor = type("Descriptor", (), {"key": "usaspending-awards", "name": "USAspending Federal Awards"})()
+            last_pages_processed = 1
+            last_has_next = False
+            def iter_awards(self, **filters):
+                for index, amount in enumerate((500, 750)):
+                    yield {"generated_internal_id": f"batch-award-{index}", "Award ID": f"QA-{index}", "Awarding Agency": "Shared Agency", "Funding Agency": "Shared Agency", "Award Amount": amount}
+
+        get_connector.return_value = BatchConnector()
+        with patch("core.intelligence.services.award_ingestion.refresh_award_agencies", wraps=refresh_award_agencies) as refresh:
+            run = sync_usaspending_awards()
+        self.assertEqual(run.status, AwardSyncRun.Status.SUCCEEDED)
+        refresh.assert_called_once_with({"Shared Agency"})
+        agency = Agency.objects.get(name="Shared Agency")
+        self.assertEqual(agency.award_count, 2)
+        self.assertEqual(agency.obligated_amount, 1250)
+
     def test_repeated_awards_preserve_observation_history_without_rebuilding_summaries(self):
         from .integrations import upsert_usaspending_award
         from .models import SourceRecordVersion

@@ -391,9 +391,8 @@ def usaspending_source_id(record: dict[str, Any]) -> str:
     )
 
 
-def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None = None):
-    from django.db import models
-    from .models import Agency, Award, Vendor
+def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None = None, deferred_agencies: set[str] | None = None):
+    from .models import Award, Vendor
 
     source_id = usaspending_source_id(record)
     if not source_id:
@@ -445,6 +444,8 @@ def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None =
             provenance={"transport": "api", "award_type": existing.award_type},
         )
         existing._forgegov_source_version_created = version_created
+        if deferred_agencies is not None:
+            deferred_agencies.update({awarding_agency, funding_agency} - {""})
         return existing, False
 
     defaults = {
@@ -491,7 +492,20 @@ def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None =
                 "raw_data": {"latest_award": source_id},
             },
         )
-    for agency_name in {awarding_agency, funding_agency} - {""}:
+    agency_names = {awarding_agency, funding_agency} - {""}
+    if deferred_agencies is not None:
+        deferred_agencies.update(agency_names)
+    else:
+        refresh_award_agencies(agency_names)
+    return award, created
+
+
+def refresh_award_agencies(agency_names: set[str]) -> None:
+    """Refresh each touched agency once after a batch of award writes."""
+    from django.db import models
+    from .models import Agency, Award
+
+    for agency_name in agency_names:
         Agency.objects.update_or_create(
             name=agency_name,
             defaults={
@@ -504,7 +518,6 @@ def upsert_usaspending_award(record: dict[str, Any], *, award_type: str | None =
                 "raw_data": {"source": "usaspending.gov"},
             },
         )
-    return award, created
 
 
 def search_usaspending_awards(
