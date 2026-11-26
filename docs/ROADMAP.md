@@ -64,3 +64,7 @@ Stabilization within commercial readiness covers shared navigation accessibility
 ## v3.3.6 — Saved opportunity continuity
 
 Preserve access to saved SAM.gov pursuits when live source lookup is unavailable, with explicit stored-evidence disclosure and source verification boundaries. Correct long persisted AI-history layout and unverified configuration labels. This is a reliability correction within commercial readiness.
+
+## v3.3.7 — Session renewal reliability
+
+Correct expired-access-cookie and overlapping refresh-request failures while preserving refresh-token validation, CSRF, rotation, session revocation, account state, and HttpOnly cookie controls. Validate real two-tab expiry recovery in the isolated browser/backend suite.
