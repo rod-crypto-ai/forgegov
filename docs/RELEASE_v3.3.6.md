@@ -5,6 +5,7 @@ Saved SAM.gov opportunity continuity
 - Keep saved opportunity and pipeline workspaces accessible when a live SAM.gov lookup is empty or unavailable. Use a saved notice's posted date for its lookup instead of limiting it to the latest 30 days.
 - Clearly disclose saved-record fallback and its save timestamp. Require users to verify amendments, status, and deadlines at SAM.gov before acting. Never label the fallback as live.
 - Preserve stored descriptions and attachment metadata when the provider key or service is unavailable. Match the requested notice identifier and source exactly; unknown notices still fail.
+- Keep shared page-header action buttons wide enough for their labels while the heading column adapts to available space.
 - Keep long persisted ForgeAI history titles inside the context rail and show unverified provider status while configuration checks are pending or unavailable.
 - Regression coverage includes pipeline continuity, upstream failures, live-record precedence, identifier/source mismatch, and rendered fallback disclosure across the existing responsive browser matrix.
 
