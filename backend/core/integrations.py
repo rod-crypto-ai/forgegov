@@ -1034,18 +1034,16 @@ def _clean_attachment_name(name: Any, url: Any = "", *, fallback: str = "Governm
 
 def fetch_sam_opportunity_documents(notice_id: str) -> dict[str, Any]:
     """Return public SAM attachment metadata and fetch the protected description when available."""
-    if not settings.SAM_GOV_API_KEY:
-        raise IntegrationError("SAM_GOV_API_KEY is not configured.")
-    opportunity = Opportunity.objects.filter(source_id=notice_id).first()
+    opportunity = Opportunity.objects.filter(source="sam.gov", source_id=notice_id).first()
     if not opportunity:
         data = search_sam_opportunities(notice_id=notice_id, limit=1, persist=True)
-        opportunity = Opportunity.objects.filter(source_id=notice_id).first()
+        opportunity = Opportunity.objects.filter(source="sam.gov", source_id=notice_id).first()
         if not opportunity and not data.get("opportunities"):
             raise IntegrationError("The SAM.gov opportunity could not be found.")
     raw = opportunity.raw_data if opportunity else {}
     description_url = raw.get("description") or raw.get("descriptionUrl") or raw.get("descriptionURL")
     description = opportunity.description if opportunity else ""
-    if isinstance(description_url, str) and description_url.startswith("http"):
+    if settings.SAM_GOV_API_KEY and isinstance(description_url, str) and description_url.startswith("http"):
         try:
             response = resilient_request("sam.gov", "GET", description_url, params={"api_key": settings.SAM_GOV_API_KEY}, timeout=30)
             if response.ok:
@@ -1178,12 +1176,48 @@ def search_usaspending_contract_vehicles(
 
 def fetch_sam_opportunity_detail(notice_id: str) -> dict[str, Any]:
     """Return one normalized SAM opportunity, public documents, and evidence-based incumbent signals."""
-    result = search_sam_opportunities(notice_id=notice_id, limit=1, persist=True)
-    records = result.get("opportunities") or []
-    if not records:
+    stored = Opportunity.objects.filter(source="sam.gov", source_id=notice_id).first()
+    filters = {"notice_id": notice_id, "limit": 1, "persist": True}
+    # A saved pursuit can outlive the live search's default 30-day window.
+    if stored and stored.posted_date:
+        filters["posted_from"] = stored.posted_date.date().isoformat()
+    source_warning = ""
+    try:
+        result = search_sam_opportunities(**filters)
+        records = [row for row in (result.get("opportunities") or [])
+                   if (row.get("source_id") or row.get("noticeId") or row.get("noticeid")) == notice_id]
+    except IntegrationError:
+        if not stored:
+            raise
+        records = []
+    if records:
+        record = records[0]
+        source_status = "live"
+    elif stored:
+        record = {
+            **stored.raw_data,
+            "noticeId": stored.source_id,
+            "source_id": stored.source_id,
+            "title": stored.title,
+            "solicitationNumber": stored.solicitation_number,
+            "fullParentPathName": stored.organization_path or stored.agency,
+            "naicsCode": stored.naics_code,
+            "type": stored.notice_type_raw or stored.notice_type,
+            "typeOfSetAsideDescription": stored.set_aside,
+            "responseDeadLine": stored.response_deadline.isoformat() if stored.response_deadline else "",
+            "postedDate": stored.posted_date.isoformat() if stored.posted_date else "",
+            "archiveDate": stored.archive_date.isoformat() if stored.archive_date else "",
+            "source_url": stored.source_url,
+            "source_status": "stored",
+        }
+        source_status = "stored"
+        source_warning = (
+            "Showing the saved SAM.gov record because live verification was unavailable. "
+            "Verify current status, amendments, and deadlines at SAM.gov before acting."
+        )
+    else:
         raise IntegrationError("The SAM.gov opportunity could not be found.")
     documents = fetch_sam_opportunity_documents(notice_id)
-    record = records[0]
 
     # SAM opportunities do not normally identify a confirmed incumbent. These signals
     # rank recent stored awardees that match the opportunity's agency and/or NAICS.
@@ -1212,6 +1246,9 @@ def fetch_sam_opportunity_detail(notice_id: str) -> dict[str, Any]:
 
     return {
         "opportunity": record,
+        "source_status": source_status,
+        "source_warning": source_warning,
+        "stored_at": stored.updated_at.isoformat() if source_status == "stored" else None,
         "description": documents.get("description", ""),
         "documents": documents.get("documents", []),
         "source_url": documents.get("source_url") or record.get("source_url", ""),

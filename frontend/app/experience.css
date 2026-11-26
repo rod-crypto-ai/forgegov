@@ -98,6 +98,8 @@ dialog.pursuit-detail-modal > footer { background: var(--panel-soft); }
 .company-hub-form .check-row label { display: inline-flex; align-items: center; gap: 8px; }
 .company-hub-form .check-row input { width: 18px; height: 18px; margin: 0; flex-shrink: 0; }
 .page-hero, .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
+.page-hero > div:first-child { flex: 1; min-width: 0; }
+.page-hero > .button { flex-shrink: 0; white-space: nowrap; font-size: 14px; }
 .panel-heading h2 { font-size: 20px; }
 .panel-heading > svg { color: var(--accent); flex-shrink: 0; margin-top: 3px; }
 .award-intelligence-page, .connector-manager-page { display: grid; gap: 20px; }
@@ -211,3 +213,15 @@ html[data-theme="dark"] :is(.pricing-form input, .pricing-form select, .pricing-
 .access-add-row { flex-wrap:wrap; }
 .access-add-row select { flex:1 1 auto; min-width:min(100%,160px); }
 @media(max-width:430px) { .partner-permission-card { grid-template-columns:minmax(0,1fr); } }
+
+/* Stored source evidence remains usable while its live status is unverified. */
+.saved-source-notice { display: flex; align-items: flex-start; gap: 1rem; }
+.saved-source-notice > svg { flex-shrink: 0; margin-top: .15rem; }
+.saved-source-notice > div { min-width: 0; }
+.saved-source-notice p { margin: .5rem 0; line-height: 1.6; }
+.saved-source-notice small { color: var(--muted); font-size: .8125rem; }
+
+/* Long persisted research titles must shrink inside the context rail. */
+.assistant-main, .assistant-context, .ai-history { min-width: 0; }
+.ai-history button { min-width: 0; max-width: 100%; }
+.ai-history button span { min-width: 0; flex: 1; }

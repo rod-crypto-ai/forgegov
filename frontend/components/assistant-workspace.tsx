@@ -50,7 +50,7 @@ export function AssistantWorkspace() {
   const [provider, setProvider] = useState("openai");
   const [webConfigured, setWebConfigured] = useState(false);
   const [webReachable, setWebReachable] = useState<boolean | null>(null);
-  const [webStatus, setWebStatus] = useState("disabled");
+  const [webStatus, setWebStatus] = useState("not_verified");
   const [copied, setCopied] = useState<number | null>(null);
   const threadRef = useRef<HTMLDivElement | null>(null);
 
@@ -88,7 +88,7 @@ export function AssistantWorkspace() {
         setWebReachable(status.ai?.web_search_reachable ?? null);
         setWebStatus(status.ai?.web_search_status ?? "disabled");
       } catch {
-        if (active) { setConfigured(null); setWebReachable(false); setWebStatus("unavailable"); }
+        if (active) { setConfigured(null); setWebReachable(null); setWebStatus("not_verified"); }
       }
     };
     const start = window.setTimeout(() => void loadStatus(), 0);
@@ -140,7 +140,9 @@ export function AssistantWorkspace() {
   }
 
   const webLabel =
-    webStatus === "live" || webReachable
+    webStatus === "not_verified"
+      ? "Live Web Unverified"
+      : webStatus === "live" || webReachable
       ? "Live Web Connected"
       : webStatus === "degraded"
         ? "Live Web Degraded"
@@ -150,7 +152,9 @@ export function AssistantWorkspace() {
             ? "Live Web Configured"
             : "Live Web Not Configured";
   const webDetail =
-    webStatus === "live" || webReachable
+    webStatus === "not_verified"
+      ? "Live-web reachability has not been verified."
+      : webStatus === "live" || webReachable
       ? "ForgeGov private SearXNG search is connected."
       : webStatus === "degraded"
         ? "The live service is recovering; cached web intelligence may be used when available."
@@ -168,6 +172,6 @@ export function AssistantWorkspace() {
       {error && <p className="assistant-error">{error}</p>}
       <form className="assistant-composer" onSubmit={submit}><label className="ai-workflow-select"><span>Research workflow</span><select value={workflow} onChange={(event) => setWorkflow(event.target.value)} disabled={loading}>{(platform?.workflows ?? [{key:"research",label:"Research"},{key:"opportunity",label:"Opportunity"},{key:"capture",label:"Capture"},{key:"proposal",label:"Proposal"},{key:"market",label:"Market"}]).map((item)=><option key={item.key} value={item.key}>{item.label}</option>)}</select></label><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="Ask about an opportunity, agency, competitor, clause, partner, risk, or next action…" disabled={loading} maxLength={50000} /><div><span><ShieldCheck size={15} /> Evidence is assistance, not approval · Enter to send</span><button type="submit" aria-label="Send" disabled={loading || !prompt.trim()}>{loading ? <LoaderCircle className="spin" size={18} /> : <ArrowUp size={18} />}</button></div></form>
     </section>
-    <aside className="assistant-context"><span className="eyebrow">ACTIVE CONTEXT</span><h2>Research sources</h2><div className="context-source"><span className={`status-dot ${configured ? "live" : "pending"}`} /><div><strong>{provider === "ollama" ? "Self-hosted Ollama" : "OpenAI API"}</strong><small>{configured ? `${model || "Configured model"} configured` : "Provider needs configuration"}</small></div></div><div className="context-source"><span className={`status-dot ${webStatus === "live" || webReachable ? "live" : webStatus === "degraded" || webStatus === "unavailable" ? "reconnecting" : "pending"}`} /><div><strong>Live web research</strong><small>{webDetail}</small></div></div><div className="context-source"><span className="status-dot live" /><div><strong>ForgeGov workspace</strong><small>Company profile, pipeline, capture plans, proposals, tasks, contacts, and files</small></div></div><div className="context-source"><span className="status-dot live" /><div><strong>Government records</strong><small>SAM.gov, Grants.gov, USAspending, and available stored public records</small></div></div><div className="context-warning"><ShieldCheck size={18} /><p>Private organization data stays scoped to authorized workspace access. Source counts do not prove completeness, correctness, readiness, or approval.</p></div>{conversations.length>0&&<section className="ai-history"><div><History size={16}/><strong>Research history</strong></div>{conversations.slice(0,8).map((conversation)=><button type="button" className={conversation.id===conversationId?"selected":""} key={conversation.id} onClick={()=>resumeConversation(conversation)}><span>{conversation.title}</span><small>{new Date(conversation.updated_at).toLocaleDateString()}</small></button>)}</section>}</aside>
+    <aside className="assistant-context"><span className="eyebrow">ACTIVE CONTEXT</span><h2>Research sources</h2><div className="context-source"><span className={`status-dot ${configured ? "live" : "pending"}`} /><div><strong>{provider === "ollama" ? "Self-hosted Ollama" : "OpenAI API"}</strong><small>{configured ? `${model || "Configured model"} configured` : configured === false ? "Provider needs configuration" : "Provider status unverified"}</small></div></div><div className="context-source"><span className={`status-dot ${webStatus === "live" || webReachable ? "live" : webStatus === "degraded" || webStatus === "unavailable" ? "reconnecting" : "pending"}`} /><div><strong>Live web research</strong><small>{webDetail}</small></div></div><div className="context-source"><span className="status-dot live" /><div><strong>ForgeGov workspace</strong><small>Company profile, pipeline, capture plans, proposals, tasks, contacts, and files</small></div></div><div className="context-source"><span className="status-dot live" /><div><strong>Government records</strong><small>SAM.gov, Grants.gov, USAspending, and available stored public records</small></div></div><div className="context-warning"><ShieldCheck size={18} /><p>Private organization data stays scoped to authorized workspace access. Source counts do not prove completeness, correctness, readiness, or approval.</p></div>{conversations.length>0&&<section className="ai-history"><div><History size={16}/><strong>Research history</strong></div>{conversations.slice(0,8).map((conversation)=><button type="button" className={conversation.id===conversationId?"selected":""} key={conversation.id} onClick={()=>resumeConversation(conversation)}><span>{conversation.title}</span><small>{new Date(conversation.updated_at).toLocaleDateString()}</small></button>)}</section>}</aside>
   </div>;
 }

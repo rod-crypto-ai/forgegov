@@ -236,7 +236,7 @@ def proposal_editing(page, evidence_key):
     second = {**section, "id": 2, "title": "QA management section", "content": "Saved management baseline"}
     counts = {"volumes": 1, "sections": 2, "sections_approved": 0, "requirements": 0, "requirements_closed": 0, "reviews": 0, "reviews_passed": 0, "open_findings": 0}
     payload = {"plan": {"id": 1, "status": "draft", "submission_ready": False, "readiness_score": 0}, "execution": {"members": [], "requirements": [], "counts": {"requirements_total": 0, "requirements_closed": 0, "reviews_total": 0, "reviews_passed": 0, "open_findings": 0}, "amendment_impact": {"changed": False, "changes": []}}, "volumes": [{"id": 1, "key": "technical", "title": "QA technical volume", "instructions": "", "status": "draft", "owner_id": None, "owner": "", "due_at": None, "page_limit": None, "sort_order": 1, "sections": [section, second]}], "library": [], "package_validation": {"ready": False, "blockers": ["Human review required"], "warnings": [], "counts": counts, "checked_at": "2026-10-22T00:00:00Z"}, "permissions": {"can_financial": True, "can_approve": True}, "warning": "QA controlled proposal evidence"}
-    detail = {"opportunity": {"title": "QA proposal opportunity", "fullParentPathName": "QA Agency", "solicitationNumber": "QA-PROPOSAL", "type": "Solicitation", "naicsCode": "541512"}, "description": "QA scope", "documents": [], "source_url": "https://sam.gov/"}
+    detail = {"opportunity": {"title": "QA proposal opportunity", "fullParentPathName": "QA Agency", "solicitationNumber": "QA-PROPOSAL", "type": "Solicitation", "naicsCode": "541512"}, "description": "QA scope", "documents": [], "source_url": "https://sam.gov/", "source_status": "stored", "source_warning": "Showing a saved SAM.gov record; verify live status and deadlines at SAM.gov before acting.", "stored_at": "2026-10-22T00:00:00Z"}
     page.route(f"**/api/live/sam/opportunities/{notice}/", lambda route: fulfill(route, detail))
     for pattern in ("**/api/workflow/opportunity-workspaces/**", "**/api/workflow/opportunities/*/command-summary/**", "**/api/intelligence/opportunities/**"):
         page.route(pattern, lambda route: fulfill(route, {"detail": "No controlled supplemental evidence"}, 404))
@@ -252,6 +252,10 @@ def proposal_editing(page, evidence_key):
         fulfill(route, payload)
     page.route(f"**/api/ai/opportunities/{notice}/proposal-sections/1/", save_section)
     navigate(page, BASE_URL + f"/opportunities/federal-contracts/{notice}", wait_until="networkidle")
+    page.get_by_role("status").filter(has_text="Saved source record · live status unverified").wait_for()
+    assert geometry(page)["overflow"] <= 2
+    if evidence_key:
+        page.screenshot(path=str(OUT / f"{evidence_key}-saved-source.png"), full_page=True)
     page.get_by_role("tab", name="Proposal", exact=True).click()
     editor = page.get_by_label("Section content", exact=True)
     editor.wait_for()

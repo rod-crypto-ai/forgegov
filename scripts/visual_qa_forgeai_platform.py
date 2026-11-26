@@ -63,7 +63,7 @@ def run_case(browser_type, scenario: tuple[str, int, int]) -> list[str]:
     install_api_fixtures(page)
     page.route("**/api/auth/csrf/**", fulfill({"csrfToken": "forgegov-visual-qa"}))
     page.route("**/api/ai/platform/**", fulfill(PLATFORM))
-    page.route("**/api/ai/conversations/**", fulfill([]))
+    page.route("**/api/ai/conversations/**", fulfill([{ "id": 1, "title": "Long persisted government-contracting research title " * 8, "updated_at": "2026-10-25T00:00:00Z", "messages": [] }]))
     page.route("**/api/ai/chat/**", fulfill(ANSWER))
     page.route("**/api/integrations/status/**", fulfill({"ai": {"provider": "openai", "model": "qa-model", "configured": True, "web_search_configured": True, "web_search_reachable": False, "web_search_status": "unavailable"}}))
     issues: list[str] = []
@@ -78,6 +78,14 @@ def run_case(browser_type, scenario: tuple[str, int, int]) -> list[str]:
         for label in ["ForgeGov AI", "Verified Evidence", "Evidence and provenance", "Evidence is assistance, not approval"]:
             if page.get_by_text(label, exact=False).count() == 0:
                 issues.append(f"missing visible content: {label}")
+        history_fits = page.evaluate("""() => {
+            const rail = document.querySelector('.assistant-context');
+            if (!rail || !rail.getClientRects().length) return true;
+            return [...rail.querySelectorAll('.ai-history button')].every(button =>
+                button.getBoundingClientRect().right <= rail.getBoundingClientRect().right + 1);
+        }""")
+        if not history_fits:
+            issues.append("Persisted research history extends beyond its context rail")
         metrics = page.evaluate("() => ({sw:document.documentElement.scrollWidth,cw:document.documentElement.clientWidth,body:(document.body?.innerText||'').trim().length})")
         if metrics["body"] < 400:
             issues.append("ForgeAI workspace became blank or near-blank")
