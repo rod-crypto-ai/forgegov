@@ -10,7 +10,7 @@ from django.middleware.csrf import get_token
 from django.utils import timezone
 from django.utils.text import slugify
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes, throttle_classes
+from rest_framework.decorators import api_view, authentication_classes, permission_classes, throttle_classes
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -647,8 +647,11 @@ def mfa_passkey_verify(request):
 
 
 @api_view(["POST"])
+@authentication_classes([])
 @permission_classes([AllowAny])
 def refresh(request):
+    # Authenticate the refresh token below. An expired access cookie must not
+    # prevent the refresh flow from validating its own credential.
     enforce_csrf(request)
     raw = request.COOKIES.get(settings.AUTH_REFRESH_COOKIE_NAME)
     if not raw:
@@ -663,8 +666,9 @@ def refresh(request):
         if refresh_token.get("fgsid") and not auth_session:
             raise User.DoesNotExist
     except (TokenError, User.DoesNotExist, KeyError):
-        response = Response({"detail": "Refresh token is invalid, expired, or revoked."}, status=status.HTTP_401_UNAUTHORIZED)
-        return _clear_auth_cookies(response)
+        # A late request can carry a token rotated by another tab. Deleting the
+        # shared cookies here could erase that tab's successful fresh session.
+        return Response({"detail": "Refresh token is invalid, expired, or revoked."}, status=status.HTTP_401_UNAUTHORIZED)
     try:
         refresh_token.blacklist()
     except Exception:

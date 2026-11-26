@@ -11,6 +11,7 @@ export type ApiList<T = Record<string, unknown>> = {
 type ErrorPayload = { detail?: unknown } & Record<string, unknown>;
 let csrfToken: string | null = null;
 let csrfRequest: Promise<string> | null = null;
+let refreshRequest: Promise<unknown> | null = null;
 const DEFAULT_TIMEOUT_MS = 20_000;
 
 async function fetchWithTimeout(input: RequestInfo | URL, options: RequestInit = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
@@ -74,6 +75,18 @@ async function getCsrfToken(force = false): Promise<string> {
   return csrfRequest;
 }
 
+async function refreshSession() {
+  if (!refreshRequest) {
+    const refresh = () => requestJson<{ refreshed: boolean }>("/auth/refresh/", { method: "POST" }, false, true);
+    // Cookies stay HttpOnly. Only the refresh operation is shared between tabs.
+    const operation = typeof navigator !== "undefined" && navigator.locks
+      ? navigator.locks.request("forgegov-session-refresh", refresh)
+      : refresh();
+    refreshRequest = operation.finally(() => { refreshRequest = null; });
+  }
+  return refreshRequest;
+}
+
 async function requestJson<T>(path: string, options: RequestInit = {}, allowRefresh = true, allowCsrfRetry = true): Promise<T> {
   const method = (options.method ?? "GET").toUpperCase();
   const headers = new Headers(options.headers ?? {});
@@ -93,7 +106,9 @@ async function requestJson<T>(path: string, options: RequestInit = {}, allowRefr
 
   const refreshBlocked = ["/auth/csrf/", "/auth/login/", "/auth/register/", "/auth/refresh/", "/auth/logout/"].includes(path);
   if (response.status === 401 && allowRefresh && !refreshBlocked) {
-    await requestJson<{ refreshed: boolean }>("/auth/refresh/", { method: "POST" }, false, true);
+    // A different tab may already have rotated the cookie. Retry the original
+    // request once even if this refresh lost that race; the API still checks it.
+    await refreshSession().catch(() => undefined);
     return requestJson<T>(path, options, false, true);
   }
 
