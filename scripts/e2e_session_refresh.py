@@ -30,11 +30,14 @@ async def check_engine(playwright, engine):
         await first.get_by_label("Password", exact=True).fill(PASSWORD)
         await first.get_by_role("button", name="Sign in securely", exact=True).click()
         await first.wait_for_url(BASE + "/", timeout=30000)
+        await expect(first.get_by_role("button", name="Sign out", exact=True)).to_be_visible()
         await first.wait_for_load_state("networkidle")
-        await asyncio.gather(
-            first.goto(BASE + "/capture/pipelines", wait_until="networkidle"),
-            second.goto(BASE + "/capture/tasks", wait_until="networkidle"),
-        )
+        # Follow the visible SPA navigation after login. A hard goto while
+        # Next finishes the redirect can cancel WebKit's active navigation.
+        await first.get_by_role("link", name="Pipelines", exact=True).click()
+        await first.wait_for_url(BASE + "/capture/pipelines")
+        await first.wait_for_load_state("networkidle")
+        await second.goto(BASE + "/capture/tasks", wait_until="networkidle")
         for cycle in range(3):
             await asyncio.gather(*[page.wait_for_load_state("networkidle") for page in (first, second)])
             # Only synthetic, disposable CI cookies are modified. The real
