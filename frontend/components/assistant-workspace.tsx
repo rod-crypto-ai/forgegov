@@ -1,8 +1,8 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, Bot, Check, Clipboard, ExternalLink, FileSearch, Globe2, History, LoaderCircle, Plus, ShieldCheck, Sparkles, Target, Users } from "lucide-react";
-import { apiGet, apiPost } from "@/lib/api";
+import { ApiTimeoutError, apiGet, apiPost } from "@/lib/api";
 
 const prompts = [
   { icon: FileSearch, title: "Opportunity brief", text: "Summarize the most relevant opportunity records, deadlines, requirements, risks, and unanswered questions. Use live web research for current facts when available." },
@@ -58,14 +58,18 @@ export function AssistantWorkspace() {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, loading]);
 
-  async function loadPlatformState() {
-    const [conversationPayload, platformPayload] = await Promise.all([
-      apiGet<Paginated<Conversation>>("/ai/conversations/"),
+  const loadResearchHistory = useCallback(async () => {
+    const payload = await apiGet<Paginated<Conversation>>("/ai/conversations/");
+    setConversations(Array.isArray(payload) ? payload : payload.results ?? []);
+  }, []);
+
+  const loadPlatformState = useCallback(async () => {
+    const [, platformPayload] = await Promise.all([
+      loadResearchHistory(),
       apiGet<PlatformPayload>("/ai/platform/"),
     ]);
-    setConversations(Array.isArray(conversationPayload) ? conversationPayload : conversationPayload.results ?? []);
     setPlatform(platformPayload);
-  }
+  }, [loadResearchHistory]);
 
   useEffect(() => {
     let active = true;
@@ -73,7 +77,7 @@ export function AssistantWorkspace() {
       void loadPlatformState().catch(() => { if (active) setPlatform(null); });
     }, 0);
     return () => { active = false; window.clearTimeout(timer); };
-  }, []);
+  }, [loadPlatformState]);
 
   useEffect(() => {
     let active = true;
@@ -112,7 +116,12 @@ export function AssistantWorkspace() {
       setWebStatus(response.web_status ?? (response.web_enabled ? "live" : "unavailable"));
       void loadPlatformState().catch(() => undefined);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "ForgeGov AI could not complete the request.");
+      if (requestError instanceof ApiTimeoutError || requestError instanceof TypeError) {
+        setError("The connection ended before ForgeAI returned its answer. Check Research history for a saved answer before sending the question again.");
+        await loadResearchHistory().catch(() => undefined);
+      } else {
+        setError(requestError instanceof Error ? requestError.message : "ForgeGov AI could not complete the request.");
+      }
     } finally { setLoading(false); }
   }
 
@@ -166,12 +175,12 @@ export function AssistantWorkspace() {
 
   return <div className="assistant-layout modern-ai-layout">
     <section className="assistant-main">
-      <header className="assistant-heading"><span className="assistant-mark"><Sparkles size={24} /></span><div><span className="eyebrow">FORGEAI INTELLIGENCE PLATFORM</span><h1>ForgeGov AI</h1><p>Grounded research across opportunities, awards, capture, proposals, company evidence, and authorized workspace records.</p></div><div className="ai-heading-actions"><div className="ai-mode-badges"><span>{provider === "ollama" ? "Open-source model" : "Hosted model"}</span><span className={webStatus === "live" || webReachable ? "live" : webStatus === "degraded" || webStatus === "unavailable" ? "reconnecting" : "pending"}>{webLabel}</span></div>{messages.length > 0 && <button className="ai-clear-button" type="button" onClick={startNewResearch}><Plus size={15}/> New research</button>}</div></header>
+      <header className="assistant-heading"><span className="assistant-mark"><Sparkles size={24} /></span><div><span className="eyebrow">FORGEAI INTELLIGENCE PLATFORM</span><h1>ForgeGov AI</h1><p>Grounded research across opportunities, awards, capture, proposals, company evidence, and authorized workspace records.</p></div><div className="ai-heading-actions"><div className="ai-mode-badges"><span>{provider === "ollama" ? "Open-source model" : "Hosted model"}</span><span className={webStatus === "live" || webReachable ? "live" : webStatus === "degraded" || webStatus === "unavailable" ? "reconnecting" : "pending"}>{webLabel}</span></div>{messages.length > 0 && <button className="ai-clear-button" type="button" onClick={startNewResearch} disabled={loading}><Plus size={15}/> New research</button>}</div></header>
       {!messages.length ? <div className="assistant-empty"><div className="ai-orb"><Bot size={36} /></div><h2>What are you working on?</h2><p>Start with an opportunity, a capture decision, a teaming gap, or a market question. The assistant will lead with the answer and show evidence separately.</p><div className="prompt-grid">{prompts.map((item) => { const Icon = item.icon; return <button key={item.title} onClick={() => setPrompt(item.text)}><Icon size={20} /><strong>{item.title}</strong><span>{item.text}</span></button>; })}</div></div>
         : <div className="chat-thread" ref={threadRef}>{messages.map((message, index) => <article key={`${message.createdAt ?? index}-${index}`} className={`chat-message ${message.role}`}><header><strong>{message.role === "user" ? "You" : "ForgeGov AI"}</strong><div>{message.createdAt && <time>{new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>}{message.role === "assistant" && <button type="button" onClick={() => void copyMessage(index, message.content)} aria-label="Copy answer">{copied === index ? <Check size={14}/> : <Clipboard size={14}/>}</button>}</div></header>{message.role === "assistant" ? <StructuredAnswer content={message.content} /> : <p>{message.content}</p>}{message.evidenceSummary && <div className="ai-evidence-summary"><ShieldCheck size={15}/><span>{message.evidenceSummary.source_count} source records supplied</span><small>{message.evidenceSummary.coverage_note}</small></div>}{message.sources?.length ? <details className="ai-source-list"><summary>Evidence and provenance ({message.sources.length})</summary>{message.sources.slice(0, 18).map((source) => source.url ? <a key={`${source.label}-${source.url}`} href={source.url} target="_blank" rel="noreferrer"><b>{source.label}</b><span>{source.title}<small>{source.classification?.replaceAll("_", " ")}</small></span><ExternalLink size={12} /></a> : <div key={`${source.label}-${source.title}`}><b>{source.label}</b><span>{source.title}<small>{source.classification?.replaceAll("_", " ")}</small></span></div>)}</details> : null}</article>)}{loading && <div className="chat-message assistant"><strong>ForgeGov AI</strong><p className="ai-thinking"><LoaderCircle className="spin" size={17} /> Reviewing authorized records and available live sources…</p></div>}</div>}
       {error && <p className="assistant-error">{error}</p>}
       <form className="assistant-composer" onSubmit={submit}><label className="ai-workflow-select"><span>Research workflow</span><select value={workflow} onChange={(event) => setWorkflow(event.target.value)} disabled={loading}>{(platform?.workflows ?? [{key:"research",label:"Research"},{key:"opportunity",label:"Opportunity"},{key:"capture",label:"Capture"},{key:"proposal",label:"Proposal"},{key:"market",label:"Market"}]).map((item)=><option key={item.key} value={item.key}>{item.label}</option>)}</select></label><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="Ask about an opportunity, agency, competitor, clause, partner, risk, or next action…" disabled={loading} maxLength={50000} /><div><span><ShieldCheck size={15} /> Evidence is assistance, not approval · Enter to send</span><button type="submit" aria-label="Send" disabled={loading || !prompt.trim()}>{loading ? <LoaderCircle className="spin" size={18} /> : <ArrowUp size={18} />}</button></div></form>
     </section>
-    <aside className="assistant-context"><span className="eyebrow">ACTIVE CONTEXT</span><h2>Research sources</h2><div className="context-source"><span className={`status-dot ${configured ? "live" : "pending"}`} /><div><strong>{provider === "ollama" ? "Self-hosted Ollama" : "OpenAI API"}</strong><small>{configured ? `${model || "Configured model"} configured` : configured === false ? "Provider needs configuration" : "Provider status unverified"}</small></div></div><div className="context-source"><span className={`status-dot ${webStatus === "live" || webReachable ? "live" : webStatus === "degraded" || webStatus === "unavailable" ? "reconnecting" : "pending"}`} /><div><strong>Live web research</strong><small>{webDetail}</small></div></div><div className="context-source"><span className="status-dot live" /><div><strong>ForgeGov workspace</strong><small>Company profile, pipeline, capture plans, proposals, tasks, contacts, and files</small></div></div><div className="context-source"><span className="status-dot live" /><div><strong>Government records</strong><small>SAM.gov, Grants.gov, USAspending, and available stored public records</small></div></div><div className="context-warning"><ShieldCheck size={18} /><p>Private organization data stays scoped to authorized workspace access. Source counts do not prove completeness, correctness, readiness, or approval.</p></div>{conversations.length>0&&<section className="ai-history"><div><History size={16}/><strong>Research history</strong></div>{conversations.slice(0,8).map((conversation)=><button type="button" className={conversation.id===conversationId?"selected":""} key={conversation.id} onClick={()=>resumeConversation(conversation)}><span>{conversation.title}</span><small>{new Date(conversation.updated_at).toLocaleDateString()}</small></button>)}</section>}</aside>
+    <aside className="assistant-context"><span className="eyebrow">ACTIVE CONTEXT</span><h2>Research sources</h2><div className="context-source"><span className={`status-dot ${configured ? "live" : "pending"}`} /><div><strong>{provider === "ollama" ? "Self-hosted Ollama" : "OpenAI API"}</strong><small>{configured ? `${model || "Configured model"} configured` : configured === false ? "Provider needs configuration" : "Provider status unverified"}</small></div></div><div className="context-source"><span className={`status-dot ${webStatus === "live" || webReachable ? "live" : webStatus === "degraded" || webStatus === "unavailable" ? "reconnecting" : "pending"}`} /><div><strong>Live web research</strong><small>{webDetail}</small></div></div><div className="context-source"><span className="status-dot live" /><div><strong>ForgeGov workspace</strong><small>Company profile, pipeline, capture plans, proposals, tasks, contacts, and files</small></div></div><div className="context-source"><span className="status-dot live" /><div><strong>Government records</strong><small>SAM.gov, Grants.gov, USAspending, and available stored public records</small></div></div><div className="context-warning"><ShieldCheck size={18} /><p>Private organization data stays scoped to authorized workspace access. Source counts do not prove completeness, correctness, readiness, or approval.</p></div>{conversations.length>0&&<section className="ai-history"><div><History size={16}/><strong>Research history</strong></div>{conversations.slice(0,8).map((conversation)=><button type="button" className={conversation.id===conversationId?"selected":""} key={conversation.id} onClick={()=>resumeConversation(conversation)} disabled={loading}><span>{conversation.title}</span><small>{new Date(conversation.updated_at).toLocaleDateString()}</small></button>)}</section>}</aside>
   </div>;
 }

@@ -13,6 +13,16 @@ let csrfToken: string | null = null;
 let csrfRequest: Promise<string> | null = null;
 let refreshRequest: Promise<unknown> | null = null;
 const DEFAULT_TIMEOUT_MS = 20_000;
+// ForgeAI can perform live research and wait for model output in one request.
+// Allow the API's 120-second server timeout to surface before the browser aborts.
+const FORGEAI_CHAT_TIMEOUT_MS = 125_000;
+
+export class ApiTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`The service did not respond within ${timeoutMs / 1000} seconds. Try again or check Connector Manager.`);
+    this.name = "ApiTimeoutError";
+  }
+}
 
 async function fetchWithTimeout(input: RequestInfo | URL, options: RequestInit = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const controller = new AbortController();
@@ -25,7 +35,7 @@ async function fetchWithTimeout(input: RequestInfo | URL, options: RequestInit =
     return await fetch(input, { ...options, signal: controller.signal });
   } catch (error) {
     if (controller.signal.aborted && !externalSignal?.aborted) {
-      throw new Error("The service did not respond within 20 seconds. Try again or check Connector Manager.");
+      throw new ApiTimeoutError(timeoutMs);
     }
     throw error;
   } finally {
@@ -101,7 +111,7 @@ async function requestJson<T>(path: string, options: RequestInit = {}, allowRefr
     headers,
     cache: options.cache ?? "no-store",
     credentials: "include",
-  });
+  }, path === "/ai/chat/" && method === "POST" ? FORGEAI_CHAT_TIMEOUT_MS : DEFAULT_TIMEOUT_MS);
   const body = await parseResponse(response);
 
   const refreshBlocked = ["/auth/csrf/", "/auth/login/", "/auth/register/", "/auth/refresh/", "/auth/logout/"].includes(path);
