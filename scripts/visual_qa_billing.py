@@ -174,11 +174,18 @@ def run_case(
         install_fixtures(unpaid_page,
             session={**SESSION, "subscription": {"permits_access": False}},
             summary={**SUMMARY, "subscription": {**SUMMARY["subscription"], "permits_access": False}})
-        unpaid_page.goto(f"{BASE_URL}/capture/tasks", wait_until="domcontentloaded")
+        unpaid_page.goto(f"{BASE_URL}/capture/tasks", wait_until="commit")
         unpaid_page.wait_for_url(f"{BASE_URL}/billing", timeout=15000)
         unpaid_page.get_by_role("alert").filter(has_text="Subscription required").wait_for(timeout=15000)
-        unpaid_page.goto(BASE_URL + "/", wait_until="domcontentloaded")
-        unpaid_page.wait_for_url(f"{BASE_URL}/billing", timeout=15000)
+        # Exercise a genuinely fresh root visit instead of replacing a document
+        # while Next is completing the preceding subscription redirect.
+        root_page = unpaid_context.new_page()
+        install_fixtures(root_page,
+            session={**SESSION, "subscription": {"permits_access": False}},
+            summary={**SUMMARY, "subscription": {**SUMMARY["subscription"], "permits_access": False}})
+        root_page.goto(BASE_URL + "/", wait_until="commit")
+        root_page.wait_for_url(f"{BASE_URL}/billing", timeout=15000)
+        root_page.get_by_role("alert").filter(has_text="Subscription required").wait_for(timeout=15000)
         unpaid_context.close()
     finally:
         context.close()
