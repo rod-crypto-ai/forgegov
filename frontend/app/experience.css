@@ -218,3 +218,8 @@ html[data-theme="dark"] :is(.pricing-form input, .pricing-form select, .pricing-
 .saved-source-notice > div { min-width: 0; }
 .saved-source-notice p { margin: .5rem 0; line-height: 1.6; }
 .saved-source-notice small { color: var(--muted); font-size: .8125rem; }
+
+/* Long persisted research titles must shrink inside the context rail. */
+.assistant-main, .assistant-context, .ai-history { min-width: 0; }
+.ai-history button { min-width: 0; max-width: 100%; }
+.ai-history button span { min-width: 0; flex: 1; }
