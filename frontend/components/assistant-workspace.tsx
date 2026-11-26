@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, Bot, Check, Clipboard, ExternalLink, FileSearch, Globe2, History, LoaderCircle, Plus, ShieldCheck, Sparkles, Target, Users } from "lucide-react";
 import { ApiTimeoutError, apiGet, apiPost } from "@/lib/api";
 
@@ -58,18 +58,18 @@ export function AssistantWorkspace() {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, loading]);
 
-  async function loadResearchHistory() {
+  const loadResearchHistory = useCallback(async () => {
     const payload = await apiGet<Paginated<Conversation>>("/ai/conversations/");
     setConversations(Array.isArray(payload) ? payload : payload.results ?? []);
-  }
+  }, []);
 
-  async function loadPlatformState() {
+  const loadPlatformState = useCallback(async () => {
     const [, platformPayload] = await Promise.all([
       loadResearchHistory(),
       apiGet<PlatformPayload>("/ai/platform/"),
     ]);
     setPlatform(platformPayload);
-  }
+  }, [loadResearchHistory]);
 
   useEffect(() => {
     let active = true;
@@ -77,7 +77,7 @@ export function AssistantWorkspace() {
       void loadPlatformState().catch(() => { if (active) setPlatform(null); });
     }, 0);
     return () => { active = false; window.clearTimeout(timer); };
-  }, []);
+  }, [loadPlatformState]);
 
   useEffect(() => {
     let active = true;
