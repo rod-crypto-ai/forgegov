@@ -8,6 +8,13 @@ export type ApiList<T = Record<string, unknown>> = {
   results?: T[];
 };
 
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 type ErrorPayload = { detail?: unknown } & Record<string, unknown>;
 let csrfToken: string | null = null;
 let csrfRequest: Promise<string> | null = null;
@@ -64,7 +71,7 @@ async function getCsrfToken(force = false): Promise<string> {
     }).then(async (response) => {
       const body = await parseResponse(response);
       if (!response.ok || !body || typeof body !== "object" || !("csrfToken" in body)) {
-        throw new Error(errorMessage(body, response.status));
+        throw new ApiError(errorMessage(body, response.status), response.status);
       }
       csrfToken = String((body as { csrfToken: unknown }).csrfToken);
       return csrfToken;
@@ -108,8 +115,23 @@ async function requestJson<T>(path: string, options: RequestInit = {}, allowRefr
   if (response.status === 401 && allowRefresh && !refreshBlocked) {
     // A different tab may already have rotated the cookie. Retry the original
     // request once even if this refresh lost that race; the API still checks it.
-    await refreshSession().catch(() => undefined);
-    return requestJson<T>(path, options, false, true);
+    const refreshFailure = await refreshSession().then(
+      () => null,
+      (error: unknown) => ({ error }),
+    );
+    try {
+      return await requestJson<T>(path, options, false, true);
+    } catch (error) {
+      // An expired access cookie does not establish sign-out when refresh
+      // could not reach the service or complete its security checks.
+      if (error instanceof ApiError && error.status === 401 && refreshFailure) {
+        const refreshError = refreshFailure.error;
+        if (!(refreshError instanceof ApiError && refreshError.status === 401)) {
+          throw new Error("Could not renew your session.", { cause: refreshError });
+        }
+      }
+      throw error;
+    }
   }
 
   const message = errorMessage(body, response.status);
@@ -121,7 +143,7 @@ async function requestJson<T>(path: string, options: RequestInit = {}, allowRefr
   if (response.status === 403 && body && typeof body === "object" && "code" in body && body.code === "subscription_required" && typeof window !== "undefined" && window.location.pathname !== "/billing") {
     window.dispatchEvent(new Event("forgegov:subscription-required"));
   }
-  if (!response.ok) throw new Error(message);
+  if (!response.ok) throw new ApiError(message, response.status);
   return body as T;
 }
 

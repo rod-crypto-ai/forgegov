@@ -50,6 +50,19 @@ async def check_engine(playwright, engine):
             for page, path in ((first, "/capture/pipelines"), (second, "/capture/tasks")):
                 await expect(page.get_by_role("button", name="Sign out", exact=True)).to_be_visible(timeout=15000)
                 assert page.url == BASE + path, (engine, cycle, page.url)
+        # A temporary session-check outage should preserve the requested page.
+        async def unavailable(route):
+            await route.fulfill(status=503, json={"detail": "Temporarily unavailable"})
+
+        session_route = "**/api/auth/me/"
+        await first.route(session_route, unavailable)
+        await first.reload()
+        await expect(first.get_by_role("heading", name="Unable to verify your session")).to_be_visible()
+        assert first.url == BASE + "/capture/pipelines"
+        await first.unroute(session_route, unavailable)
+        await first.get_by_role("button", name="Try again", exact=True).click()
+        await expect(first.get_by_role("button", name="Sign out", exact=True)).to_be_visible()
+        assert first.url == BASE + "/capture/pipelines"
         assert not errors, errors
         print("PASS session expiry recovery", engine, "two tabs, three cycles", flush=True)
         return {"engine": engine, "passed": True, "tabs": 2, "expiry_cycles": 3}
