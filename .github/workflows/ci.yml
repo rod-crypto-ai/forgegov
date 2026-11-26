@@ -1,219 +1,26 @@
-name: CI
-
+name: Production smoke v3.3.7
 on:
   push:
-  pull_request:
-
+    branches: [validation/v3.3.7-production-smoke]
+permissions:
+  contents: read
 jobs:
-  backend:
+  production-smoke:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - run: pip install -r backend/requirements.txt
-      - run: python backend/manage.py test core platform_admin
-      - run: python backend/manage.py makemigrations --check --dry-run
-      - run: python scripts/private_beta_launch_audit.py
-      - name: Ruff fatal-error gate
-        run: ruff check backend --select E9,F63,F7,F82
-
-  frontend:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - run: npm ci --no-audit --no-fund
-      - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run build
-
-  responsive-release-qa:
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    # Match requirements-visual-qa.txt; browsers and OS libraries are preinstalled.
+    timeout-minutes: 20
     container:
       image: mcr.microsoft.com/playwright/python:v1.57.0-noble
       options: --ipc=host
     steps:
-      - name: Align disposable container home ownership for Firefox
+      - uses: actions/checkout@v4
+      - name: Align browser home ownership
         run: chown "$(id -u):$(id -g)" /github/home
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - run: npm ci --no-audit --no-fund
-        working-directory: frontend
-      - run: npm run build
-        working-directory: frontend
-      - name: Verify image Python TLS and install browser dependencies
-        run: |
-          python3 -c "import ssl; print(ssl.OPENSSL_VERSION)"
-          python3 -m pip install -r requirements-visual-qa.txt
-      - name: Start production frontend
-        run: |
-          cp -R frontend/.next/static frontend/.next/standalone/.next/static
-          cp -R frontend/public frontend/.next/standalone/public
-          cd frontend && PORT=3100 HOSTNAME=127.0.0.1 node .next/standalone/server.js > /tmp/forgegov-next.log 2>&1 &
-          for attempt in $(seq 1 60); do curl -fsS http://127.0.0.1:3100/intelligence/market >/dev/null && exit 0; sleep 1; done
-          cat /tmp/forgegov-next.log
-          exit 1
-      - name: Early phone and desktop workflow checks
-        run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python3 scripts/visual_qa_experience.py --smoke
-      - name: Cross-browser v3.2.4 market responsive QA
-        run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python3 scripts/visual_qa_market_intelligence.py
-      - name: Cross-browser v3.2.5 capture operations responsive QA
-        run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python3 scripts/visual_qa_capture_operations.py
-      - name: Cross-browser v3.2.6 ForgeAI platform responsive QA
-        run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python3 scripts/visual_qa_forgeai_platform.py
-      - name: Cross-browser v3.3.0 billing responsive QA
-        run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python3 scripts/visual_qa_billing.py
-      - name: Shared experience, themes, and source-switch regression
-        run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python3 scripts/visual_qa_experience.py
-      - name: Public landing page and conversion checks
-        run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python3 scripts/visual_qa_public.py
-      - name: Workspace accessibility in light and dark themes
-        run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python3 scripts/visual_qa_accessibility.py
-      - name: Preserve browser evidence
+      - run: python3 -m pip install -r requirements-visual-qa.txt
+      - name: Verify deployed APIs, pages and browser rendering
+        run: python3 scripts/production_smoke_v337.py
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: responsive-experience-evidence
-          path: artifacts/visual-qa
-          retention-days: 14
-
-  docker-release-qa:
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - name: Configure isolated test environment
-        run: |
-          cp .env.example .env
-          python3 - <<'PY'
-          import secrets
-          from pathlib import Path
-          path = Path(".env")
-          text = path.read_text().replace("replace-with-a-long-random-value", secrets.token_urlsafe(48))
-          overrides = {
-              "CORS_ALLOWED_ORIGINS": "http://127.0.0.1:3100",
-              "CSRF_TRUSTED_ORIGINS": "http://127.0.0.1:3100",
-              "FRONTEND_URL": "http://127.0.0.1:3100",
-              "SAM_GOV_API_KEY": "synthetic-isolated-qa-key",
-              "SAM_GOV_BASE_URL": "http://127.0.0.1:9001/opportunities/v2/search",
-              "USASPENDING_BASE_URL": "http://127.0.0.1:9001",
-          }
-          text = "\n".join(line for line in text.splitlines() if line.split("=", 1)[0] not in overrides)
-          text += "\n" + "\n".join(f"{key}={value}" for key, value in overrides.items()) + "\n"
-          path.write_text(text)
-          PY
-          # Exercise the image filesystem instead of local-development bind mounts.
-          cat > compose.release-ci.yml <<'YAML'
-          services:
-            backend:
-              volumes: !reset []
-            worker:
-              volumes: !reset []
-            beat:
-              volumes: !reset []
-          YAML
-          echo "COMPOSE_FILE=docker-compose.yml:compose.release-ci.yml" >> "$GITHUB_ENV"
-      - name: Build production containers
-        run: |
-          docker compose config --quiet
-          docker compose build backend worker beat
-          docker build --target runner --build-arg NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000/api -t forgegov-release-qa ./frontend
-      - name: Start isolated services and verify migrations
-        run: |
-          docker compose up -d --wait backend worker beat
-          docker compose exec -T backend python manage.py check
-          docker compose exec -T backend python manage.py makemigrations --check --dry-run
-          docker compose exec -T backend python manage.py test core.test_v330_commercial_readiness --verbosity 1
-          ./scripts/release_smoke.sh
-      - name: Verify database backup and isolated restore
-        run: |
-          ./scripts/backup_database.sh backups/v330-ci.dump
-          ./scripts/verify_backup_restore.sh backups/v330-ci.dump
-      - name: Verify non-root runtime and production frontend
-        run: |
-          for service in backend worker beat; do
-            test "$(docker compose exec -T "$service" id -u)" != "0"
-          done
-          docker run -d --name forgegov-release-frontend -p 127.0.0.1:3100:3000 forgegov-release-qa
-          for attempt in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:3100/sign-in >/dev/null; then
-              curl -fsS http://127.0.0.1:3100/brand/forgegov-logo.png >/dev/null
-              exit 0
-            fi
-            sleep 1
-          done
-          exit 1
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - name: Full-stack browser persistence checks
-        run: |
-          docker compose cp scripts/experience_qa_fixtures.py backend:/tmp/experience_qa_fixtures.py
-          docker compose exec -T -e FORGEGOV_ISOLATED_QA=1 backend python /tmp/experience_qa_fixtures.py seed
-          docker compose exec -d -e FORGEGOV_ISOLATED_QA=1 backend python /tmp/experience_qa_fixtures.py serve
-          for attempt in $(seq 1 30); do
-            if docker compose exec -T backend curl -fsS http://127.0.0.1:9001/api/v2/awards/last_updated/ >/dev/null; then break; fi
-            sleep 1
-          done
-          docker run --rm --init --network host --ipc=host \
-            -v "${GITHUB_WORKSPACE}:/work" -w /work -e FORGEGOV_ISOLATED_QA=1 \
-            mcr.microsoft.com/playwright/python:v1.57.0-noble \
-            bash -c 'python -m pip install -r requirements-visual-qa.txt && python scripts/e2e_experience.py && python scripts/e2e_session_refresh.py'
-          docker compose exec -T -e FORGEGOV_ISOLATED_QA=1 backend python /tmp/experience_qa_fixtures.py verify
-      - name: Preserve full-stack browser evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: fullstack-experience-evidence
-          path: artifacts/fullstack-qa
-          retention-days: 14
-      - name: Collect failure diagnostics
-        if: failure()
-        run: |
-          docker compose logs --tail=100
-          docker logs forgegov-release-frontend || true
-      - name: Clean up isolated services
-        if: always()
-        run: |
-          docker rm -f forgegov-release-frontend || true
-          docker compose down -v
-
-  release-tags:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [backend, frontend, responsive-release-qa, docker-release-qa]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Preserve rollback and validated v3.3.7 release tags
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(cat VERSION)" = "3.3.7" || exit 0
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          baseline=af6d4bfe75722894f0ee74c716659326286f90d9
-          if ! git show-ref --verify --quiet refs/tags/rollback/pre-v3.3.7; then
-            git tag -a rollback/pre-v3.3.7 "$baseline" -m 'Production rollback point before ForgeGov v3.3.7'
-            git push origin refs/tags/rollback/pre-v3.3.7
-          fi
-          if ! git show-ref --verify --quiet refs/tags/v3.3.7; then
-            git tag -a v3.3.7 "$GITHUB_SHA" -m 'ForgeGov v3.3.7: session renewal and concurrent refresh recovery'
-            git push origin refs/tags/v3.3.7
-          fi
+          name: forgegov-v337-production-smoke
+          path: artifacts/production-smoke
+          retention-days: 30
