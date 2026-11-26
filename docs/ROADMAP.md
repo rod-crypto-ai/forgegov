@@ -60,3 +60,7 @@ Public landing redesign, verified-interface product tour, runtime-aware conversi
 ## v3.3.5 — Platform quality and operational recovery
 
 Stabilization within commercial readiness covers shared navigation accessibility, mobile legibility, public-page request isolation, consistent theme hydration, ForgeAI provider failure responses, frontend security updates, and USAspending repeat-ingestion efficiency and timeout recovery. Existing roadmap features retain their sequence. Release evidence must distinguish synthetic workflow validation from live-provider and payment validation.
+
+## v3.3.6 — Saved opportunity continuity
+
+Preserve access to saved SAM.gov pursuits when live source lookup is unavailable, with explicit stored-evidence disclosure and source verification boundaries. This is a reliability correction within commercial readiness.
