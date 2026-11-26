@@ -8,6 +8,13 @@ export type ApiList<T = Record<string, unknown>> = {
   results?: T[];
 };
 
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 type ErrorPayload = { detail?: unknown } & Record<string, unknown>;
 let csrfToken: string | null = null;
 let csrfRequest: Promise<string> | null = null;
@@ -121,7 +128,7 @@ async function requestJson<T>(path: string, options: RequestInit = {}, allowRefr
   if (response.status === 403 && body && typeof body === "object" && "code" in body && body.code === "subscription_required" && typeof window !== "undefined" && window.location.pathname !== "/billing") {
     window.dispatchEvent(new Event("forgegov:subscription-required"));
   }
-  if (!response.ok) throw new Error(message);
+  if (!response.ok) throw new ApiError(message, response.status);
   return body as T;
 }
 

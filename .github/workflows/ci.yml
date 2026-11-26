@@ -66,6 +66,8 @@ jobs:
           for attempt in $(seq 1 60); do curl -fsS http://127.0.0.1:3100/intelligence/market >/dev/null && exit 0; sleep 1; done
           cat /tmp/forgegov-next.log
           exit 1
+      - name: Connection failure and session verification recovery
+        run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python3 scripts/visual_qa_session_verification.py
       - name: Early phone and desktop workflow checks
         run: FORGEGOV_QA_BASE_URL=http://127.0.0.1:3100 python3 scripts/visual_qa_experience.py --smoke
       - name: Cross-browser v3.2.4 market responsive QA
@@ -201,19 +203,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Preserve rollback and validated v3.3.7 release tags
+      - name: Preserve rollback and validated v3.3.8 release tags
         shell: bash
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = "3.3.7" || exit 0
+          test "$(cat VERSION)" = "3.3.8" || exit 0
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          baseline=af6d4bfe75722894f0ee74c716659326286f90d9
-          if ! git show-ref --verify --quiet refs/tags/rollback/pre-v3.3.7; then
-            git tag -a rollback/pre-v3.3.7 "$baseline" -m 'Production rollback point before ForgeGov v3.3.7'
-            git push origin refs/tags/rollback/pre-v3.3.7
+          baseline=c82d74ebf38ba3e0f4193d3f8241dbbaeac9fe83
+          if ! git show-ref --verify --quiet refs/tags/rollback/pre-v3.3.8; then
+            git tag -a rollback/pre-v3.3.8 "$baseline" -m 'Production rollback point before ForgeGov v3.3.8'
+            git push origin refs/tags/rollback/pre-v3.3.8
           fi
-          if ! git show-ref --verify --quiet refs/tags/v3.3.7; then
-            git tag -a v3.3.7 "$GITHUB_SHA" -m 'ForgeGov v3.3.7: session renewal and concurrent refresh recovery'
-            git push origin refs/tags/v3.3.7
+          if ! git show-ref --verify --quiet refs/tags/v3.3.8; then
+            git tag -a v3.3.8 "$GITHUB_SHA" -m 'ForgeGov v3.3.8: connection failure recovery without false sign-out'
+            git push origin refs/tags/v3.3.8
           fi

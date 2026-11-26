@@ -2,7 +2,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { authFetch } from "@/lib/api";
+import { ApiError, authFetch } from "@/lib/api";
+import styles from "./auth-verification.module.css";
 import { isPublicRoute } from "@/lib/routes";
 
 type Session = {
@@ -38,11 +39,14 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [verificationError, setVerificationError] = useState(false);
   const [workspaces, setWorkspaces] = useState<WorkspaceMembership[]>([]);
   const pathname = usePathname();
   const router = useRouter();
 
   const reload = useCallback(async () => {
+    setLoading(true);
+    setVerificationError(false);
     try {
       // The session endpoint is authoritative. A transient workspace-list failure
       // must not sign an otherwise authenticated user out of ForgeGov.
@@ -54,9 +58,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch {
         setWorkspaces([{organization:data.organization,role:data.role}]);
       }
-    } catch {
-      setSession(null);
-      setWorkspaces([]);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        setSession(null);
+        setWorkspaces([]);
+      } else {
+        setVerificationError(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -68,7 +76,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [reload]);
 
   useEffect(() => {
-    if (!loading && !session && !isPublicRoute(pathname)) {
+    if (!loading && !verificationError && !session && !isPublicRoute(pathname)) {
       router.replace(`/sign-in?next=${encodeURIComponent(pathname)}`);
     }
     if (!loading && session?.subscription?.permits_access === false && (!isPublicRoute(pathname) || pathname === "/") && pathname !== "/billing") {
@@ -77,7 +85,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!loading && session && (pathname === "/sign-in" || pathname === "/register")) {
       router.replace("/");
     }
-  }, [loading, session, pathname, router]);
+  }, [loading, verificationError, session, pathname, router]);
 
 
   useEffect(() => {
@@ -105,6 +113,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   if (loading && !isPublicRoute(pathname)) {
     return <div className="auth-loading"><div className="auth-spinner" /><p>Securing your ForgeGov workspace…</p></div>;
+  }
+  if (verificationError && !isPublicRoute(pathname)) {
+    return <div className="auth-loading"><div role="alert" className={styles.verification}><h1>Workspace verification interrupted</h1><p>We could not reach the service to verify your session. Check your connection and retry.</p><button type="button" className="btn btn-primary" onClick={() => void reload()}>Retry verification</button></div></div>;
   }
   if (!session && !isPublicRoute(pathname)) return null;
   if (session?.subscription?.permits_access === false && (!isPublicRoute(pathname) || pathname === "/") && pathname !== "/billing") {
